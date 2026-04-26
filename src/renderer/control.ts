@@ -1,8 +1,11 @@
 import './styles.css';
+import { assessAudioCapabilities } from '../shared/audioCapabilities';
 import { describeLayout } from '../shared/layouts';
+import { getDirectorSeconds } from '../shared/timeline';
 import type {
   AudioOutputPath,
   DirectorState,
+  DisplayMonitorInfo,
   DisplayWindowState,
   LayoutProfile,
   MediaValidationIssue,
@@ -21,6 +24,14 @@ const displayList = document.querySelector<HTMLDivElement>('#displayList');
 const playButton = document.querySelector<HTMLButtonElement>('#playButton');
 const pauseButton = document.querySelector<HTMLButtonElement>('#pauseButton');
 const stopButton = document.querySelector<HTMLButtonElement>('#stopButton');
+const seekInput = document.querySelector<HTMLInputElement>('#seekInput');
+const seekButton = document.querySelector<HTMLButtonElement>('#seekButton');
+const rateInput = document.querySelector<HTMLInputElement>('#rateInput');
+const rateButton = document.querySelector<HTMLButtonElement>('#rateButton');
+const loopEnabledInput = document.querySelector<HTMLInputElement>('#loopEnabledInput');
+const loopStartInput = document.querySelector<HTMLInputElement>('#loopStartInput');
+const loopEndInput = document.querySelector<HTMLInputElement>('#loopEndInput');
+const loopButton = document.querySelector<HTMLButtonElement>('#loopButton');
 const saveShowButton = document.querySelector<HTMLButtonElement>('#saveShowButton');
 const saveShowAsButton = document.querySelector<HTMLButtonElement>('#saveShowAsButton');
 const openShowButton = document.querySelector<HTMLButtonElement>('#openShowButton');
@@ -35,9 +46,11 @@ let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
 let driftTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
+let displayMonitors: DisplayMonitorInfo[] = [];
 let audioUrl = '';
-let lastReportedPhysicalSplitAvailable: boolean | undefined;
+let lastReportedAudioCapabilitySignature = '';
 let currentIssues: MediaValidationIssue[] = [];
+let appliedAudioCorrectionRevision: number | undefined;
 
 type SinkCapableAudioElement = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>;
@@ -96,6 +109,14 @@ const elements = {
   playButton: assertElement(playButton, 'playButton'),
   pauseButton: assertElement(pauseButton, 'pauseButton'),
   stopButton: assertElement(stopButton, 'stopButton'),
+  seekInput: assertElement(seekInput, 'seekInput'),
+  seekButton: assertElement(seekButton, 'seekButton'),
+  rateInput: assertElement(rateInput, 'rateInput'),
+  rateButton: assertElement(rateButton, 'rateButton'),
+  loopEnabledInput: assertElement(loopEnabledInput, 'loopEnabledInput'),
+  loopStartInput: assertElement(loopStartInput, 'loopStartInput'),
+  loopEndInput: assertElement(loopEndInput, 'loopEndInput'),
+  loopButton: assertElement(loopButton, 'loopButton'),
   saveShowButton: assertElement(saveShowButton, 'saveShowButton'),
   saveShowAsButton: assertElement(saveShowAsButton, 'saveShowAsButton'),
   openShowButton: assertElement(openShowButton, 'openShowButton'),
@@ -107,13 +128,12 @@ const elements = {
   createSplitButton: assertElement(createSplitButton, 'createSplitButton'),
 };
 
-function getDirectorSeconds(state: DirectorState, now = Date.now()): number {
-  if (state.paused) {
-    return state.offsetSeconds;
-  }
-
-  return state.offsetSeconds + ((now - state.anchorWallTimeMs) / 1000) * state.rate;
-}
+const transportDraftElements = new Set<HTMLInputElement>([
+  elements.rateInput,
+  elements.loopEnabledInput,
+  elements.loopStartInput,
+  elements.loopEndInput,
+]);
 
 function formatTimecode(seconds: number): string {
   const safeSeconds = Math.max(0, seconds);
@@ -131,10 +151,24 @@ function renderState(state: DirectorState): void {
   elements.stateView.textContent = JSON.stringify(state, null, 2);
   syncAudioSource(state);
   void configureAudioRoutingForState(state);
+  syncTransportInputs(state);
   renderSlots(Object.values(state.slots));
-  renderAudio(state);
-  renderDisplays(Object.values(state.displays));
-  renderIssues(currentIssues);
+  if (!isPanelInteractionActive(elements.audioPanel)) {
+    renderAudio(state);
+  }
+  if (!isPanelInteractionActive(elements.displayList)) {
+    renderDisplays(Object.values(state.displays));
+  }
+  renderIssues([...state.readiness.issues, ...currentIssues]);
+}
+
+function isPanelInteractionActive(panel: HTMLElement): boolean {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement) || !panel.contains(activeElement)) {
+    return false;
+  }
+
+  return activeElement.matches('select, input, textarea');
 }
 
 function renderIssues(issues: MediaValidationIssue[]): void {
@@ -151,11 +185,34 @@ function renderIssues(issues: MediaValidationIssue[]): void {
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
   elements.showStatus.textContent = message;
   currentIssues = issues;
-  renderIssues(currentIssues);
+  renderIssues([...(currentState?.readiness.issues ?? []), ...currentIssues]);
+}
+
+function syncTransportInputs(state: DirectorState): void {
+  elements.playButton.disabled = !state.readiness.ready;
+  if (!isTransportDraftActive(elements.rateInput)) {
+    elements.rateInput.value = String(state.rate);
+  }
+  if (!isTransportDraftActive(elements.loopEnabledInput)) {
+    elements.loopEnabledInput.checked = state.loop.enabled;
+  }
+  if (!isTransportDraftActive(elements.loopStartInput)) {
+    elements.loopStartInput.value = String(state.loop.startSeconds);
+  }
+  if (!isTransportDraftActive(elements.loopEndInput)) {
+    elements.loopEndInput.value = state.loop.endSeconds === undefined ? '' : String(state.loop.endSeconds);
+  }
+  elements.showStatus.textContent = state.readiness.ready
+    ? 'Show readiness: ready'
+    : `Show readiness: blocked by ${state.readiness.issues.filter((issue) => issue.severity === 'error').length} issue(s)`;
+}
+
+function isTransportDraftActive(input: HTMLInputElement): boolean {
+  return document.activeElement === input || (transportDraftElements.has(input) && input.dataset.dirty === 'true');
 }
 
 function syncAudioSource(state: DirectorState): void {
-  const nextUrl = state.audio.url ?? '';
+  const nextUrl = getAudioSourceUrl(state);
   if (audioUrl === nextUrl) {
     return;
   }
@@ -168,6 +225,14 @@ function syncAudioSource(state: DirectorState): void {
     audioElement.src = nextUrl;
     audioElement.load();
   }
+}
+
+function getAudioSourceUrl(state: DirectorState): string {
+  if (state.audio.sourceMode === 'embedded-slot' && state.audio.embeddedSlotId) {
+    return state.slots[state.audio.embeddedSlotId]?.videoUrl ?? '';
+  }
+
+  return state.audio.url ?? '';
 }
 
 async function ensureAudioGraph(): Promise<AudioGraph | undefined> {
@@ -213,7 +278,7 @@ async function configureAudioGraphForMode(state: DirectorState): Promise<boolean
     return false;
   }
 
-  const nextMode = state.mode === 3 ? 'split' : 'main';
+  const nextMode = state.mode === 3 && state.audio.physicalSplitAvailable ? 'split' : 'main';
   if (audioGraphMode === nextMode) {
     return true;
   }
@@ -243,7 +308,8 @@ async function configureAudioGraphForMode(state: DirectorState): Promise<boolean
 }
 
 function getActiveAudioOutputs(mode: DirectorState['mode']): SinkCapableAudioElement[] {
-  return mode === 3 ? [audioOutputs.left, audioOutputs.right] : [audioOutputs.main];
+  const state = currentState;
+  return mode === 3 && state?.audio.physicalSplitAvailable ? [audioOutputs.left, audioOutputs.right] : [audioOutputs.main];
 }
 
 async function configureAudioRoutingForState(state: DirectorState): Promise<void> {
@@ -254,23 +320,21 @@ async function configureAudioRoutingForState(state: DirectorState): Promise<void
     applyAudioSink('right', state.audio.rightSinkId),
   ]);
 
-  const selectedSplitSinks = [state.audio.leftSinkId, state.audio.rightSinkId].filter(Boolean);
-  const physicalSplitAvailable =
-    graphReady &&
-    Boolean(audioOutputs.left.setSinkId) &&
-    Boolean(audioOutputs.right.setSinkId) &&
-    audioDevices.length >= 2 &&
-    selectedSplitSinks.length === 2 &&
-    selectedSplitSinks[0] !== selectedSplitSinks[1];
+  const assessment = assessAudioCapabilities({
+    graphReady,
+    setSinkIdSupported: Boolean(audioOutputs.left.setSinkId) && Boolean(audioOutputs.right.setSinkId),
+    outputDeviceCount: audioDevices.length,
+    leftSinkId: state.audio.leftSinkId,
+    rightSinkId: state.audio.rightSinkId,
+  });
+  const signature = JSON.stringify(assessment);
 
-  if (lastReportedPhysicalSplitAvailable !== physicalSplitAvailable) {
-    lastReportedPhysicalSplitAvailable = physicalSplitAvailable;
-    renderState(
-      await window.xtream.audio.reportCapabilities({
-        physicalSplitAvailable,
-        fallbackAccepted: state.audio.fallbackAccepted,
-      }),
-    );
+  if (lastReportedAudioCapabilitySignature !== signature) {
+    lastReportedAudioCapabilitySignature = signature;
+    await window.xtream.audio.reportCapabilities({
+      ...assessment,
+      fallbackAccepted: state.audio.fallbackAccepted,
+    });
   }
 }
 
@@ -280,17 +344,20 @@ function renderAudio(state: DirectorState): void {
 
   const header = document.createElement('header');
   const title = document.createElement('strong');
-  title.textContent = 'Stereo file';
+  title.textContent = 'Audio source';
 
   const badge = document.createElement('span');
   badge.className = 'badge';
-  badge.textContent = state.audio.ready ? 'ready' : state.audio.path ? 'loading' : 'empty';
+  badge.textContent = state.audio.ready ? 'ready' : state.audio.sourceMode !== 'none' ? 'loading' : 'empty';
   header.append(title, badge);
 
   const pathText = document.createElement('div');
   pathText.className = 'path-text';
   pathText.title = state.audio.path ?? '';
-  pathText.textContent = state.audio.path ?? 'No audio selected';
+  pathText.textContent =
+    state.audio.sourceMode === 'embedded-slot'
+      ? `Embedded audio from slot ${state.audio.embeddedSlotId ?? 'none'}`
+      : state.audio.path ?? 'No audio selected';
 
   const meta = document.createElement('div');
   meta.className = 'hint';
@@ -299,6 +366,32 @@ function renderAudio(state: DirectorState): void {
     : `duration: ${state.audio.durationSeconds?.toFixed(3) ?? 'n/a'}s | drift: ${
         state.audio.lastDriftSeconds?.toFixed(3) ?? 'n/a'
       }`;
+
+  const sourceField = createSelect(
+    'Audio source',
+    [
+      ['none', 'No audio source'],
+      ['external-file', state.audio.path ? 'External audio file' : 'External audio file (choose below)'],
+      ...Object.keys(state.slots).map((slotId): [string, string] => [`embedded:${slotId}`, `Slot ${slotId} embedded audio`]),
+    ],
+    state.audio.sourceMode === 'embedded-slot' && state.audio.embeddedSlotId
+      ? `embedded:${state.audio.embeddedSlotId}`
+      : state.audio.sourceMode,
+    (value) => {
+      if (value.startsWith('embedded:')) {
+        void window.xtream.audio.setEmbeddedSource({ slotId: value.slice('embedded:'.length) }).then(async () => {
+          renderState(await window.xtream.director.getState());
+        });
+        return;
+      }
+
+      if (value === 'none') {
+        void window.xtream.audio.setEmbeddedSource({}).then(async () => {
+          renderState(await window.xtream.director.getState());
+        });
+      }
+    },
+  );
 
   const sinkField = createSelect(
     'Main output',
@@ -334,8 +427,12 @@ function renderAudio(state: DirectorState): void {
   splitStatus.className = state.mode === 3 && !state.audio.physicalSplitAvailable ? 'warning' : 'hint';
   splitStatus.textContent =
     state.mode === 3 && !state.audio.physicalSplitAvailable
-      ? 'Mode 3 fallback: independent physical L/R outputs are not currently verified. Check output device support and select two different devices.'
-      : `Mode 3 split routing: ${state.audio.physicalSplitAvailable ? 'available' : 'not active'}`;
+      ? `Mode 3 fallback: stereo will use the main/default output until physical split is available. Reason: ${
+          state.audio.fallbackReason ?? 'unknown'
+        }.`
+      : `Mode 3 split routing: ${state.audio.physicalSplitAvailable ? 'available' : 'not active'} (${
+          state.audio.capabilityStatus ?? 'unknown'
+        })`;
 
   const buttons = document.createElement('div');
   buttons.className = 'button-row';
@@ -361,9 +458,13 @@ function renderAudio(state: DirectorState): void {
   clearButton.type = 'button';
   clearButton.className = 'secondary';
   clearButton.textContent = 'Clear';
-  clearButton.disabled = !state.audio.path;
+  clearButton.disabled = !state.audio.path && state.audio.sourceMode !== 'embedded-slot';
   clearButton.addEventListener('click', async () => {
-    await window.xtream.audio.clearFile();
+    if (state.audio.path) {
+      await window.xtream.audio.clearFile();
+    } else {
+      await window.xtream.audio.setEmbeddedSource({});
+    }
     renderState(await window.xtream.director.getState());
   });
 
@@ -393,7 +494,7 @@ function renderAudio(state: DirectorState): void {
     testRightButton,
     acceptFallbackButton,
   );
-  card.append(header, pathText, meta, sinkField, leftSinkField, rightSinkField, splitStatus, buttons);
+  card.append(header, pathText, meta, sourceField, sinkField, leftSinkField, rightSinkField, splitStatus, buttons);
   elements.audioPanel.replaceChildren(card);
 }
 
@@ -428,7 +529,15 @@ async function applyAudioSink(path: AudioOutputPath, sinkId: string | undefined)
     return;
   }
 
-  await output.setSinkId(sinkId ?? '');
+  try {
+    await output.setSinkId(sinkId ?? '');
+  } catch (error) {
+    await window.xtream.audio.reportMetadata({
+      durationSeconds: Number.isFinite(audioElement.duration) ? audioElement.duration : undefined,
+      ready: false,
+      error: error instanceof Error ? error.message : 'Audio sink assignment failed.',
+    });
+  }
 }
 
 function getOutputForPath(path: AudioOutputPath): SinkCapableAudioElement {
@@ -472,6 +581,10 @@ async function loadAudioDevices(): Promise<void> {
 
   const devices = await navigator.mediaDevices.enumerateDevices();
   audioDevices = devices.filter((device) => device.kind === 'audiooutput');
+}
+
+async function loadDisplayMonitors(): Promise<void> {
+  displayMonitors = await window.xtream.displays.listMonitors();
 }
 
 function renderSlots(slots: SlotState[]): void {
@@ -532,6 +645,7 @@ function renderDisplays(displays: DisplayWindowState[]): void {
   const slots = Object.keys(currentState?.slots ?? {});
   elements.displayList.replaceChildren(
     ...displays.map((display) => {
+      const hasLiveWindow = display.health !== 'closed';
       const card = document.createElement('article');
       card.className = 'display-card';
 
@@ -552,7 +666,24 @@ function renderDisplays(displays: DisplayWindowState[]): void {
         display.lastDriftSeconds?.toFixed(3) ?? 'n/a'
       }`;
 
-      const mapping = createMappingControls(display, slots);
+      const mapping = createMappingControls(display, slots, hasLiveWindow);
+      const monitorSelect = createSelect(
+        'Monitor',
+        [
+          ['', 'Current / manual'],
+          ...displayMonitors.map((monitor): [string, string] => [monitor.id, monitor.label]),
+        ],
+        display.displayId ?? '',
+        (displayId) => {
+          void window.xtream.displays.update(display.id, { displayId: displayId || undefined }).then(async () => {
+            renderState(await window.xtream.director.getState());
+          });
+        },
+      );
+      const monitorControl = monitorSelect.querySelector('select');
+      if (monitorControl) {
+        monitorControl.disabled = !hasLiveWindow;
+      }
 
       const buttons = document.createElement('div');
       buttons.className = 'button-row';
@@ -561,6 +692,7 @@ function renderDisplays(displays: DisplayWindowState[]): void {
       fullscreenButton.type = 'button';
       fullscreenButton.className = 'secondary';
       fullscreenButton.textContent = display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen';
+      fullscreenButton.disabled = !hasLiveWindow;
       fullscreenButton.addEventListener('click', () => {
         void window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
       });
@@ -568,19 +700,40 @@ function renderDisplays(displays: DisplayWindowState[]): void {
       const closeButton = document.createElement('button');
       closeButton.type = 'button';
       closeButton.className = 'secondary';
-      closeButton.textContent = 'Close';
-      closeButton.addEventListener('click', () => {
-        void window.xtream.displays.close(display.id);
+      closeButton.textContent = 'Close Window';
+      closeButton.disabled = !hasLiveWindow;
+      closeButton.addEventListener('click', async () => {
+        await window.xtream.displays.close(display.id);
+        renderState(await window.xtream.director.getState());
       });
 
-      buttons.append(fullscreenButton, closeButton);
-      card.append(header, details, mapping, buttons);
+      const reopenButton = document.createElement('button');
+      reopenButton.type = 'button';
+      reopenButton.className = 'secondary';
+      reopenButton.textContent = 'Reopen With Mapping';
+      reopenButton.disabled = display.health !== 'closed' && display.health !== 'degraded';
+      reopenButton.addEventListener('click', async () => {
+        await window.xtream.displays.reopen(display.id);
+        renderState(await window.xtream.director.getState());
+      });
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'secondary';
+      removeButton.textContent = 'Remove Display';
+      removeButton.addEventListener('click', async () => {
+        await window.xtream.displays.remove(display.id);
+        renderState(await window.xtream.director.getState());
+      });
+
+      buttons.append(fullscreenButton, closeButton, reopenButton, removeButton);
+      card.append(header, details, mapping, monitorSelect, buttons);
       return card;
     }),
   );
 }
 
-function createMappingControls(display: DisplayWindowState, slots: SlotId[]): HTMLDivElement {
+function createMappingControls(display: DisplayWindowState, slots: SlotId[], enabled = true): HTMLDivElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'mapping-grid';
 
@@ -601,43 +754,52 @@ function createMappingControls(display: DisplayWindowState, slots: SlotId[]): HT
   );
 
   wrapper.append(layoutSelect);
+  setSelectEnabled(layoutSelect, enabled);
 
   if (display.layout.type === 'single') {
-    wrapper.append(
-      createSelect(
+    const slotSelect = createSelect(
         'Slot',
         slots.map((slot) => [slot, slot]),
         display.layout.slot,
         (slot) => {
           void updateDisplayLayout(display.id, { type: 'single', slot });
         },
-      ),
     );
+    setSelectEnabled(slotSelect, enabled);
+    wrapper.append(slotSelect);
     return wrapper;
   }
 
   const [leftSlot, rightSlot] = display.layout.slots;
 
-  wrapper.append(
-    createSelect(
+  const leftSelect = createSelect(
       'Left slot',
       slots.map((slot) => [slot, slot]),
       leftSlot,
       (slot) => {
         void updateDisplayLayout(display.id, { type: 'split', slots: [slot, rightSlot] });
       },
-    ),
-    createSelect(
+    );
+  const rightSelect = createSelect(
       'Right slot',
       slots.map((slot) => [slot, slot]),
       rightSlot,
       (slot) => {
         void updateDisplayLayout(display.id, { type: 'split', slots: [leftSlot, slot] });
       },
-    ),
-  );
+    );
+  setSelectEnabled(leftSelect, enabled);
+  setSelectEnabled(rightSelect, enabled);
+  wrapper.append(leftSelect, rightSelect);
 
   return wrapper;
+}
+
+function setSelectEnabled(wrapper: HTMLDivElement, enabled: boolean): void {
+  const select = wrapper.querySelector('select');
+  if (select) {
+    select.disabled = !enabled;
+  }
 }
 
 function createSelect(
@@ -694,13 +856,22 @@ function tick(): void {
 }
 
 function syncAudioToDirector(state: DirectorState): void {
-  if (!state.audio.url || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
+  if (!getAudioSourceUrl(state) || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
     return;
   }
 
-  const targetSeconds = clampAudioTime(getDirectorSeconds(state));
+  const correction = state.corrections.audio;
+  const shouldApplyCorrection =
+    correction?.action === 'seek' &&
+    correction.targetSeconds !== undefined &&
+    appliedAudioCorrectionRevision !== correction.revision;
+  const correctionTarget = shouldApplyCorrection ? correction.targetSeconds : undefined;
+  const targetSeconds = clampAudioTime(correctionTarget ?? getDirectorSeconds(state));
   if (Math.abs(audioElement.currentTime - targetSeconds) > 0.08) {
     audioElement.currentTime = targetSeconds;
+  }
+  if (shouldApplyCorrection) {
+    appliedAudioCorrectionRevision = correction.revision;
   }
 
   audioElement.playbackRate = state.rate;
@@ -747,6 +918,35 @@ async function sendTransport(command: TransportCommand): Promise<void> {
   renderState(await window.xtream.director.transport(command));
 }
 
+function readLoopDraft(): DirectorState['loop'] {
+  const endSeconds = elements.loopEndInput.value === '' ? undefined : Number(elements.loopEndInput.value);
+  return {
+    enabled: elements.loopEnabledInput.checked,
+    startSeconds: Number(elements.loopStartInput.value) || 0,
+    endSeconds: Number.isFinite(endSeconds) ? endSeconds : undefined,
+  };
+}
+
+function markTransportDraft(input: HTMLInputElement): void {
+  input.dataset.dirty = 'true';
+}
+
+function clearTransportDrafts(inputs: HTMLInputElement[]): void {
+  for (const input of inputs) {
+    input.dataset.dirty = 'false';
+  }
+}
+
+async function commitRateDraft(): Promise<void> {
+  await sendTransport({ type: 'set-rate', rate: Number(elements.rateInput.value) || 1 });
+  clearTransportDrafts([elements.rateInput]);
+}
+
+async function commitLoopDraft(): Promise<void> {
+  await sendTransport({ type: 'set-loop', loop: readLoopDraft() });
+  clearTransportDrafts([elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]);
+}
+
 elements.playButton.addEventListener('click', () => {
   void sendTransport({ type: 'play' });
 });
@@ -758,6 +958,30 @@ elements.pauseButton.addEventListener('click', () => {
 elements.stopButton.addEventListener('click', () => {
   void sendTransport({ type: 'stop' });
 });
+
+elements.seekButton.addEventListener('click', () => {
+  void sendTransport({ type: 'seek', seconds: Number(elements.seekInput.value) || 0 });
+});
+
+elements.rateButton.addEventListener('click', () => {
+  void commitRateDraft();
+});
+
+elements.loopButton.addEventListener('click', () => {
+  void commitLoopDraft();
+});
+
+elements.rateInput.addEventListener('input', () => markTransportDraft(elements.rateInput));
+elements.rateInput.addEventListener('change', () => {
+  void commitRateDraft();
+});
+
+for (const input of [elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]) {
+  input.addEventListener('input', () => markTransportDraft(input));
+  input.addEventListener('change', () => {
+    void commitLoopDraft();
+  });
+}
 
 elements.saveShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.save();
@@ -817,9 +1041,18 @@ elements.createSplitButton.addEventListener('click', async () => {
   renderState(await window.xtream.director.getState());
 });
 
+document.addEventListener('focusout', () => {
+  window.setTimeout(() => {
+    if (currentState) {
+      renderState(currentState);
+    }
+  }, 0);
+});
+
 window.xtream.director.onState(renderState);
 void window.xtream.renderer.ready({ kind: 'control' });
 void loadAudioDevices();
+void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);
 
 audioElement.addEventListener('loadedmetadata', () => {
@@ -839,7 +1072,7 @@ audioElement.addEventListener('error', () => {
 
 animationFrame = window.requestAnimationFrame(tick);
 driftTimer = window.setInterval(() => {
-  if (!currentState?.audio.url || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
+  if (!currentState || !getAudioSourceUrl(currentState) || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
     return;
   }
 

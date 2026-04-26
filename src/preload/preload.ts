@@ -11,6 +11,7 @@ import type {
   DisplayUpdate,
   DisplayWindowState,
   DriftReport,
+  EmbeddedAudioSelection,
   ModePresetResult,
   PlaybackMode,
   RendererReadyReport,
@@ -43,6 +44,7 @@ const api = {
     update: (id: string, update: DisplayUpdate): Promise<DisplayWindowState> =>
       ipcRenderer.invoke('display:update', id, update),
     close: (id: string): Promise<boolean> => ipcRenderer.invoke('display:close', id),
+    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('display:remove', id),
     listMonitors: (): Promise<DisplayMonitorInfo[]> => ipcRenderer.invoke('display:list-monitors'),
     reopen: (id: string): Promise<DisplayWindowState> => ipcRenderer.invoke('display:reopen', id),
   },
@@ -55,6 +57,8 @@ const api = {
   audio: {
     pickFile: (): Promise<AudioRoutingState | undefined> => ipcRenderer.invoke('audio:pick-file'),
     clearFile: (): Promise<AudioRoutingState> => ipcRenderer.invoke('audio:clear-file'),
+    setEmbeddedSource: (selection: EmbeddedAudioSelection): Promise<AudioRoutingState> =>
+      ipcRenderer.invoke('audio:set-embedded-source', selection),
     reportMetadata: (report: AudioMetadataReport): Promise<DirectorState> =>
       ipcRenderer.invoke('audio:metadata', report),
     setSink: (selection: AudioSinkSelection): Promise<DirectorState> =>

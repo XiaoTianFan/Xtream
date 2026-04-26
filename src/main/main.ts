@@ -23,6 +23,7 @@ import type {
   DisplayCreateOptions,
   DisplayUpdate,
   DriftReport,
+  EmbeddedAudioSelection,
   ModePresetResult,
   PlaybackMode,
   RendererReadyReport,
@@ -36,6 +37,8 @@ const director = new Director();
 let controlWindow: BrowserWindow | undefined;
 let displayRegistry: DisplayRegistry | undefined;
 let currentShowConfigPath: string | undefined;
+let autoSaveTimer: NodeJS.Timeout | undefined;
+let isShuttingDown = false;
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
@@ -61,15 +64,67 @@ function createControlWindow(): BrowserWindow {
     void window.loadFile(path.join(rendererRoot, 'index.html'));
   }
 
+  window.on('closed', () => {
+    controlWindow = undefined;
+    if (!isShuttingDown) {
+      beginAppShutdown();
+    }
+  });
+
   return window;
 }
 
 function broadcastDirectorState(state: DirectorState): void {
-  controlWindow?.webContents.send('director:state', state);
+  sendDirectorState(controlWindow, state);
 
   for (const displayWindow of displayRegistry?.getAllWindows() ?? []) {
-    displayWindow.webContents.send('director:state', state);
+    sendDirectorState(displayWindow, state);
   }
+}
+
+function sendDirectorState(window: BrowserWindow | undefined, state: DirectorState): void {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+
+  window.webContents.send('director:state', state);
+}
+
+function beginAppShutdown(): void {
+  isShuttingDown = true;
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = undefined;
+  }
+  displayRegistry?.closeAll();
+  app.quit();
+}
+
+function scheduleShowConfigAutoSave(): void {
+  if (isShuttingDown) {
+    return;
+  }
+  if (!currentShowConfigPath) {
+    return;
+  }
+
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+  }
+
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = undefined;
+    if (!currentShowConfigPath) {
+      return;
+    }
+    void writeShowConfig(currentShowConfigPath, director.createShowConfig()).catch((error: unknown) => {
+      console.error('Failed to auto-save show config.', error);
+    });
+  }, 250);
+}
+
+function shouldAutoSaveTransport(command: TransportCommand): boolean {
+  return command.type === 'set-rate' || command.type === 'set-loop';
 }
 
 async function showSaveDialog(options: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> {
@@ -108,7 +163,11 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
 function registerIpcHandlers(): void {
   ipcMain.handle('director:get-state', () => director.getState());
 
-  ipcMain.handle('director:set-mode', (_event, mode: PlaybackMode) => director.setMode(mode));
+  ipcMain.handle('director:set-mode', (_event, mode: PlaybackMode) => {
+    const state = director.setMode(mode);
+    scheduleShowConfigAutoSave();
+    return state;
+  });
 
   ipcMain.handle('director:apply-mode-preset', (_event, mode: PlaybackMode): ModePresetResult => {
     if (!displayRegistry) {
@@ -127,6 +186,7 @@ function registerIpcHandlers(): void {
 
       director.updateDisplay(displayAWithLayout);
       const state = director.updateDisplay(displayBWithLayout);
+      scheduleShowConfigAutoSave();
       return {
         state,
         primaryDisplayId: displayAWithLayout.id,
@@ -134,6 +194,7 @@ function registerIpcHandlers(): void {
     }
 
     if (mode !== 1) {
+      scheduleShowConfigAutoSave();
       return { state: director.getState() };
     }
 
@@ -145,6 +206,7 @@ function registerIpcHandlers(): void {
     });
 
     const state = director.updateDisplay(displayWithPresetLayout);
+    scheduleShowConfigAutoSave();
     return {
       state,
       primaryDisplayId: displayWithPresetLayout.id,
@@ -152,7 +214,11 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('director:transport', (_event, command: TransportCommand) => {
-    return director.applyTransport(command);
+    const state = director.applyTransport(command);
+    if (shouldAutoSaveTransport(command)) {
+      scheduleShowConfigAutoSave();
+    }
+    return state;
   });
 
   ipcMain.handle('slot:pick-video', async (_event, slotId: string) => {
@@ -174,11 +240,15 @@ function registerIpcHandlers(): void {
     }
 
     const videoPath = result.filePaths[0];
-    return director.setSlotVideo(slotId, videoPath, pathToFileURL(videoPath).toString());
+    const slot = director.setSlotVideo(slotId, videoPath, pathToFileURL(videoPath).toString());
+    scheduleShowConfigAutoSave();
+    return slot;
   });
 
   ipcMain.handle('slot:clear-video', (_event, slotId: string) => {
-    return director.clearSlotVideo(slotId);
+    const slot = director.clearSlotVideo(slotId);
+    scheduleShowConfigAutoSave();
+    return slot;
   });
 
   ipcMain.handle('slot:metadata', (_event, report: SlotMetadataReport) => {
@@ -205,11 +275,21 @@ function registerIpcHandlers(): void {
     }
 
     const audioPath = result.filePaths[0];
-    return director.setAudioFile(audioPath, pathToFileURL(audioPath).toString());
+    const audio = director.setAudioFile(audioPath, pathToFileURL(audioPath).toString());
+    scheduleShowConfigAutoSave();
+    return audio;
   });
 
   ipcMain.handle('audio:clear-file', () => {
-    return director.clearAudioFile();
+    const audio = director.clearAudioFile();
+    scheduleShowConfigAutoSave();
+    return audio;
+  });
+
+  ipcMain.handle('audio:set-embedded-source', (_event, selection: EmbeddedAudioSelection) => {
+    const audio = director.setEmbeddedAudioSource(selection);
+    scheduleShowConfigAutoSave();
+    return audio;
   });
 
   ipcMain.handle('audio:metadata', (_event, report: AudioMetadataReport) => {
@@ -217,11 +297,17 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('audio:set-sink', (_event, selection: AudioSinkSelection) => {
-    return director.setAudioSink(selection);
+    const state = director.setAudioSink(selection);
+    scheduleShowConfigAutoSave();
+    return state;
   });
 
   ipcMain.handle('audio:capabilities', (_event, report: AudioCapabilitiesReport) => {
-    return director.updateAudioCapabilities(report);
+    const state = director.updateAudioCapabilities(report);
+    if (report.fallbackAccepted !== undefined) {
+      scheduleShowConfigAutoSave();
+    }
+    return state;
   });
 
   ipcMain.handle('show:save', async (): Promise<ShowConfigOperationResult> => {
@@ -296,6 +382,7 @@ function registerIpcHandlers(): void {
 
     const display = displayRegistry.create(options);
     director.registerDisplay(display);
+    scheduleShowConfigAutoSave();
     return display;
   });
 
@@ -304,13 +391,26 @@ function registerIpcHandlers(): void {
       throw new Error('Display registry is not initialized.');
     }
 
+    const currentDisplay = director.getState().displays[id];
+    if (!displayRegistry.get(id) && currentDisplay) {
+      return currentDisplay;
+    }
+
     const display = displayRegistry.update(id, update);
     director.updateDisplay(display);
+    scheduleShowConfigAutoSave();
     return display;
   });
 
   ipcMain.handle('display:close', (_event, id: string) => {
     return displayRegistry?.close(id) ?? false;
+  });
+
+  ipcMain.handle('display:remove', (_event, id: string) => {
+    displayRegistry?.remove(id);
+    director.removeDisplay(id);
+    scheduleShowConfigAutoSave();
+    return true;
   });
 
   ipcMain.handle('display:list-monitors', () => {
@@ -331,16 +431,15 @@ function registerIpcHandlers(): void {
       throw new Error(`Unknown display window: ${id}`);
     }
 
-    const display = displayRegistry.create({
-      layout: previous.layout,
-      fullscreen: previous.fullscreen,
-      displayId: previous.displayId,
-    });
+    const display = displayRegistry.reopen(previous);
     director.registerDisplay(display);
     return display;
   });
 
   ipcMain.handle('renderer:ready', (_event, report: RendererReadyReport) => {
+    if (isShuttingDown) {
+      return;
+    }
     if (report.kind === 'display' && report.displayId) {
       const display = displayRegistry?.get(report.displayId);
       if (display) {
@@ -350,14 +449,23 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('renderer:drift', (_event, report: DriftReport) => {
+    if (isShuttingDown) {
+      return;
+    }
     director.ingestDrift(report);
   });
 }
 
 app.whenReady().then(() => {
   displayRegistry = new DisplayRegistry(preloadPath, rendererRoot, (id) => {
+    if (isShuttingDown) {
+      return;
+    }
     director.markDisplayClosed(id);
   }, (state) => {
+    if (isShuttingDown) {
+      return;
+    }
     director.updateDisplay(state);
   });
 
@@ -377,14 +485,26 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', () => {
+    if (isShuttingDown) {
+      return;
+    }
     if (BrowserWindow.getAllWindows().length === 0) {
       controlWindow = createControlWindow();
     }
   });
 });
 
+app.on('before-quit', () => {
+  isShuttingDown = true;
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = undefined;
+  }
+  displayRegistry?.closeAll();
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isShuttingDown || process.platform !== 'darwin') {
     app.quit();
   }
 });

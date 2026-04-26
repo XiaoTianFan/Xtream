@@ -1,10 +1,12 @@
 import './styles.css';
 import { describeLayout, getLayoutSlots } from '../shared/layouts';
+import { getDirectorSeconds } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, LayoutProfile, SlotId, SlotState } from '../shared/types';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
 const displayId = params.get('id') ?? 'unknown-display';
+const showDiagnosticsOverlay = params.get('diagnostics') === '1';
 
 let currentDisplay: DisplayWindowState | undefined;
 let currentRenderSignature = '';
@@ -12,6 +14,7 @@ let currentState: DirectorState | undefined;
 let currentDirectorSeconds = 0;
 let driftTimer: number | undefined;
 let syncTimer: number | undefined;
+const appliedCorrectionRevisions = new Set<number>();
 
 const videoElements = new Map<SlotId, HTMLVideoElement>();
 const SEEK_THRESHOLD_SECONDS = 0.12;
@@ -21,14 +24,6 @@ if (!root) {
 }
 
 const displayRoot = root;
-
-function getDirectorSeconds(state: DirectorState, now = Date.now()): number {
-  if (state.paused) {
-    return state.offsetSeconds;
-  }
-
-  return state.offsetSeconds + ((now - state.anchorWallTimeMs) / 1000) * state.rate;
-}
 
 function renderLayout(layout: LayoutProfile, slotsById: Record<SlotId, SlotState>): void {
   displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
@@ -92,11 +87,14 @@ function createSlotElement(slotId: SlotId, slot: SlotState | undefined): HTMLEle
       });
     });
 
-    const overlay = document.createElement('div');
-    overlay.className = 'slot-overlay';
-    overlay.append(createTextSpan(`Slot ${slotId}`), createTextSpan('muted video rail'));
-
-    slotElement.append(video, overlay);
+    if (showDiagnosticsOverlay) {
+      const overlay = document.createElement('div');
+      overlay.className = 'slot-overlay';
+      overlay.append(createTextSpan(`Slot ${slotId}`), createTextSpan('muted video rail'));
+      slotElement.append(video, overlay);
+    } else {
+      slotElement.append(video);
+    }
     videoElements.set(slotId, video);
     return slotElement;
   }
@@ -135,9 +133,22 @@ function syncVideoElements(state: DirectorState): void {
       continue;
     }
 
-    if (Math.abs(video.currentTime - targetSeconds) > SEEK_THRESHOLD_SECONDS) {
-      video.currentTime = clampVideoTime(targetSeconds, video);
+    const correction = state.corrections.displays[displayId];
+    const shouldApplyCorrection =
+      correction?.action === 'seek' &&
+      correction.targetSeconds !== undefined &&
+      !appliedCorrectionRevisions.has(correction.revision);
+    const correctionTarget = shouldApplyCorrection ? correction.targetSeconds : undefined;
+    const effectiveTarget = correctionTarget ?? targetSeconds;
+
+    if (Math.abs(video.currentTime - effectiveTarget) > SEEK_THRESHOLD_SECONDS) {
+      video.currentTime = clampVideoTime(effectiveTarget, video);
     }
+    if (correction?.revision !== undefined && shouldApplyCorrection) {
+      appliedCorrectionRevisions.add(correction.revision);
+    }
+
+    video.playbackRate = state.rate;
 
     if (state.paused) {
       video.pause();
@@ -166,10 +177,12 @@ driftTimer = window.setInterval(() => {
   const videos = Array.from(videoElements.values()).filter(
     (video) => video.readyState >= HTMLMediaElement.HAVE_METADATA,
   );
+  const directorSeconds = currentState ? getDirectorSeconds(currentState) : currentDirectorSeconds;
+  currentDirectorSeconds = directorSeconds;
   const driftSeconds =
     videos.length > 0
       ? videos.reduce((max, video) => {
-          const drift = video.currentTime - currentDirectorSeconds;
+          const drift = video.currentTime - directorSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)
       : 0;
@@ -177,8 +190,8 @@ driftTimer = window.setInterval(() => {
   void window.xtream.renderer.reportDrift({
     kind: 'display',
     displayId,
-    observedSeconds: videos[0]?.currentTime ?? currentDirectorSeconds,
-    directorSeconds: currentDirectorSeconds,
+    observedSeconds: videos[0]?.currentTime ?? directorSeconds,
+    directorSeconds,
     driftSeconds,
     reportedAtWallTimeMs: Date.now(),
   });

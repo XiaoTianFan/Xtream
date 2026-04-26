@@ -6,6 +6,8 @@ export type DisplayWindowId = string;
 
 export type AudioOutputPath = 'main' | 'left' | 'right';
 
+export type AudioSourceMode = 'none' | 'external-file' | 'embedded-slot';
+
 export type LayoutProfile =
   | { type: 'single'; slot: SlotId }
   | { type: 'split'; slots: [SlotId, SlotId] };
@@ -38,8 +40,10 @@ export type SlotState = {
 };
 
 export type AudioRoutingState = {
+  sourceMode: AudioSourceMode;
   path?: string;
   url?: string;
+  embeddedSlotId?: SlotId;
   sinkId?: string;
   sinkLabel?: string;
   leftSinkId?: string;
@@ -123,7 +127,9 @@ export type PersistedSlotConfig = {
 };
 
 export type PersistedAudioConfig = {
+  sourceMode?: AudioSourceMode;
   path?: string;
+  embeddedSlotId?: SlotId;
   sinkId?: string;
   sinkLabel?: string;
   leftSinkId?: string;
@@ -144,6 +150,7 @@ export type PersistedShowConfig = {
   schemaVersion: 1;
   savedAt: string;
   mode: PlaybackMode;
+  rate?: number;
   durationPolicy: DirectorState['durationPolicy'];
   loop: LoopState;
   slots: PersistedSlotConfig[];
@@ -247,6 +254,10 @@ export type AudioCapabilitiesReport = {
   fallbackReason?: AudioFallbackReason;
 };
 
+export type EmbeddedAudioSelection = {
+  slotId?: SlotId;
+};
+
 export type ModePresetResult = {
   state: DirectorState;
   primaryDisplayId?: DisplayWindowId;
@@ -270,6 +281,7 @@ export type IpcChannels = {
   'slot:metadata': (report: SlotMetadataReport) => DirectorState;
   'audio:pick-file': () => AudioRoutingState | undefined;
   'audio:clear-file': () => AudioRoutingState;
+  'audio:set-embedded-source': (selection: EmbeddedAudioSelection) => AudioRoutingState;
   'audio:metadata': (report: AudioMetadataReport) => DirectorState;
   'audio:set-sink': (selection: AudioSinkSelection) => DirectorState;
   'audio:capabilities': (report: AudioCapabilitiesReport) => DirectorState;
@@ -280,6 +292,7 @@ export type IpcChannels = {
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;
   'display:update': (id: DisplayWindowId, update: DisplayUpdate) => DisplayWindowState;
   'display:close': (id: DisplayWindowId) => boolean;
+  'display:remove': (id: DisplayWindowId) => boolean;
   'display:list-monitors': () => DisplayMonitorInfo[];
   'display:reopen': (id: DisplayWindowId) => DisplayWindowState;
   'renderer:ready': (report: RendererReadyReport) => void;

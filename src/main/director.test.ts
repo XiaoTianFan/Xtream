@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { Director } from './director';
 
+function prepareMode1ReadyDirector(director: Director): void {
+  director.registerDisplay({
+    id: 'display-0',
+    fullscreen: false,
+    layout: { type: 'split', slots: ['A', 'B'] },
+    health: 'ready',
+  });
+  director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
+  director.setSlotVideo('B', 'F:\\media\\b.mp4', 'file:///F:/media/b.mp4');
+  director.updateSlotMetadata({ slotId: 'A', durationSeconds: 20, ready: true });
+  director.updateSlotMetadata({ slotId: 'B', durationSeconds: 20, ready: true });
+  director.setAudioFile('F:\\media\\mix.wav', 'file:///F:/media/mix.wav');
+  director.updateAudioMetadata({ durationSeconds: 20, ready: true });
+}
+
 describe('Director', () => {
   it('starts paused with two default video slots and no displays', () => {
     const director = new Director(() => 1000);
@@ -14,6 +29,7 @@ describe('Director', () => {
   it('advances playback time from the shared anchor while playing', () => {
     let now = 1000;
     const director = new Director(() => now);
+    prepareMode1ReadyDirector(director);
 
     director.applyTransport({ type: 'play' });
     now = 3500;
@@ -24,6 +40,7 @@ describe('Director', () => {
   it('freezes offset when paused', () => {
     let now = 1000;
     const director = new Director(() => now);
+    prepareMode1ReadyDirector(director);
 
     director.applyTransport({ type: 'play' });
     now = 2200;
@@ -150,6 +167,186 @@ describe('Director', () => {
     });
 
     expect(director.getState().audio.lastDriftSeconds).toBe(0.05);
+  });
+
+  it('blocks play until active rails are ready', () => {
+    const director = new Director(() => 1000);
+
+    director.applyTransport({ type: 'play' });
+
+    expect(director.getState().paused).toBe(true);
+    expect(director.getState().readiness.ready).toBe(false);
+    expect(director.getState().readiness.issues.some((issue) => issue.severity === 'error')).toBe(true);
+  });
+
+  it('wraps playback time at director loop boundaries', () => {
+    let now = 1000;
+    const director = new Director(() => now);
+    prepareMode1ReadyDirector(director);
+
+    director.applyTransport({ type: 'set-loop', loop: { enabled: true, startSeconds: 2, endSeconds: 5 } });
+    director.applyTransport({ type: 'seek', seconds: 4 });
+    director.applyTransport({ type: 'play' });
+    now = 3500;
+
+    expect(director.getPlaybackTimeSeconds()).toBe(3.5);
+  });
+
+  it('creates display correction state and degrades repeated drift failures', () => {
+    const director = new Director(() => 1000);
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'single', slot: 'A' },
+      health: 'ready',
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      director.ingestDrift({
+        kind: 'display',
+        displayId: 'display-0',
+        observedSeconds: 1.5,
+        directorSeconds: 1,
+        driftSeconds: 0.5,
+        reportedAtWallTimeMs: 2000 + index,
+      });
+    }
+
+    expect(director.getState().displays['display-0']).toMatchObject({
+      health: 'degraded',
+    });
+    expect(director.getState().corrections.displays['display-0']).toMatchObject({
+      action: 'degraded',
+    });
+  });
+
+  it('does not count warning-only drift as failed correction attempts', () => {
+    const director = new Director(() => 1000);
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'single', slot: 'A' },
+      health: 'ready',
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      director.ingestDrift({
+        kind: 'display',
+        displayId: 'display-0',
+        observedSeconds: 1.075,
+        directorSeconds: 1,
+        driftSeconds: 0.075,
+        reportedAtWallTimeMs: 2000 + index,
+      });
+    }
+
+    expect(director.getState().displays['display-0']).toMatchObject({
+      health: 'ready',
+    });
+    expect(director.getState().corrections.displays['display-0']).toMatchObject({
+      action: 'none',
+      reason: 'Drift is above warning threshold but within correction tolerance.',
+    });
+  });
+
+  it('resets failed correction attempts after drift returns within tolerance', () => {
+    const director = new Director(() => 1000);
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'single', slot: 'A' },
+      health: 'ready',
+    });
+
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1.5,
+      directorSeconds: 1,
+      driftSeconds: 0.5,
+      reportedAtWallTimeMs: 2000,
+    });
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1.02,
+      directorSeconds: 1,
+      driftSeconds: 0.02,
+      reportedAtWallTimeMs: 3000,
+    });
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1.5,
+      directorSeconds: 1,
+      driftSeconds: 0.5,
+      reportedAtWallTimeMs: 4000,
+    });
+
+    expect(director.getState().displays['display-0']).toMatchObject({
+      health: 'ready',
+    });
+    expect(director.getState().corrections.displays['display-0']).toMatchObject({
+      action: 'seek',
+    });
+  });
+
+  it('removes a display record and its correction state', () => {
+    const director = new Director(() => 1000);
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'single', slot: 'A' },
+      health: 'ready',
+    });
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1.5,
+      directorSeconds: 1,
+      driftSeconds: 0.5,
+      reportedAtWallTimeMs: 2000,
+    });
+
+    director.removeDisplay('display-0');
+
+    expect(director.getState().displays['display-0']).toBeUndefined();
+    expect(director.getState().corrections.displays['display-0']).toBeUndefined();
+  });
+
+  it('uses an embedded slot as the audio source and duration authority', () => {
+    const director = new Director(() => 1000);
+    director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
+    director.updateSlotMetadata({ slotId: 'A', durationSeconds: 12, ready: true });
+
+    const audio = director.setEmbeddedAudioSource({ slotId: 'A' });
+    director.updateAudioMetadata({ durationSeconds: 12, ready: true });
+
+    expect(audio).toMatchObject({
+      sourceMode: 'embedded-slot',
+      embeddedSlotId: 'A',
+      ready: false,
+    });
+    expect(director.getState().durationPolicy).toBe('audio');
+    expect(director.getState().durationSeconds).toBe(12);
+    expect(director.getState().audio).toMatchObject({
+      sourceMode: 'embedded-slot',
+      embeddedSlotId: 'A',
+      ready: true,
+    });
+  });
+
+  it('blocks readiness when selected embedded audio slot has no video', () => {
+    const director = new Director(() => 1000);
+
+    director.setEmbeddedAudioSource({ slotId: 'A' });
+
+    expect(director.getState().readiness.issues).toContainEqual(
+      expect.objectContaining({
+        target: 'audio',
+        message: 'Selected embedded audio slot has no video selected.',
+      }),
+    );
   });
 
   it('stores independent left and right sink selections for mode 3', () => {

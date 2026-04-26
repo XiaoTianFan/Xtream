@@ -24,6 +24,31 @@
           <button id="pauseButton" type="button">Pause</button>
           <button id="stopButton" type="button">Stop</button>
         </div>
+        <div class="transport-grid">
+          <label>
+            Seek seconds
+            <input id="seekInput" type="number" min="0" step="0.1" value="0" />
+          </label>
+          <button id="seekButton" class="secondary" type="button">Seek</button>
+          <label>
+            Rate
+            <input id="rateInput" type="number" min="0.1" step="0.1" value="1" />
+          </label>
+          <button id="rateButton" class="secondary" type="button">Set Rate</button>
+          <label>
+            <input id="loopEnabledInput" type="checkbox" />
+            Loop
+          </label>
+          <label>
+            Loop start
+            <input id="loopStartInput" type="number" min="0" step="0.1" value="0" />
+          </label>
+          <label>
+            Loop end
+            <input id="loopEndInput" type="number" min="0" step="0.1" />
+          </label>
+          <button id="loopButton" class="secondary" type="button">Apply Loop</button>
+        </div>
       </section>
 
       <section class="panel">

@@ -21,9 +21,52 @@ export class DisplayRegistry {
   ) {}
 
   create(options: DisplayCreateOptions = {}): DisplayWindowState {
-    const id = `display-${this.nextDisplayNumber}`;
-    this.nextDisplayNumber += 1;
+    const id = this.allocateDisplayId();
+    return this.createEntry(id, options);
+  }
 
+  reopen(state: DisplayWindowState): DisplayWindowState {
+    const existing = this.entries.get(state.id);
+    if (existing && !existing.window.isDestroyed() && state.health !== 'degraded') {
+      existing.window.focus();
+      return { ...existing.state };
+    }
+    if (existing && !existing.window.isDestroyed()) {
+      existing.window.removeAllListeners('closed');
+      existing.window.close();
+      this.entries.delete(state.id);
+    }
+
+    return this.createEntry(state.id, {
+      layout: state.layout,
+      fullscreen: state.fullscreen,
+      displayId: state.displayId,
+    });
+  }
+
+  remove(id: string): boolean {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      return false;
+    }
+
+    entry.window.removeAllListeners('closed');
+    entry.window.close();
+    this.entries.delete(id);
+    return true;
+  }
+
+  private allocateDisplayId(): string {
+    let id: string;
+    do {
+      id = `display-${this.nextDisplayNumber}`;
+      this.nextDisplayNumber += 1;
+    } while (this.entries.has(id));
+
+    return id;
+  }
+
+  private createEntry(id: string, options: DisplayCreateOptions = {}): DisplayWindowState {
     const targetDisplay = options.displayId
       ? screen.getAllDisplays().find((display) => String(display.id) === options.displayId)
       : undefined;
@@ -131,16 +174,6 @@ export class DisplayRegistry {
       scaleFactor: display.scaleFactor,
       internal: display.internal,
     }));
-  }
-
-  reopen(id: string): DisplayWindowState {
-    const entry = this.entries.get(id);
-    if (entry && !entry.window.isDestroyed()) {
-      entry.window.focus();
-      return { ...entry.state };
-    }
-
-    throw new Error(`Display ${id} cannot be reopened because its window no longer exists.`);
   }
 
   private getEntry(id: string): RegistryEntry {

@@ -11,6 +11,7 @@ import type {
   AudioMetadataReport,
   AudioRoutingState,
   AudioSinkSelection,
+  EmbeddedAudioSelection,
   PersistedShowConfig,
   PersistedSlotConfig,
   SlotMetadataReport,
@@ -46,6 +47,7 @@ export class Director extends EventEmitter {
       mode: 1,
       slots: structuredClone(DEFAULT_SLOTS),
       audio: {
+        sourceMode: 'none',
         ready: false,
         physicalSplitAvailable: false,
         fallbackAccepted: false,
@@ -125,8 +127,10 @@ export class Director extends EventEmitter {
   setAudioFile(audioPath: string, audioUrl: string): AudioRoutingState {
     this.state.audio = {
       ...this.state.audio,
+      sourceMode: 'external-file',
       path: audioPath,
       url: audioUrl,
+      embeddedSlotId: undefined,
       durationSeconds: undefined,
       ready: false,
       error: undefined,
@@ -139,6 +143,7 @@ export class Director extends EventEmitter {
 
   clearAudioFile(): AudioRoutingState {
     this.state.audio = {
+      sourceMode: 'none',
       sinkId: this.state.audio.sinkId,
       sinkLabel: this.state.audio.sinkLabel,
       leftSinkId: this.state.audio.leftSinkId,
@@ -148,8 +153,43 @@ export class Director extends EventEmitter {
       ready: false,
       physicalSplitAvailable: this.state.audio.physicalSplitAvailable,
       fallbackAccepted: this.state.audio.fallbackAccepted,
+      capabilityStatus: this.state.audio.capabilityStatus,
+      fallbackReason: this.state.audio.fallbackReason,
     };
     this.state.durationPolicy = 'longest-video';
+    this.recalculateDuration();
+    this.emitState();
+    return structuredClone(this.state.audio);
+  }
+
+  setEmbeddedAudioSource(selection: EmbeddedAudioSelection): AudioRoutingState {
+    if (!selection.slotId) {
+      this.state.audio = {
+        ...this.state.audio,
+        sourceMode: 'none',
+        embeddedSlotId: undefined,
+        ready: false,
+        durationSeconds: undefined,
+        error: undefined,
+      };
+      this.state.durationPolicy = 'longest-video';
+      this.recalculateDuration();
+      this.emitState();
+      return structuredClone(this.state.audio);
+    }
+
+    this.ensureSlot(selection.slotId);
+    this.state.audio = {
+      ...this.state.audio,
+      sourceMode: 'embedded-slot',
+      path: undefined,
+      url: undefined,
+      embeddedSlotId: selection.slotId,
+      durationSeconds: undefined,
+      ready: false,
+      error: undefined,
+    };
+    this.state.durationPolicy = 'audio';
     this.recalculateDuration();
     this.emitState();
     return structuredClone(this.state.audio);
@@ -215,6 +255,7 @@ export class Director extends EventEmitter {
       schemaVersion: 1,
       savedAt,
       mode: this.state.mode,
+      rate: this.state.rate,
       durationPolicy: this.state.durationPolicy,
       loop: structuredClone(this.state.loop),
       slots: Object.values(this.state.slots).map((slot) => ({
@@ -222,7 +263,9 @@ export class Director extends EventEmitter {
         videoPath: slot.videoPath,
       })),
       audio: {
+        sourceMode: this.state.audio.sourceMode,
         path: this.state.audio.path,
+        embeddedSlotId: this.state.audio.embeddedSlotId,
         sinkId: this.state.audio.sinkId,
         sinkLabel: this.state.audio.sinkLabel,
         leftSinkId: this.state.audio.leftSinkId,
@@ -232,7 +275,6 @@ export class Director extends EventEmitter {
         fallbackAccepted: this.state.audio.fallbackAccepted,
       },
       displays: Object.values(this.state.displays)
-        .filter((display) => display.health !== 'closed')
         .map((display) => ({
           layout: structuredClone(display.layout),
           fullscreen: display.fullscreen,
@@ -247,7 +289,7 @@ export class Director extends EventEmitter {
     urls: { slots: Record<string, string | undefined>; audio?: string },
   ): DirectorState {
     this.state.paused = true;
-    this.state.rate = 1;
+    this.state.rate = config.rate ?? 1;
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
     this.state.durationPolicy = config.durationPolicy;
@@ -256,8 +298,10 @@ export class Director extends EventEmitter {
     this.state.mode = config.mode;
     this.state.slots = this.restoreSlots(config.slots, urls.slots);
     this.state.audio = {
+      sourceMode: config.audio.sourceMode ?? (config.audio.path ? 'external-file' : 'none'),
       path: config.audio.path,
       url: urls.audio,
+      embeddedSlotId: config.audio.embeddedSlotId,
       sinkId: config.audio.sinkId,
       sinkLabel: config.audio.sinkLabel,
       leftSinkId: config.audio.leftSinkId,
@@ -311,6 +355,14 @@ export class Director extends EventEmitter {
       this.emitState();
     }
 
+    return this.getState();
+  }
+
+  removeDisplay(id: string): DirectorState {
+    delete this.state.displays[id];
+    delete this.state.corrections.displays[id];
+    this.correctionCounts.delete(`display:${id}`);
+    this.emitState();
     return this.getState();
   }
 
@@ -528,7 +580,29 @@ export class Director extends EventEmitter {
       }
     }
 
-    if (!this.state.audio.path) {
+    if (this.state.audio.sourceMode === 'embedded-slot') {
+      const slotId = this.state.audio.embeddedSlotId;
+      const slot = slotId ? this.state.slots[slotId] : undefined;
+      if (!slotId || !slot?.videoPath) {
+        issues.push({
+          severity: 'error',
+          target: 'audio',
+          message: 'Selected embedded audio slot has no video selected.',
+        });
+      } else if (!slot.ready) {
+        issues.push({
+          severity: 'error',
+          target: 'audio',
+          message: slot.error ?? `Selected embedded audio slot ${slotId} is not ready.`,
+        });
+      } else if (!this.state.audio.ready) {
+        issues.push({
+          severity: 'error',
+          target: 'audio',
+          message: this.state.audio.error ?? `Embedded audio from slot ${slotId} is not ready.`,
+        });
+      }
+    } else if (!this.state.audio.path) {
       issues.push({
         severity: 'error',
         target: 'audio',
@@ -608,6 +682,17 @@ export class Director extends EventEmitter {
       };
     }
 
+    if (absoluteDrift <= DRIFT_CORRECTION_THRESHOLD_SECONDS) {
+      this.correctionCounts.set(railKey, 0);
+      return {
+        action: 'none',
+        driftSeconds,
+        issuedAtWallTimeMs: this.now(),
+        reason: 'Drift is above warning threshold but within correction tolerance.',
+        revision: ++this.correctionRevision,
+      };
+    }
+
     const attempts = (this.correctionCounts.get(railKey) ?? 0) + 1;
     this.correctionCounts.set(railKey, attempts);
 
@@ -623,11 +708,11 @@ export class Director extends EventEmitter {
     }
 
     return {
-      action: absoluteDrift > DRIFT_CORRECTION_THRESHOLD_SECONDS ? 'seek' : 'none',
-      targetSeconds: absoluteDrift > DRIFT_CORRECTION_THRESHOLD_SECONDS ? this.getPlaybackTimeSeconds() : undefined,
+      action: 'seek',
+      targetSeconds: this.getPlaybackTimeSeconds(),
       driftSeconds,
       issuedAtWallTimeMs: this.now(),
-      reason: absoluteDrift > DRIFT_CORRECTION_THRESHOLD_SECONDS ? 'Drift exceeded correction threshold.' : undefined,
+      reason: 'Drift exceeded correction threshold.',
       revision: ++this.correctionRevision,
     };
   }

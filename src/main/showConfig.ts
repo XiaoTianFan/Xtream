@@ -118,6 +118,17 @@ export function validateRuntimeState(state: DirectorState): MediaValidationIssue
       message: `Audio file is missing: ${state.audio.path}`,
     });
   }
+  if (state.audio.sourceMode === 'embedded-slot') {
+    const slotId = state.audio.embeddedSlotId;
+    const slot = slotId ? state.slots[slotId] : undefined;
+    if (!slotId || !slot?.videoPath) {
+      issues.push({
+        severity: 'warning',
+        target: 'audio:embedded',
+        message: 'Embedded audio source is selected, but the selected slot has no video file.',
+      });
+    }
+  }
   if (state.audio.error) {
     issues.push({
       severity: 'warning',
@@ -132,6 +143,20 @@ export function validateRuntimeState(state: DirectorState): MediaValidationIssue
       message: 'Mode 3 physical split routing is unavailable and fallback has not been accepted.',
     });
   }
+  if (state.mode === 3 && state.audio.fallbackReason && state.audio.fallbackReason !== 'none') {
+    issues.push({
+      severity: state.audio.fallbackAccepted ? 'warning' : 'error',
+      target: 'audio:mode3',
+      message: `Mode 3 is using fallback routing: ${state.audio.fallbackReason}.`,
+    });
+  }
+  for (const issue of state.readiness.issues) {
+    issues.push({
+      severity: issue.severity,
+      target: issue.target,
+      message: issue.message,
+    });
+  }
 
   return issues;
 }
@@ -144,5 +169,6 @@ export function createDiagnosticsReport(state: DirectorState, appVersion: string
     versions: process.versions,
     state,
     issues: validateRuntimeState(state),
+    readiness: state.readiness,
   };
 }
