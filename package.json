@@ -1,0 +1,29 @@
+{
+  "name": "xtream",
+  "version": "1.0.0",
+  "description": "Electron cross-platform multi-display exhibition player.",
+  "main": "dist/main/main/main.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json",
+    "test": "vitest run",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run clean && npm run typecheck && npm run test && npm run build:main && npm run build:renderer",
+    "start": "npm run build && electron ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "electron": "^41.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  }
+}

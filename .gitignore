@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Build outputs (TypeScript main/preload/shared + Vite renderer)
+dist/
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment & secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# Test / coverage (Vitest, etc.)
+coverage/
+.vitest/
+
+# Vite (if cache ever lives outside node_modules)
+.vite/
+
+# Optional: packaged Electron apps (electron-builder / forge)
+out/
+release/
+build/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor / IDE (keep team-shared .vscode settings via ! if you commit them)
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

@@ -1,0 +1,213 @@
+import { BrowserWindow, screen } from 'electron';
+import path from 'node:path';
+import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWindowState } from '../shared/types';
+
+type RegistryEntry = {
+  window: BrowserWindow;
+  state: DisplayWindowState;
+};
+
+const DEFAULT_LAYOUT = { type: 'single', slot: 'A' } as const;
+
+export class DisplayRegistry {
+  private readonly entries = new Map<string, RegistryEntry>();
+  private nextDisplayNumber = 0;
+
+  constructor(
+    private readonly preloadPath: string,
+    private readonly rendererEntry: string,
+    private readonly onClosed: (id: string) => void,
+    private readonly onStateChanged: (state: DisplayWindowState) => void,
+  ) {}
+
+  create(options: DisplayCreateOptions = {}): DisplayWindowState {
+    const id = `display-${this.nextDisplayNumber}`;
+    this.nextDisplayNumber += 1;
+
+    const targetDisplay = options.displayId
+      ? screen.getAllDisplays().find((display) => String(display.id) === options.displayId)
+      : undefined;
+
+    const bounds = targetDisplay?.bounds;
+    const window = new BrowserWindow({
+      x: bounds?.x,
+      y: bounds?.y,
+      width: bounds?.width ?? 960,
+      height: bounds?.height ?? 540,
+      fullscreen: options.fullscreen ?? false,
+      autoHideMenuBar: true,
+      title: `Xtream ${id}`,
+      webPreferences: {
+        preload: this.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    const state: DisplayWindowState = {
+      id,
+      bounds: window.getBounds(),
+      displayId: options.displayId,
+      fullscreen: window.isFullScreen(),
+      layout: options.layout ?? DEFAULT_LAYOUT,
+      health: 'starting',
+    };
+
+    this.entries.set(id, { window, state });
+    this.loadDisplay(window, id);
+
+    window.on('closed', () => {
+      this.entries.delete(id);
+      this.onClosed(id);
+    });
+
+    window.on('resize', () => this.refreshWindowState(id));
+    window.on('move', () => this.refreshWindowState(id));
+    window.on('enter-full-screen', () => this.refreshWindowState(id));
+    window.on('leave-full-screen', () => this.refreshWindowState(id));
+    window.on('unresponsive', () => this.markDegraded(id, 'Display renderer became unresponsive.'));
+    window.webContents.on('render-process-gone', (_event, details) => {
+      this.markDegraded(id, `Display renderer process exited: ${details.reason}.`);
+    });
+
+    return { ...state };
+  }
+
+  update(id: string, update: DisplayUpdate): DisplayWindowState {
+    const entry = this.getEntry(id);
+    const nextState: DisplayWindowState = {
+      ...entry.state,
+      ...update,
+    };
+
+    if (update.fullscreen !== undefined && entry.window.isFullScreen() !== update.fullscreen) {
+      entry.window.setFullScreen(update.fullscreen);
+      nextState.fullscreen = update.fullscreen;
+    }
+
+    if (update.displayId !== undefined) {
+      this.moveToDisplay(entry.window, update.displayId);
+      nextState.bounds = entry.window.getBounds();
+      nextState.fullscreen = entry.window.isFullScreen();
+    }
+
+    entry.state = nextState;
+    this.onStateChanged({ ...entry.state });
+    return { ...entry.state };
+  }
+
+  close(id: string): boolean {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      return false;
+    }
+
+    entry.window.close();
+    return true;
+  }
+
+  closeAll(): void {
+    for (const entry of this.entries.values()) {
+      entry.window.close();
+    }
+    this.entries.clear();
+  }
+
+  get(id: string): DisplayWindowState | undefined {
+    const entry = this.entries.get(id);
+    return entry ? { ...entry.state } : undefined;
+  }
+
+  getAllWindows(): BrowserWindow[] {
+    return Array.from(this.entries.values(), (entry) => entry.window);
+  }
+
+  listMonitors(): DisplayMonitorInfo[] {
+    return screen.getAllDisplays().map((display, index) => ({
+      id: String(display.id),
+      label: `Display ${index + 1} (${display.bounds.width}x${display.bounds.height})`,
+      bounds: display.bounds,
+      workArea: display.workArea,
+      scaleFactor: display.scaleFactor,
+      internal: display.internal,
+    }));
+  }
+
+  reopen(id: string): DisplayWindowState {
+    const entry = this.entries.get(id);
+    if (entry && !entry.window.isDestroyed()) {
+      entry.window.focus();
+      return { ...entry.state };
+    }
+
+    throw new Error(`Display ${id} cannot be reopened because its window no longer exists.`);
+  }
+
+  private getEntry(id: string): RegistryEntry {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      throw new Error(`Unknown display window: ${id}`);
+    }
+
+    return entry;
+  }
+
+  private refreshWindowState(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      return;
+    }
+
+    entry.state = {
+      ...entry.state,
+      bounds: entry.window.getBounds(),
+      fullscreen: entry.window.isFullScreen(),
+    };
+    this.onStateChanged({ ...entry.state });
+  }
+
+  private markDegraded(id: string, reason: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      return;
+    }
+
+    entry.state = {
+      ...entry.state,
+      health: 'degraded',
+      degradationReason: reason,
+    };
+    this.onStateChanged({ ...entry.state });
+  }
+
+  private moveToDisplay(window: BrowserWindow, displayId: string | undefined): void {
+    if (!displayId) {
+      return;
+    }
+
+    const targetDisplay = screen.getAllDisplays().find((display) => String(display.id) === displayId);
+    if (!targetDisplay) {
+      return;
+    }
+
+    const wasFullscreen = window.isFullScreen();
+    if (wasFullscreen) {
+      window.setFullScreen(false);
+    }
+    window.setBounds(targetDisplay.bounds);
+    if (wasFullscreen) {
+      window.setFullScreen(true);
+    }
+  }
+
+  private loadDisplay(window: BrowserWindow, id: string): void {
+    if (process.env.VITE_DEV_SERVER_URL) {
+      void window.loadURL(`${process.env.VITE_DEV_SERVER_URL}/display.html?id=${id}`);
+      return;
+    }
+
+    void window.loadFile(path.join(this.rendererEntry, 'display.html'), {
+      query: { id },
+    });
+  }
+}
