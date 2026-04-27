@@ -1280,6 +1280,22 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .display-remove {
   inset: auto var(--compact) var(--compact) auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.monitor-card:has(.display-preview:hover) .display-remove,
+.monitor-card:has(.display-remove:hover) .display-remove,
+.monitor-card:has(.display-remove:focus-visible) .display-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .display-remove {
+    transition: none;
+  }
 }
 
 .display-no-signal {

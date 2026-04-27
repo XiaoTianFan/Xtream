@@ -492,12 +492,7 @@ function dismissAudioSourceContextMenu(): void {
 function renderOutputs(state: DirectorState): void {
   clearMeterElementCaches();
   const strips = Object.values(state.outputs).map((output) => createMixerStrip(output));
-  const addStrip = createButton('Add Output', 'secondary mixer-add-strip', async () => {
-    const output = await window.xtream.outputs.create();
-    selectedEntity = { type: 'output', id: output.id };
-    renderState(await window.xtream.director.getState());
-  });
-  elements.outputPanel.replaceChildren(...strips, addStrip);
+  elements.outputPanel.replaceChildren(...strips);
 }
 
 function syncMixerSelection(): void {
