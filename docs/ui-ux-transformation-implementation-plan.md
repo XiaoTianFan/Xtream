@@ -56,7 +56,7 @@ The current styling in `src/renderer/styles.css` uses rounded cards, spacious pa
 ### 3.3 Important Current Constraints
 
 - The renderer is vanilla TypeScript and DOM construction, not React.
-- `package.json` currently has no Tailwind or Lucide dependency despite `DESIGN.md` specifying utility-first CSS and Lucide icons.
+- `package.json` currently has no Tailwind or Lucide dependency despite `DESIGN.md` specifying mandatory utility-first CSS and Lucide icons.
 - The static prototype uses Tailwind CDN and Material Symbols, while `DESIGN.md` explicitly asks for Lucide icons. Implementation should follow `DESIGN.md` and use the prototype as a layout reference, not as literal dependency guidance.
 - Current control rendering is centralized in one large `src/renderer/control.ts`, which increases risk for a large visual refactor unless the work introduces componentized renderer modules.
 - Current element ids preserve some old names such as `slotList` and `applyMode1Button`; these are not user-facing but should be renamed during the UI refactor to prevent future slot/mode leakage.
@@ -170,7 +170,7 @@ Missing UX:
 - Linked fader behavior between mixer strip and selected-output detail pane.
 - Clear visual distinction between logical bus, selected audio sources, and physical sink.
 
-Implementation implication: preserve `VirtualOutputState` and add `solo` either as renderer-local mix behavior or persisted output state after product decision. A persisted `solo` field is preferable if solo must affect readiness/diagnostics and survive reload.
+Implementation implication: preserve `VirtualOutputState` and implement solo as transient renderer/session state. Solo must affect the live Web Audio graph, but it should not be saved to show files or included as persisted diagnostic state.
 
 ### 5.6 Header Transport Gaps
 
@@ -248,14 +248,14 @@ This split keeps the current runtime behavior intact while making the visual ref
 
 ### 7.1 Styling Strategy
 
-`DESIGN.md` asks for utility-first CSS with Tailwind, but the repo currently uses plain CSS. There are two viable paths:
+`DESIGN.md` asks for utility-first CSS with Tailwind, and Tailwind is mandatory for this refactor. The repo currently uses plain CSS, so Tailwind setup is part of the implementation work.
 
-1. Add Tailwind to the Vite renderer build and migrate the control shell to utility classes.
-2. Implement the design tokens in CSS custom properties and use semantic class names.
+Required approach:
 
-Recommended path: add Tailwind only if the team wants utility-first styling as a durable convention. Otherwise, CSS custom properties are lower-risk for the current vanilla DOM renderer and easier to inspect in a small Electron app.
-
-Because the design doc explicitly lists Tailwind as a technical requirement, the implementation plan should include a Tailwind setup spike. If the spike adds build friction or bloats the refactor, use CSS tokens while preserving the same token names.
+- Add Tailwind to the Vite renderer build.
+- Encode the Morandi-Tech design tokens in Tailwind config.
+- Use CSS custom properties only as the underlying token source where helpful; Tailwind remains the authoring layer for the control shell.
+- Do not use the static prototype's Tailwind CDN in production.
 
 ### 7.2 Tokens
 
@@ -327,12 +327,12 @@ The Patch view is the first implemented surface. Cue, Performance, Config, and L
 Initial rails:
 
 - Patch: implemented, active by default.
-- Cue: disabled or placeholder linked to roadmap.
-- Performance: disabled or placeholder linked to roadmap.
+- Cue: placeholder linked to roadmap.
+- Performance: placeholder linked to roadmap.
 - Config: basic diagnostics/settings surface or placeholder.
 - Logs: diagnostics/issues surface if easy to expose.
 
-Do not wire unfinished controls that can alter show state. Disabled rail items should be visually clear and keyboard reachable only if they open a placeholder.
+Do not wire unfinished controls that can alter show state. Placeholder rail items should clearly communicate that the surface is planned and should not expose fake cue/performance controls.
 
 ### 8.4 Media Pool
 
@@ -415,11 +415,9 @@ Mixer interactions:
 
 - Drag fader updates `busLevelDb`.
 - Mute updates `muted`.
-- Solo either:
-  - persists a new `solo` property on `VirtualOutputState`, or
-  - stays renderer-local and only affects the local Web Audio graph.
-
-Recommendation: persist `solo` if it is treated as real show state and belongs in diagnostics. Add `solo?: boolean` to `VirtualOutputState`, config, and output update type.
+- Solo stays transient and only affects the current live session's Web Audio graph.
+- Solo clear resets transient solo state across outputs.
+- Solo is not persisted to show files and is not included as persisted diagnostic state.
 
 ### 8.7 Dynamic Details Pane
 
@@ -465,13 +463,17 @@ type DisplayWindowState = {
 };
 ```
 
-Global rate remains multiplicative over per-media rate as required by `DESIGN.md`.
+Visual playback rate and audio-source playback rate are durable media-record properties. If the same visual or audio source is used in multiple displays/outputs, its media-record rate applies everywhere. The global playback rate remains multiplicative on top of the media-record rate as required by `DESIGN.md`.
+
+Visual opacity, brightness, and contrast are global properties of the visual media record. If the same visual is used in multiple display windows or split layouts, the same appearance adjustments apply everywhere that visual is rendered.
+
+File size should be refreshed whenever media metadata is revalidated, not only captured once at import time.
 
 ### 8.8 Status Footer
 
 Footer actions:
 
-- Engine/app version.
+- Engine/runtime version.
 - Global audio mute.
 - Global display blackout.
 - Global blackout for both audio and displays if product confirms.
@@ -487,7 +489,9 @@ type DirectorState = {
 };
 ```
 
-Display blackout should be applied in display renderer and previews. Audio mute should be applied in the control renderer Web Audio graph.
+Global mute and blackout are live-session controls. They apply immediately to the current running session, but they are not saved into the show file. Display blackout should be applied in display renderer and previews. Audio mute should be applied in the control renderer Web Audio graph. Runtime diagnostics may report whether they are currently active as live state, but reopening a show should not restore them automatically.
+
+Xtream should maintain a separate engine/runtime version, distinct from the package app version. The starting runtime version for this refactor line is `v0.0.4`, reflecting the nightly stage and the planned schema v4 upgrade. The footer should display the runtime version, and diagnostics should include both the package app version and runtime version.
 
 ## 9. Implementation Phases
 
@@ -520,7 +524,7 @@ Goal: replace the page layout with the persistent app shell while keeping existi
 Tasks:
 
 - Add control-shell token layer based on `DESIGN.md`.
-- Decide Tailwind vs CSS-token implementation after a small build spike.
+- Add Tailwind to the renderer build and wire the design tokens into Tailwind config.
 - Add Lucide icon dependency and icon helper, or a local inline-SVG wrapper generated from Lucide if dependency cost is a concern.
 - Build shell regions:
   - nav rail.
@@ -612,7 +616,7 @@ Tasks:
 
 - Build mixer strips from `VirtualOutputState`.
 - Add vertical fader and VU meter.
-- Add mute toggle and solo toggle.
+- Add mute toggle and transient solo toggle.
 - Add phantom create-output strip.
 - Link selected output detail fader with mixer fader.
 - Move physical sink, source selection, per-source faders, fallback acceptance, test tone, and remove action into Output details.
@@ -623,7 +627,7 @@ Acceptance:
 - Multiple virtual outputs can be mixed from footer strips.
 - Meters remain responsive.
 - Output detail controls update the same runtime graph.
-- Mute/solo behavior is deterministic and reflected in diagnostics if persisted.
+- Mute and transient solo behavior is deterministic. Mute remains persisted where represented on the output; solo resets with the live session.
 
 ### Phase 6: Dynamic Details For Visuals And Audio Sources
 
@@ -638,16 +642,16 @@ Tasks:
   - brightness.
   - contrast.
   - per-visual playback rate.
-  - file size.
+  - file size refreshed during metadata validation.
 - Apply visual appearance controls in display renderer and previews.
 - Add audio source detail controls:
   - label.
   - path/source visual.
-  - duration/readiness/file size.
+  - duration/readiness/file size refreshed during metadata validation.
   - source-level fader.
   - per-source playback rate.
 - Apply audio source rate/level in Web Audio runtime.
-- Persist new fields in schema version 4 or as an explicit schema version 3 extension only if backward compatibility is guaranteed.
+- Persist new durable media fields in schema version 4 or as an explicit schema version 3 extension only if backward compatibility is guaranteed. Do not persist transient solo, global audio mute, or global display blackout.
 
 Acceptance:
 
@@ -683,12 +687,13 @@ Goal: round out shell surfaces without overbuilding future roadmap features.
 
 Tasks:
 
-- Add footer engine version from app metadata.
-- Add global audio mute.
-- Add global display blackout.
+- Add footer engine/runtime version from a dedicated runtime version source, starting at `v0.0.4`.
+- Add session-scoped global audio mute.
+- Add session-scoped global display blackout.
 - Add reset meters.
 - Add a Config/Logs surface for readiness issues, diagnostics export, physical output refresh, and Director State.
-- Keep Cue and Performance as clear future surfaces unless active implementation begins.
+- Add or update a runtime changelog so release-facing engine changes can be tracked separately from package metadata.
+- Keep Cue and Performance as placeholders unless active implementation begins.
 
 Acceptance:
 
@@ -703,9 +708,10 @@ Goal: prove the new UI did not weaken show behavior.
 Tasks:
 
 - Unit tests:
-  - new persisted fields and migrations.
-  - global mute/blackout state.
-  - solo/mute output behavior if persisted.
+- new persisted fields and migrations.
+- runtime version source and changelog entry for `v0.0.4`.
+- global mute/blackout state.
+  - output mute behavior and transient solo graph behavior.
   - per-media rate and level calculations.
   - loop/rate interactions after UI commands.
 - Renderer tests or smoke scripts:
@@ -763,7 +769,6 @@ type DisplayUpdate = {
 };
 
 type VirtualOutputUpdate = {
-  solo?: boolean;
   muted?: boolean;
   busLevelDb?: number;
   sources?: VirtualOutputSourceSelection[];
@@ -784,7 +789,7 @@ For Electron security, dropped file paths should be validated in the main proces
 
 ### 10.3 Persistence Version
 
-Current persistence supports schema version 3 only. Adding visual appearance fields, source gain/rate, display labels, global mute/blackout, and solo state should trigger schema version 4.
+Current persistence supports schema version 3 only. Adding durable visual appearance fields, source gain/rate, display labels, and refreshed file-size metadata should trigger schema version 4.
 
 Schema version 4 should include:
 
@@ -792,14 +797,29 @@ Schema version 4 should include:
 - visual appearance/rate/file size where applicable.
 - audio source source-level gain/rate/file size where applicable.
 - display label and telemetry preferences if persisted.
-- virtual output solo if persisted.
-- global mute/blackout if show-scoped.
+- no virtual output solo; solo is transient live-session state.
+- no global mute/blackout; both are transient live-session state.
 - optional UI preferences only if they are show-scoped; otherwise keep them in local storage.
 
 Add migration:
 
 - v3 -> v4: fill defaults.
 - v1/v2 compatibility only if older configs are expected in real use. Current `showConfig.ts` rejects anything except v3, so this should be addressed before external release if old show files exist.
+
+The schema v4 work should be coordinated with the runtime version move to `v0.0.4`, and the runtime changelog should call out the schema change.
+
+### 10.4 Runtime Versioning
+
+Maintain an engine/runtime version separately from `package.json`.
+
+Recommended implementation:
+
+- Add a small shared version module, for example `src/shared/version.ts`, exporting `XTREAM_RUNTIME_VERSION = 'v0.0.4'`.
+- Display the runtime version in the status footer.
+- Include both `appVersion` and `runtimeVersion` in diagnostics.
+- Add a dedicated changelog, for example `docs/runtime-changelog.md`, beginning with `v0.0.4`.
+- Use runtime changelog entries for schema, playback engine, routing, display, sync, and diagnostics changes.
+- Keep `package.json` version for packaged app/distribution metadata.
 
 ## 11. Accessibility And Interaction Requirements
 
@@ -846,6 +866,7 @@ Functional acceptance:
 - Readiness blocks play when active displays/media/outputs are invalid.
 - Save/open preserves show state through schema migration.
 - Diagnostics include the new state.
+- Diagnostics include both package app version and engine/runtime version.
 
 UX acceptance:
 
@@ -863,6 +884,7 @@ Technical acceptance:
 - `npm test` passes.
 - `npm run build` passes.
 - Manual test doc is updated.
+- Runtime changelog includes the `v0.0.4` schema v4/runtime entry.
 - Hardware smoke tests are recorded for Windows and macOS targets.
 
 ## 14. Risks And Mitigations
@@ -874,10 +896,10 @@ Technical acceptance:
 | Details pane adds fields not represented in state | High | Add type, IPC, persistence, and tests with each field |
 | More live previews increase CPU/GPU load | Medium | Keep previews muted, modest size, throttle sync, add future preview quality setting if needed |
 | Resizable panes can create unusable layouts | Medium | CSS min/max constraints and reset layout action |
-| Solo semantics are ambiguous | Medium | Decide persisted vs renderer-local before implementation |
-| Global blackout/mute could surprise operators | High | Make state prominent, reversible, and persisted only if product confirms |
+| Solo semantics are transient but operationally important | Medium | Keep solo renderer/session-scoped, make active solo state prominent, and provide Solo Clear |
+| Global blackout/mute could surprise operators | High | Make state prominent, reversible, session-scoped, and never restored silently from a show file |
 | Schema v4 migration breaks existing configs | High | Add migration tests and keep v3 fixture coverage |
-| Tailwind adoption adds build complexity | Low/Medium | Run a spike; fall back to CSS custom properties if it slows the core refactor |
+| Tailwind adoption adds build complexity | Low/Medium | Treat Tailwind setup as required Phase 1 work and keep token definitions centralized |
 
 ## 15. Recommended Build Order
 
@@ -897,18 +919,18 @@ The safest order is:
 
 This order keeps the current working runtime visible throughout the refactor and avoids mixing layout work with deep playback model changes too early.
 
-## 16. Open Product Decisions
+## 16. Product Decisions
 
-These should be resolved before Phase 5 or Phase 6:
+Resolved decisions:
 
-- Should solo state be persisted and included in diagnostics, or treated as transient operator state?
-- Are global audio mute and global display blackout show-file state or local session state?
-- Should per-visual opacity/brightness/contrast apply globally to that visual wherever used, or per display assignment?
-- Should per-visual playback rate and per-audio-source playback rate be persisted in media records or assignment records?
-- Should file size be captured at import time only, or refreshed when media metadata is revalidated?
-- Should Cue and Performance rail items be disabled, placeholders, or hidden until implementation begins?
-- Is Tailwind mandatory for this repo, or are CSS custom properties acceptable if they implement the same token system?
-- Should the status footer use actual package app version or a separate engine/runtime version?
+- Solo state is transient operator/session state. It affects the live Web Audio graph, resets with the session, and is not saved to show files.
+- Global audio mute and global display blackout are live-session controls. They apply to the current session and are not restored from a show file.
+- Visual opacity, brightness, and contrast apply globally to that visual everywhere it is used.
+- Visual playback rate and audio-source playback rate are media-record properties, and global playback rate multiplies on top of them.
+- File size is refreshed when media metadata is revalidated.
+- Cue and Performance rail items should be placeholders until implementation begins.
+- Tailwind is mandatory for the control UI refactor.
+- Xtream maintains a separate engine/runtime version and changelog. The starting runtime version is `v0.0.4`.
 
 ## 17. Near-Term Next Step
 
