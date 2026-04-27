@@ -7,7 +7,7 @@ type RegistryEntry = {
   state: DisplayWindowState;
 };
 
-const DEFAULT_LAYOUT = { type: 'single', slot: 'A' } as const;
+const DEFAULT_LAYOUT = { type: 'single' } as const;
 
 export class DisplayRegistry {
   private readonly entries = new Map<string, RegistryEntry>();

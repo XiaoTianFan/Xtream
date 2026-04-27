@@ -1,17 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  describeLayout,
-  getActiveDisplays,
-  getLayoutSlots,
-  getMode1TargetLayout,
-  getMode2TargetLayouts,
-  getMode3TargetLayouts,
-} from './layouts';
+import { createSingleLayout, createSplitLayout, describeLayout, getActiveDisplays, getLayoutVisualIds } from './layouts';
 
 describe('layout helpers', () => {
   it('describes single and split layouts for UI diagnostics', () => {
-    expect(describeLayout({ type: 'single', slot: 'A' })).toBe('single: A');
-    expect(describeLayout({ type: 'split', slots: ['A', 'B'] })).toBe('split: A + B');
+    expect(describeLayout({ type: 'single', visualId: 'visual-a' })).toBe('single: visual-a');
+    expect(describeLayout({ type: 'split', visualIds: ['visual-a', 'visual-b'] })).toBe('split: visual-a + visual-b');
   });
 
   it('returns active displays sorted by registry id', () => {
@@ -19,19 +12,19 @@ describe('layout helpers', () => {
       'display-2': {
         id: 'display-2',
         fullscreen: false,
-        layout: { type: 'single', slot: 'B' },
+        layout: { type: 'single', visualId: 'visual-b' },
         health: 'ready',
       },
       'display-0': {
         id: 'display-0',
         fullscreen: false,
-        layout: { type: 'single', slot: 'A' },
+        layout: { type: 'single', visualId: 'visual-a' },
         health: 'ready',
       },
       'display-1': {
         id: 'display-1',
         fullscreen: false,
-        layout: { type: 'split', slots: ['A', 'B'] },
+        layout: { type: 'split', visualIds: ['visual-a', 'visual-b'] },
         health: 'closed',
       },
     });
@@ -39,21 +32,10 @@ describe('layout helpers', () => {
     expect(active.map((display) => display.id)).toEqual(['display-0', 'display-2']);
   });
 
-  it('defines mode 1 as a split A/B layout', () => {
-    const layout = getMode1TargetLayout();
-
-    expect(layout).toEqual({ type: 'split', slots: ['A', 'B'] });
-    expect(getLayoutSlots(layout)).toEqual(['A', 'B']);
-  });
-
-  it('defines mode 2 as two single-slot display layouts', () => {
-    expect(getMode2TargetLayouts()).toEqual([
-      { type: 'single', slot: 'A' },
-      { type: 'single', slot: 'B' },
-    ]);
-  });
-
-  it('defines mode 3 with the same display layouts as mode 2', () => {
-    expect(getMode3TargetLayouts()).toEqual(getMode2TargetLayouts());
+  it('creates visual layouts and returns mapped visual ids', () => {
+    expect(createSingleLayout('visual-a')).toEqual({ type: 'single', visualId: 'visual-a' });
+    const split = createSplitLayout('visual-a', 'visual-b');
+    expect(split).toEqual({ type: 'split', visualIds: ['visual-a', 'visual-b'] });
+    expect(getLayoutVisualIds(split)).toEqual(['visual-a', 'visual-b']);
   });
 });

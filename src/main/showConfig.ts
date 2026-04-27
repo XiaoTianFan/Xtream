@@ -7,6 +7,7 @@ import type {
   DirectorState,
   MediaValidationIssue,
   PersistedShowConfig,
+  PersistedShowConfigV3,
 } from '../shared/types';
 
 export const SHOW_CONFIG_EXTENSION = 'xtream-show.json';
@@ -26,138 +27,109 @@ export async function writeJsonFile(filePath: string, value: unknown): Promise<v
 
 export async function readShowConfig(filePath: string): Promise<PersistedShowConfig> {
   const raw = await readFile(filePath, 'utf8');
-  const parsed = JSON.parse(raw) as unknown;
-  return assertShowConfig(parsed);
+  return assertShowConfig(JSON.parse(raw) as unknown);
 }
 
 export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!value || typeof value !== 'object') {
     throw new Error('Show config must be a JSON object.');
   }
-
-  const candidate = value as Partial<PersistedShowConfig>;
-  if (candidate.schemaVersion !== 1) {
-    throw new Error('Unsupported show config schema version.');
+  const candidate = value as Partial<PersistedShowConfigV3>;
+  if (candidate.schemaVersion !== 3) {
+    throw new Error('Unsupported show config schema version. This build supports schema version 3 only.');
   }
-  if (![1, 2, 3].includes(candidate.mode as number)) {
-    throw new Error('Show config has an invalid playback mode.');
+  if (!candidate.visuals || typeof candidate.visuals !== 'object') {
+    throw new Error('Show config is missing visuals.');
   }
-  if (!Array.isArray(candidate.slots)) {
-    throw new Error('Show config is missing slots.');
+  if (!candidate.audioSources || typeof candidate.audioSources !== 'object') {
+    throw new Error('Show config is missing audio sources.');
   }
-  if (!candidate.audio || typeof candidate.audio !== 'object') {
-    throw new Error('Show config is missing audio settings.');
+  if (!candidate.outputs || typeof candidate.outputs !== 'object') {
+    throw new Error('Show config is missing virtual outputs.');
   }
   if (!Array.isArray(candidate.displays)) {
     throw new Error('Show config is missing display mappings.');
   }
-
   return candidate as PersistedShowConfig;
 }
 
 export function buildMediaUrls(config: PersistedShowConfig): {
-  slots: Record<string, string | undefined>;
-  audio?: string;
+  visuals: Record<string, string | undefined>;
+  audioSources: Record<string, string | undefined>;
 } {
   return {
-    slots: Object.fromEntries(
-      config.slots.map((slot) => [slot.id, slot.videoPath ? pathToFileURL(slot.videoPath).toString() : undefined]),
+    visuals: Object.fromEntries(
+      Object.values(config.visuals).map((visual) => [
+        visual.id,
+        visual.path ? pathToFileURL(visual.path).toString() : undefined,
+      ]),
     ),
-    audio: config.audio.path ? pathToFileURL(config.audio.path).toString() : undefined,
+    audioSources: Object.fromEntries(
+      Object.values(config.audioSources).map((source) => [
+        source.id,
+        source.type === 'external-file' && source.path ? pathToFileURL(source.path).toString() : undefined,
+      ]),
+    ),
   };
 }
 
 export function validateShowConfigMedia(config: PersistedShowConfig): MediaValidationIssue[] {
   const issues: MediaValidationIssue[] = [];
-
-  for (const slot of config.slots) {
-    if (slot.videoPath && !fs.existsSync(slot.videoPath)) {
+  for (const visual of Object.values(config.visuals)) {
+    if (visual.path && !fs.existsSync(visual.path)) {
       issues.push({
         severity: 'warning',
-        target: `slot:${slot.id}`,
-        message: `Video file is missing: ${slot.videoPath}`,
+        target: `visual:${visual.id}`,
+        message: `Visual file is missing: ${visual.path}`,
       });
     }
   }
-
-  if (config.audio.path && !fs.existsSync(config.audio.path)) {
-    issues.push({
-      severity: 'warning',
-      target: 'audio',
-      message: `Audio file is missing: ${config.audio.path}`,
-    });
+  for (const source of Object.values(config.audioSources)) {
+    if (source.type === 'external-file' && source.path && !fs.existsSync(source.path)) {
+      issues.push({
+        severity: 'warning',
+        target: `audio-source:${source.id}`,
+        message: `Audio file is missing: ${source.path}`,
+      });
+    }
   }
-
   return issues;
 }
 
 export function validateRuntimeState(state: DirectorState): MediaValidationIssue[] {
   const issues: MediaValidationIssue[] = [];
-
-  for (const slot of Object.values(state.slots)) {
-    if (slot.videoPath && !fs.existsSync(slot.videoPath)) {
+  for (const visual of Object.values(state.visuals)) {
+    if (visual.path && !fs.existsSync(visual.path)) {
       issues.push({
         severity: 'warning',
-        target: `slot:${slot.id}`,
-        message: `Video file is missing: ${slot.videoPath}`,
+        target: `visual:${visual.id}`,
+        message: `Visual file is missing: ${visual.path}`,
       });
     }
-    if (slot.error) {
+    if (visual.error) {
+      issues.push({ severity: 'warning', target: `visual:${visual.id}`, message: visual.error });
+    }
+  }
+  for (const source of Object.values(state.audioSources)) {
+    if (source.type === 'external-file' && source.path && !fs.existsSync(source.path)) {
       issues.push({
         severity: 'warning',
-        target: `slot:${slot.id}`,
-        message: slot.error,
+        target: `audio-source:${source.id}`,
+        message: `Audio file is missing: ${source.path}`,
       });
     }
-  }
-
-  if (state.audio.path && !fs.existsSync(state.audio.path)) {
-    issues.push({
-      severity: 'warning',
-      target: 'audio',
-      message: `Audio file is missing: ${state.audio.path}`,
-    });
-  }
-  if (state.audio.sourceMode === 'embedded-slot') {
-    const slotId = state.audio.embeddedSlotId;
-    const slot = slotId ? state.slots[slotId] : undefined;
-    if (!slotId || !slot?.videoPath) {
-      issues.push({
-        severity: 'warning',
-        target: 'audio:embedded',
-        message: 'Embedded audio source is selected, but the selected slot has no video file.',
-      });
+    if (source.error) {
+      issues.push({ severity: 'warning', target: `audio-source:${source.id}`, message: source.error });
     }
   }
-  if (state.audio.error) {
-    issues.push({
-      severity: 'warning',
-      target: 'audio',
-      message: state.audio.error,
-    });
-  }
-  if (state.mode === 3 && !state.audio.physicalSplitAvailable && !state.audio.fallbackAccepted) {
-    issues.push({
-      severity: 'warning',
-      target: 'audio:mode3',
-      message: 'Mode 3 physical split routing is unavailable and fallback has not been accepted.',
-    });
-  }
-  if (state.mode === 3 && state.audio.fallbackReason && state.audio.fallbackReason !== 'none') {
-    issues.push({
-      severity: state.audio.fallbackAccepted ? 'warning' : 'error',
-      target: 'audio:mode3',
-      message: `Mode 3 is using fallback routing: ${state.audio.fallbackReason}.`,
-    });
+  for (const output of Object.values(state.outputs)) {
+    if (output.error) {
+      issues.push({ severity: 'warning', target: `output:${output.id}`, message: output.error });
+    }
   }
   for (const issue of state.readiness.issues) {
-    issues.push({
-      severity: issue.severity,
-      target: issue.target,
-      message: issue.message,
-    });
+    issues.push({ severity: issue.severity, target: issue.target, message: issue.message });
   }
-
   return issues;
 }
 

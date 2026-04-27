@@ -1,41 +1,27 @@
-import type { DisplayWindowState, LayoutProfile, SlotId } from './types';
+import type { DisplayWindowState, VisualId, VisualLayoutProfile } from './types';
 
-export const DEFAULT_SLOT_IDS = ['A', 'B'] as const;
-
-export function createSingleLayout(slot: SlotId): LayoutProfile {
-  return { type: 'single', slot };
+export function createSingleLayout(visualId?: VisualId): VisualLayoutProfile {
+  return { type: 'single', visualId };
 }
 
-export function createSplitLayout(leftSlot: SlotId, rightSlot: SlotId): LayoutProfile {
-  return { type: 'split', slots: [leftSlot, rightSlot] };
+export function createSplitLayout(leftVisualId?: VisualId, rightVisualId?: VisualId): VisualLayoutProfile {
+  return { type: 'split', visualIds: [leftVisualId, rightVisualId] };
 }
 
-export function describeLayout(layout: LayoutProfile): string {
+export function describeLayout(layout: VisualLayoutProfile): string {
   if (layout.type === 'single') {
-    return `single: ${layout.slot}`;
+    return `single: ${layout.visualId ?? 'none'}`;
   }
 
-  return `split: ${layout.slots.join(' + ')}`;
+  return `split: ${layout.visualIds.map((visualId) => visualId ?? 'none').join(' + ')}`;
 }
 
-export function getLayoutSlots(layout: LayoutProfile): SlotId[] {
-  return layout.type === 'single' ? [layout.slot] : [...layout.slots];
+export function getLayoutVisualIds(layout: VisualLayoutProfile): VisualId[] {
+  return layout.type === 'single' ? (layout.visualId ? [layout.visualId] : []) : layout.visualIds.filter(Boolean) as VisualId[];
 }
 
 export function getActiveDisplays(displays: Record<string, DisplayWindowState>): DisplayWindowState[] {
   return Object.values(displays)
     .filter((display) => display.health !== 'closed')
     .sort((left, right) => left.id.localeCompare(right.id));
-}
-
-export function getMode1TargetLayout(): LayoutProfile {
-  return createSplitLayout(DEFAULT_SLOT_IDS[0], DEFAULT_SLOT_IDS[1]);
-}
-
-export function getMode2TargetLayouts(): [LayoutProfile, LayoutProfile] {
-  return [createSingleLayout(DEFAULT_SLOT_IDS[0]), createSingleLayout(DEFAULT_SLOT_IDS[1])];
-}
-
-export function getMode3TargetLayouts(): [LayoutProfile, LayoutProfile] {
-  return getMode2TargetLayouts();
 }

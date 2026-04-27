@@ -24,10 +24,14 @@
           <button id="pauseButton" type="button">Pause</button>
           <button id="stopButton" type="button">Stop</button>
         </div>
+        <div class="timeline-control">
+          <input id="timelineScrubber" type="range" min="0" max="0" step="0.01" value="0" />
+          <div id="timelineSummary" class="hint">No active timeline duration</div>
+        </div>
         <div class="transport-grid">
           <label>
-            Seek seconds
-            <input id="seekInput" type="number" min="0" step="0.1" value="0" />
+            Seek timecode
+            <input id="seekInput" type="text" value="00:00.000" />
           </label>
           <button id="seekButton" class="secondary" type="button">Seek</button>
           <label>
@@ -64,22 +68,24 @@
       </section>
 
       <section class="panel">
-        <h2>Mode Presets</h2>
+        <h2>Setup Presets</h2>
         <div class="button-row">
-          <button id="applyMode1Button" type="button">Apply Mode 1: Split Display</button>
-          <button id="applyMode2Button" type="button">Apply Mode 2: Two Displays</button>
-          <button id="applyMode3Button" type="button">Apply Mode 3: Split Audio</button>
+          <button id="applyMode1Button" type="button">Split Display on One Screen</button>
+          <button id="applyMode2Button" type="button">Two Displays</button>
         </div>
-        <p class="hint">Mode 1 maps slots A and B to one split display. Modes 2 and 3 map each slot to its own display; Mode 3 also enables L/R audio routing.</p>
+        <p class="hint">Presets map the first available visuals while preserving existing audio outputs.</p>
       </section>
 
       <section class="panel">
-        <h2>Video Slots</h2>
+        <h2>Visual Pool</h2>
+        <div class="button-row">
+          <button id="addVisualsButton" type="button">Add Visuals</button>
+        </div>
         <div id="slotList" class="slot-list"></div>
       </section>
 
       <section class="panel">
-        <h2>Stereo Audio Rail</h2>
+        <h2>Audio Pool</h2>
         <div id="audioPanel" class="audio-panel"></div>
       </section>
 
@@ -92,10 +98,10 @@
         <div id="displayList" class="display-list" aria-live="polite"></div>
       </section>
 
-      <section class="panel">
-        <h2>Director State</h2>
+      <details class="panel">
+        <summary>Director State</summary>
         <pre id="stateView"></pre>
-      </section>
+      </details>
     </main>
   </body>
 </html>

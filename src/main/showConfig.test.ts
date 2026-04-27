@@ -14,44 +14,82 @@ import {
 import type { DirectorState, PersistedShowConfig } from '../shared/types';
 
 const config: PersistedShowConfig = {
-  schemaVersion: 1,
+  schemaVersion: 3,
   savedAt: '2026-04-26T00:00:00.000Z',
-  mode: 3,
-  durationPolicy: 'audio',
+  rate: 1,
   loop: { enabled: true, startSeconds: 0, endSeconds: 10 },
-  slots: [{ id: 'A', videoPath: 'F:\\media\\a.mp4' }, { id: 'B' }],
-  audio: {
-    sourceMode: 'external-file',
-    path: 'F:\\media\\mix.wav',
-    sinkId: 'main',
-    sinkLabel: 'Main',
-    leftSinkId: 'left',
-    leftSinkLabel: 'Left',
-    rightSinkId: 'right',
-    rightSinkLabel: 'Right',
-    fallbackAccepted: false,
+  visuals: {
+    'visual-a': {
+      id: 'visual-a',
+      label: 'Visual A',
+      type: 'video',
+      path: 'F:\\media\\a.mp4',
+    },
+  },
+  audioSources: {
+    'audio-source-main': {
+      id: 'audio-source-main',
+      label: 'Audio Source 1',
+      type: 'external-file',
+      path: 'F:\\media\\mix.wav',
+    },
+  },
+  outputs: {
+    'output-main': {
+      id: 'output-main',
+      label: 'Main Output',
+      sources: [{ audioSourceId: 'audio-source-main', levelDb: 0 }],
+      sinkId: 'main',
+      sinkLabel: 'Main',
+      busLevelDb: 0,
+    },
   },
   displays: [
     {
-      layout: { type: 'single', slot: 'A' },
+      id: 'display-0',
+      layout: { type: 'single', visualId: 'visual-a' },
       fullscreen: true,
     },
   ],
 };
 
+function createRuntimeState(): DirectorState {
+  return {
+    paused: true,
+    rate: 1,
+    anchorWallTimeMs: 0,
+    offsetSeconds: 0,
+    loop: { enabled: false, startSeconds: 0 },
+    visuals: {},
+    audioSources: {},
+    outputs: {},
+    displays: {},
+    activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+    readiness: {
+      ready: false,
+      checkedAtWallTimeMs: 0,
+      issues: [],
+    },
+    corrections: {
+      displays: {},
+    },
+  };
+}
+
 describe('show config persistence helpers', () => {
-  it('validates supported show config shape', () => {
+  it('validates schema v3 config shape and rejects older versions', () => {
     expect(assertShowConfig(config)).toEqual(config);
-    expect(() => assertShowConfig({ ...config, schemaVersion: 99 })).toThrow(/schema version/i);
+    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/version 3 only/i);
   });
 
   it('builds renderer-safe file URLs from persisted media paths', () => {
     expect(buildMediaUrls(config)).toMatchObject({
-      slots: {
-        A: 'file:///F:/media/a.mp4',
-        B: undefined,
+      visuals: {
+        'visual-a': 'file:///F:/media/a.mp4',
       },
-      audio: 'file:///F:/media/mix.wav',
+      audioSources: {
+        'audio-source-main': 'file:///F:/media/mix.wav',
+      },
     });
   });
 
@@ -59,101 +97,38 @@ describe('show config persistence helpers', () => {
     expect(getDefaultShowConfigPath('F:\\XtreamData')).toContain('default.xtream-show.json');
   });
 
-  it('reports Mode 3 fallback as a runtime issue until accepted', () => {
-    const state: DirectorState = {
-      paused: true,
-      rate: 1,
-      anchorWallTimeMs: 0,
-      offsetSeconds: 0,
-      durationPolicy: 'audio',
-      loop: { enabled: false, startSeconds: 0 },
-      mode: 3,
-      slots: {},
-      audio: {
-        sourceMode: 'none',
-        ready: true,
-        physicalSplitAvailable: false,
-        fallbackAccepted: false,
-      },
-      displays: {},
-      readiness: {
-        ready: false,
-        checkedAtWallTimeMs: 0,
-        issues: [],
-      },
-      corrections: {
-        displays: {},
-      },
-    };
-
-    expect(validateRuntimeState(state)).toContainEqual(
-      expect.objectContaining({
-        target: 'audio:mode3',
-      }),
-    );
-  });
-
   it('creates diagnostics with current runtime state and issues', () => {
-    const state: DirectorState = {
-      paused: true,
-      rate: 1,
-      anchorWallTimeMs: 0,
-      offsetSeconds: 0,
-      durationPolicy: 'longest-video',
-      loop: { enabled: false, startSeconds: 0 },
-      mode: 1,
-      slots: {},
-      audio: {
-        sourceMode: 'none',
-        ready: false,
-        physicalSplitAvailable: false,
-        fallbackAccepted: false,
-      },
-      displays: {},
-      readiness: {
-        ready: false,
-        checkedAtWallTimeMs: 0,
-        issues: [],
-      },
-      corrections: {
-        displays: {},
-      },
-    };
-
+    const state = createRuntimeState();
+    state.readiness.issues = [{ severity: 'error', target: 'display', message: 'At least one active display window is required.' }];
     const report = createDiagnosticsReport(state, '1.0.0');
-
     expect(report.appVersion).toBe('1.0.0');
     expect(report.state).toEqual(state);
-    expect(report.readiness).toEqual(state.readiness);
+    expect(report.issues).toContainEqual(expect.objectContaining({ target: 'display' }));
+  });
+
+  it('validates runtime pool-native issues', () => {
+    const state = createRuntimeState();
+    state.visuals['visual-a'] = {
+      id: 'visual-a',
+      label: 'Visual A',
+      type: 'video',
+      path: 'F:\\missing\\a.mp4',
+      ready: false,
+      error: 'Video failed to load.',
+    };
+    expect(validateRuntimeState(state)).toContainEqual(
+      expect.objectContaining({ target: 'visual:visual-a', message: 'Video failed to load.' }),
+    );
   });
 
   it('round-trips show config JSON', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-show-'));
     const filePath = path.join(directory, 'show.json');
-
     try {
       await writeShowConfig(filePath, config);
-
       expect(await readShowConfig(filePath)).toEqual(config);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-
-  it('preserves embedded slot audio source in persisted config', () => {
-    const embeddedConfig: PersistedShowConfig = {
-      ...config,
-      audio: {
-        ...config.audio,
-        sourceMode: 'embedded-slot',
-        path: undefined,
-        embeddedSlotId: 'A',
-      },
-    };
-
-    expect(assertShowConfig(embeddedConfig).audio).toMatchObject({
-      sourceMode: 'embedded-slot',
-      embeddedSlotId: 'A',
-    });
   });
 });

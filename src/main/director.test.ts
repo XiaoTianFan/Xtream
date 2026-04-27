@@ -1,465 +1,161 @@
 import { describe, expect, it } from 'vitest';
 import { Director } from './director';
 
-function prepareMode1ReadyDirector(director: Director): void {
-  director.registerDisplay({
-    id: 'display-0',
-    fullscreen: false,
-    layout: { type: 'split', slots: ['A', 'B'] },
-    health: 'ready',
-  });
-  director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
-  director.setSlotVideo('B', 'F:\\media\\b.mp4', 'file:///F:/media/b.mp4');
-  director.updateSlotMetadata({ slotId: 'A', durationSeconds: 20, ready: true });
-  director.updateSlotMetadata({ slotId: 'B', durationSeconds: 20, ready: true });
-  director.setAudioFile('F:\\media\\mix.wav', 'file:///F:/media/mix.wav');
-  director.updateAudioMetadata({ durationSeconds: 20, ready: true });
+function addReadyVideo(director: Director, id: string, durationSeconds: number): void {
+  director.addVisuals([
+    {
+      id,
+      label: id,
+      type: 'video',
+      path: `F:\\media\\${id}.mp4`,
+      url: `file:///F:/media/${id}.mp4`,
+    },
+  ]);
+  director.updateVisualMetadata({ visualId: id, durationSeconds, ready: true });
 }
 
 describe('Director', () => {
-  it('starts paused with two default video slots and no displays', () => {
-    const director = new Director(() => 1000);
-    const state = director.getState();
-
+  it('starts paused with pool-native state and no displays', () => {
+    const state = new Director(() => 1000).getState();
     expect(state.paused).toBe(true);
-    expect(Object.keys(state.slots)).toEqual(['A', 'B']);
+    expect(state.visuals).toEqual({});
     expect(state.displays).toEqual({});
+    expect(state.outputs['output-main']).toMatchObject({ label: 'Main Output', sources: [] });
   });
 
   it('advances playback time from the shared anchor while playing', () => {
     let now = 1000;
     const director = new Director(() => now);
-    prepareMode1ReadyDirector(director);
-
+    addReadyVideo(director, 'visual-a', 20);
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single', visualId: 'visual-a' }, health: 'ready' });
     director.applyTransport({ type: 'play' });
     now = 3500;
-
     expect(director.getPlaybackTimeSeconds()).toBe(2.5);
   });
 
-  it('freezes offset when paused', () => {
-    let now = 1000;
-    const director = new Director(() => now);
-    prepareMode1ReadyDirector(director);
-
-    director.applyTransport({ type: 'play' });
-    now = 2200;
-    director.applyTransport({ type: 'pause' });
-    now = 9000;
-
-    expect(director.getPlaybackTimeSeconds()).toBe(1.2);
-  });
-
-  it('tracks display windows by registry id', () => {
+  it('computes active timeline from assigned video visuals only', () => {
     const director = new Director(() => 1000);
-
-    director.registerDisplay({
-      id: 'display-2',
-      fullscreen: false,
-      layout: { type: 'single', slot: 'A' },
-      health: 'starting',
-    });
-
-    expect(director.getState().displays['display-2']).toMatchObject({
-      id: 'display-2',
-      layout: { type: 'single', slot: 'A' },
-    });
-  });
-
-  it('updates a display layout without replacing other display state', () => {
-    const director = new Director(() => 1000);
-
+    addReadyVideo(director, 'visual-short', 5);
+    director.addVisuals([
+      {
+        id: 'visual-still',
+        label: 'Still',
+        type: 'image',
+        path: 'F:\\media\\still.png',
+        url: 'file:///F:/media/still.png',
+      },
+    ]);
+    director.updateVisualMetadata({ visualId: 'visual-still', width: 100, height: 100, ready: true });
     director.registerDisplay({
       id: 'display-0',
-      fullscreen: true,
-      layout: { type: 'single', slot: 'A' },
+      fullscreen: false,
+      layout: { type: 'split', visualIds: ['visual-short', 'visual-still'] },
       health: 'ready',
-      lastDriftSeconds: 0.01,
     });
-
-    director.updateDisplayLayout('display-0', { type: 'split', slots: ['A', 'B'] });
-
-    expect(director.getState().displays['display-0']).toMatchObject({
-      fullscreen: true,
-      health: 'ready',
-      lastDriftSeconds: 0.01,
-      layout: { type: 'split', slots: ['A', 'B'] },
+    expect(director.getState().activeTimeline).toMatchObject({
+      durationSeconds: 5,
+      assignedVideoIds: ['visual-short'],
+      loopRangeLimit: { startSeconds: 0, endSeconds: 5 },
     });
   });
 
-  it('stores video files per slot and resets readiness until metadata arrives', () => {
+  it('uses active audio sources for timeline when no videos are assigned', () => {
     const director = new Director(() => 1000);
-
-    const slot = director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
-
-    expect(slot).toMatchObject({
-      id: 'A',
-      videoPath: 'F:\\media\\a.mp4',
-      videoUrl: 'file:///F:/media/a.mp4',
-      ready: false,
-    });
-  });
-
-  it('updates slot metadata and longest-video duration', () => {
-    const director = new Director(() => 1000);
-
-    director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
-    director.updateSlotMetadata({
-      slotId: 'A',
-      durationSeconds: 12.5,
-      ready: true,
-    });
-
-    expect(director.getState().slots.A).toMatchObject({
-      ready: true,
-      durationSeconds: 12.5,
-    });
-    expect(director.getState().durationSeconds).toBe(12.5);
-  });
-
-  it('stores an audio file and makes audio the duration authority', () => {
-    const director = new Director(() => 1000);
-
-    const audio = director.setAudioFile('F:\\media\\mix.wav', 'file:///F:/media/mix.wav');
-    director.updateAudioMetadata({
+    const first = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
+    const second = director.addAudioFileSource('F:\\media\\b.wav', 'file:///F:/media/b.wav');
+    director.updateAudioMetadata({ audioSourceId: first.id, durationSeconds: 10, ready: true });
+    director.updateAudioMetadata({ audioSourceId: second.id, durationSeconds: 20, ready: true });
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single' }, health: 'ready' });
+    expect(director.getState().activeTimeline).toMatchObject({
       durationSeconds: 20,
-      ready: true,
+      activeAudioSourceIds: expect.arrayContaining([first.id, second.id]),
+      loopRangeLimit: { startSeconds: 0, endSeconds: 10 },
     });
-
-    expect(audio).toMatchObject({
-      path: 'F:\\media\\mix.wav',
-      url: 'file:///F:/media/mix.wav',
-      ready: false,
-    });
-    expect(director.getState().audio).toMatchObject({
-      ready: true,
-      durationSeconds: 20,
-    });
-    expect(director.getState().durationPolicy).toBe('audio');
-    expect(director.getState().durationSeconds).toBe(20);
   });
 
-  it('preserves selected sink when clearing the audio file', () => {
+  it('clamps invalid loop settings to the active unison span', () => {
     const director = new Director(() => 1000);
-
-    director.setAudioSink({ path: 'main', sinkId: 'device-1', sinkLabel: 'HDMI Output' });
-    director.setAudioFile('F:\\media\\mix.wav', 'file:///F:/media/mix.wav');
-    director.clearAudioFile();
-
-    expect(director.getState().audio).toMatchObject({
-      sinkId: 'device-1',
-      sinkLabel: 'HDMI Output',
-      ready: false,
-    });
-    expect(director.getState().audio.path).toBeUndefined();
-    expect(director.getState().durationPolicy).toBe('longest-video');
-  });
-
-  it('records control audio drift separately from display drift', () => {
-    const director = new Director(() => 1000);
-
-    director.ingestDrift({
-      kind: 'control',
-      observedSeconds: 1.05,
-      directorSeconds: 1,
-      driftSeconds: 0.05,
-      reportedAtWallTimeMs: 2000,
-    });
-
-    expect(director.getState().audio.lastDriftSeconds).toBe(0.05);
-  });
-
-  it('blocks play until active rails are ready', () => {
-    const director = new Director(() => 1000);
-
-    director.applyTransport({ type: 'play' });
-
-    expect(director.getState().paused).toBe(true);
-    expect(director.getState().readiness.ready).toBe(false);
-    expect(director.getState().readiness.issues.some((issue) => issue.severity === 'error')).toBe(true);
-  });
-
-  it('wraps playback time at director loop boundaries', () => {
-    let now = 1000;
-    const director = new Director(() => now);
-    prepareMode1ReadyDirector(director);
-
-    director.applyTransport({ type: 'set-loop', loop: { enabled: true, startSeconds: 2, endSeconds: 5 } });
-    director.applyTransport({ type: 'seek', seconds: 4 });
-    director.applyTransport({ type: 'play' });
-    now = 3500;
-
-    expect(director.getPlaybackTimeSeconds()).toBe(3.5);
-  });
-
-  it('creates display correction state and degrades repeated drift failures', () => {
-    const director = new Director(() => 1000);
+    addReadyVideo(director, 'visual-a', 10);
+    addReadyVideo(director, 'visual-b', 20);
     director.registerDisplay({
       id: 'display-0',
       fullscreen: false,
-      layout: { type: 'single', slot: 'A' },
+      layout: { type: 'split', visualIds: ['visual-a', 'visual-b'] },
       health: 'ready',
     });
-
-    for (let index = 0; index < 4; index += 1) {
-      director.ingestDrift({
-        kind: 'display',
-        displayId: 'display-0',
-        observedSeconds: 1.5,
-        directorSeconds: 1,
-        driftSeconds: 0.5,
-        reportedAtWallTimeMs: 2000 + index,
-      });
-    }
-
-    expect(director.getState().displays['display-0']).toMatchObject({
-      health: 'degraded',
-    });
-    expect(director.getState().corrections.displays['display-0']).toMatchObject({
-      action: 'degraded',
-    });
-  });
-
-  it('does not count warning-only drift as failed correction attempts', () => {
-    const director = new Director(() => 1000);
-    director.registerDisplay({
-      id: 'display-0',
-      fullscreen: false,
-      layout: { type: 'single', slot: 'A' },
-      health: 'ready',
-    });
-
-    for (let index = 0; index < 10; index += 1) {
-      director.ingestDrift({
-        kind: 'display',
-        displayId: 'display-0',
-        observedSeconds: 1.075,
-        directorSeconds: 1,
-        driftSeconds: 0.075,
-        reportedAtWallTimeMs: 2000 + index,
-      });
-    }
-
-    expect(director.getState().displays['display-0']).toMatchObject({
-      health: 'ready',
-    });
-    expect(director.getState().corrections.displays['display-0']).toMatchObject({
-      action: 'none',
-      reason: 'Drift is above warning threshold but within correction tolerance.',
-    });
-  });
-
-  it('resets failed correction attempts after drift returns within tolerance', () => {
-    const director = new Director(() => 1000);
-    director.registerDisplay({
-      id: 'display-0',
-      fullscreen: false,
-      layout: { type: 'single', slot: 'A' },
-      health: 'ready',
-    });
-
-    director.ingestDrift({
-      kind: 'display',
-      displayId: 'display-0',
-      observedSeconds: 1.5,
-      directorSeconds: 1,
-      driftSeconds: 0.5,
-      reportedAtWallTimeMs: 2000,
-    });
-    director.ingestDrift({
-      kind: 'display',
-      displayId: 'display-0',
-      observedSeconds: 1.02,
-      directorSeconds: 1,
-      driftSeconds: 0.02,
-      reportedAtWallTimeMs: 3000,
-    });
-    director.ingestDrift({
-      kind: 'display',
-      displayId: 'display-0',
-      observedSeconds: 1.5,
-      directorSeconds: 1,
-      driftSeconds: 0.5,
-      reportedAtWallTimeMs: 4000,
-    });
-
-    expect(director.getState().displays['display-0']).toMatchObject({
-      health: 'ready',
-    });
-    expect(director.getState().corrections.displays['display-0']).toMatchObject({
-      action: 'seek',
-    });
-  });
-
-  it('removes a display record and its correction state', () => {
-    const director = new Director(() => 1000);
-    director.registerDisplay({
-      id: 'display-0',
-      fullscreen: false,
-      layout: { type: 'single', slot: 'A' },
-      health: 'ready',
-    });
-    director.ingestDrift({
-      kind: 'display',
-      displayId: 'display-0',
-      observedSeconds: 1.5,
-      directorSeconds: 1,
-      driftSeconds: 0.5,
-      reportedAtWallTimeMs: 2000,
-    });
-
-    director.removeDisplay('display-0');
-
-    expect(director.getState().displays['display-0']).toBeUndefined();
-    expect(director.getState().corrections.displays['display-0']).toBeUndefined();
-  });
-
-  it('uses an embedded slot as the audio source and duration authority', () => {
-    const director = new Director(() => 1000);
-    director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
-    director.updateSlotMetadata({ slotId: 'A', durationSeconds: 12, ready: true });
-
-    const audio = director.setEmbeddedAudioSource({ slotId: 'A' });
-    director.updateAudioMetadata({ durationSeconds: 12, ready: true });
-
-    expect(audio).toMatchObject({
-      sourceMode: 'embedded-slot',
-      embeddedSlotId: 'A',
-      ready: false,
-    });
-    expect(director.getState().durationPolicy).toBe('audio');
-    expect(director.getState().durationSeconds).toBe(12);
-    expect(director.getState().audio).toMatchObject({
-      sourceMode: 'embedded-slot',
-      embeddedSlotId: 'A',
-      ready: true,
-    });
-  });
-
-  it('blocks readiness when selected embedded audio slot has no video', () => {
-    const director = new Director(() => 1000);
-
-    director.setEmbeddedAudioSource({ slotId: 'A' });
-
+    director.applyTransport({ type: 'set-loop', loop: { enabled: true, startSeconds: 12, endSeconds: 18 } });
+    expect(director.getState().loop).toEqual({ enabled: true, startSeconds: 0, endSeconds: 10 });
     expect(director.getState().readiness.issues).toContainEqual(
-      expect.objectContaining({
-        target: 'audio',
-        message: 'Selected embedded audio slot has no video selected.',
-      }),
+      expect.objectContaining({ target: 'loop', severity: 'warning' }),
     );
   });
 
-  it('stores independent left and right sink selections for mode 3', () => {
+  it('manages virtual output source assignments and readiness', () => {
     const director = new Director(() => 1000);
-
-    director.setAudioSink({ path: 'left', sinkId: 'hdmi-left', sinkLabel: 'HDMI Left' });
-    director.setAudioSink({ path: 'right', sinkId: 'hdmi-right', sinkLabel: 'HDMI Right' });
-
-    expect(director.getState().audio).toMatchObject({
-      leftSinkId: 'hdmi-left',
-      leftSinkLabel: 'HDMI Left',
-      rightSinkId: 'hdmi-right',
-      rightSinkLabel: 'HDMI Right',
+    const first = director.addAudioFileSource('F:\\media\\mix-a.wav', 'file:///F:/media/mix-a.wav');
+    const second = director.addAudioFileSource('F:\\media\\mix-b.wav', 'file:///F:/media/mix-b.wav');
+    const output = director.createVirtualOutput();
+    director.updateVirtualOutput(output.id, {
+      sources: [
+        { audioSourceId: first.id, levelDb: -12 },
+        { audioSourceId: second.id, levelDb: -6 },
+      ],
+      busLevelDb: -3,
+      sinkId: 'hdmi-2',
+      sinkLabel: 'HDMI 2',
+    });
+    director.updateAudioMetadata({ audioSourceId: first.id, durationSeconds: 10, ready: true });
+    director.updateAudioMetadata({ audioSourceId: second.id, durationSeconds: 20, ready: true });
+    expect(director.getState().outputs[output.id]).toMatchObject({
+      sources: [
+        { audioSourceId: first.id, levelDb: -12 },
+        { audioSourceId: second.id, levelDb: -6 },
+      ],
+      busLevelDb: -3,
+      sinkId: 'hdmi-2',
+      ready: true,
     });
   });
 
-  it('tracks physical split availability and fallback acceptance', () => {
+  it('blocks output readiness on missing sources and routing fallback', () => {
     const director = new Director(() => 1000);
-
-    director.updateAudioCapabilities({
-      physicalSplitAvailable: false,
-      fallbackAccepted: true,
+    const output = director.createVirtualOutput();
+    director.updateVirtualOutput(output.id, {
+      sources: [{ audioSourceId: 'missing', levelDb: 0 }],
+      physicalRoutingAvailable: false,
+      fallbackAccepted: false,
     });
-
-    expect(director.getState().audio).toMatchObject({
-      physicalSplitAvailable: false,
-      fallbackAccepted: true,
-    });
-
-    director.updateAudioCapabilities({
-      physicalSplitAvailable: true,
-    });
-
-    expect(director.getState().audio).toMatchObject({
-      physicalSplitAvailable: true,
-      fallbackAccepted: true,
-    });
+    const issues = director.getState().readiness.issues;
+    expect(issues).toContainEqual(expect.objectContaining({ target: `output:${output.id}` }));
   });
 
-  it('serializes runtime state into a persisted show config', () => {
+  it('applies pool-native presets over visuals', () => {
     const director = new Director(() => 1000);
-    director.setAudioSink({ path: 'left', sinkId: 'left', sinkLabel: 'Left' });
-    director.setSlotVideo('A', 'F:\\media\\a.mp4', 'file:///F:/media/a.mp4');
+    addReadyVideo(director, 'visual-a', 10);
+    addReadyVideo(director, 'visual-b', 10);
+    const displays = [
+      { id: 'display-0', fullscreen: false, layout: { type: 'single' as const }, health: 'ready' as const },
+      { id: 'display-1', fullscreen: false, layout: { type: 'single' as const }, health: 'ready' as const },
+    ];
+    let next = 0;
+    director.applyPreset('two-displays', (layout) => ({ ...displays[next++], layout }));
+    expect(director.getState().displays['display-0'].layout).toEqual({ type: 'single', visualId: 'visual-a' });
+    expect(director.getState().displays['display-1'].layout).toEqual({ type: 'single', visualId: 'visual-b' });
+  });
+
+  it('serializes runtime state into schema v3', () => {
+    const director = new Director(() => 1000);
+    addReadyVideo(director, 'visual-a', 10);
     director.registerDisplay({
       id: 'display-0',
       fullscreen: true,
-      layout: { type: 'single', slot: 'A' },
+      layout: { type: 'single', visualId: 'visual-a' },
       health: 'ready',
     });
-
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 1,
-      mode: 1,
-      slots: [{ id: 'A', videoPath: 'F:\\media\\a.mp4' }, { id: 'B' }],
-      audio: {
-        leftSinkId: 'left',
-        leftSinkLabel: 'Left',
-      },
-      displays: [
-        {
-          fullscreen: true,
-          layout: { type: 'single', slot: 'A' },
-        },
-      ],
-    });
-  });
-
-  it('restores persisted show config without resurrecting runtime display ids', () => {
-    const director = new Director(() => 1000);
-    director.registerDisplay({
-      id: 'display-old',
-      fullscreen: false,
-      layout: { type: 'single', slot: 'B' },
-      health: 'ready',
-    });
-
-    director.restoreShowConfig(
-      {
-        schemaVersion: 1,
-        savedAt: '2026-04-26T00:00:00.000Z',
-        mode: 2,
-        durationPolicy: 'audio',
-        loop: { enabled: false, startSeconds: 0 },
-        slots: [{ id: 'A', videoPath: 'F:\\media\\a.mp4' }],
-        audio: {
-          path: 'F:\\media\\mix.wav',
-          fallbackAccepted: true,
-        },
-        displays: [{ fullscreen: true, layout: { type: 'single', slot: 'A' } }],
-      },
-      {
-        slots: { A: 'file:///F:/media/a.mp4' },
-        audio: 'file:///F:/media/mix.wav',
-      },
-    );
-
-    expect(director.getState()).toMatchObject({
-      paused: true,
-      mode: 2,
-      offsetSeconds: 0,
-      slots: {
-        A: {
-          videoPath: 'F:\\media\\a.mp4',
-          videoUrl: 'file:///F:/media/a.mp4',
-          ready: false,
-        },
-      },
-      audio: {
-        path: 'F:\\media\\mix.wav',
-        url: 'file:///F:/media/mix.wav',
-        fallbackAccepted: true,
-      },
-      displays: {},
+      schemaVersion: 3,
+      visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4' } },
+      displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
     });
   });
 });

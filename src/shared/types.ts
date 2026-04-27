@@ -1,16 +1,18 @@
-export type PlaybackMode = 1 | 2 | 3;
-
-export type SlotId = string;
-
+export type MediaId = string;
+export type VisualId = MediaId;
+export type AudioSourceId = MediaId;
+export type VirtualOutputId = string;
 export type DisplayWindowId = string;
 
-export type AudioOutputPath = 'main' | 'left' | 'right';
+export type VisualMediaType = 'video' | 'image';
 
-export type AudioSourceMode = 'none' | 'external-file' | 'embedded-slot';
+export type VisualLayoutProfile =
+  | { type: 'single'; visualId?: VisualId }
+  | { type: 'split'; visualIds: [VisualId | undefined, VisualId | undefined] };
 
-export type LayoutProfile =
-  | { type: 'single'; slot: SlotId }
-  | { type: 'split'; slots: [SlotId, SlotId] };
+export type LayoutProfile = VisualLayoutProfile;
+
+export type PresetId = 'split-display-one-screen' | 'two-displays';
 
 export type DisplayHealth = 'starting' | 'ready' | 'stale' | 'degraded' | 'closed';
 
@@ -24,42 +26,76 @@ export type DisplayWindowState = {
   };
   displayId?: string;
   fullscreen: boolean;
-  layout: LayoutProfile;
+  layout: VisualLayoutProfile;
   health: DisplayHealth;
   lastDriftSeconds?: number;
   degradationReason?: string;
 };
 
-export type SlotState = {
-  id: SlotId;
-  videoPath?: string;
-  videoUrl?: string;
+export type VisualState = {
+  id: VisualId;
+  label: string;
+  type: VisualMediaType;
+  path?: string;
+  url?: string;
   durationSeconds?: number;
+  width?: number;
+  height?: number;
+  hasEmbeddedAudio?: boolean;
+  previewUrl?: string;
   ready: boolean;
   error?: string;
 };
 
-export type AudioRoutingState = {
-  sourceMode: AudioSourceMode;
-  path?: string;
-  url?: string;
-  embeddedSlotId?: SlotId;
+export type AudioSourceState =
+  | {
+      id: AudioSourceId;
+      label: string;
+      type: 'external-file';
+      path?: string;
+      url?: string;
+      durationSeconds?: number;
+      ready: boolean;
+      error?: string;
+    }
+  | {
+      id: AudioSourceId;
+      label: string;
+      type: 'embedded-visual';
+      visualId: VisualId;
+      durationSeconds?: number;
+      ready: boolean;
+      error?: string;
+    };
+
+export type VirtualOutputSourceSelection = {
+  audioSourceId: AudioSourceId;
+  levelDb: number;
+  muted?: boolean;
+};
+
+export type VirtualOutputState = {
+  id: VirtualOutputId;
+  label: string;
+  sources: VirtualOutputSourceSelection[];
   sinkId?: string;
   sinkLabel?: string;
-  leftSinkId?: string;
-  leftSinkLabel?: string;
-  rightSinkId?: string;
-  rightSinkLabel?: string;
-  durationSeconds?: number;
+  busLevelDb: number;
+  muted?: boolean;
+  meterDb?: number;
   ready: boolean;
+  physicalRoutingAvailable: boolean;
+  fallbackAccepted?: boolean;
+  fallbackReason?: string;
   error?: string;
-  lastDriftSeconds?: number;
-  degraded?: boolean;
-  degradationReason?: string;
-  physicalSplitAvailable: boolean;
-  fallbackAccepted: boolean;
-  capabilityStatus?: AudioCapabilityStatus;
-  fallbackReason?: AudioFallbackReason;
+};
+
+export type ActiveTimelineState = {
+  durationSeconds?: number;
+  assignedVideoIds: VisualId[];
+  activeAudioSourceIds: AudioSourceId[];
+  loopRangeLimit?: { startSeconds: number; endSeconds: number };
+  notice?: string;
 };
 
 export type LoopState = {
@@ -73,29 +109,19 @@ export type DirectorState = {
   rate: number;
   anchorWallTimeMs: number;
   offsetSeconds: number;
-  durationPolicy: 'audio' | 'longest-video';
-  durationSeconds?: number;
   loop: LoopState;
-  mode: PlaybackMode;
-  slots: Record<SlotId, SlotState>;
-  audio: AudioRoutingState;
+  visuals: Record<VisualId, VisualState>;
+  audioSources: Record<AudioSourceId, AudioSourceState>;
+  outputs: Record<VirtualOutputId, VirtualOutputState>;
   displays: Record<DisplayWindowId, DisplayWindowState>;
+  activeTimeline: ActiveTimelineState;
   readiness: ShowReadinessState;
   corrections: CorrectionState;
 };
 
-export type ReadinessTarget =
-  | 'audio'
-  | 'audio:mode3'
-  | 'duration'
-  | 'display'
-  | 'loop'
-  | `slot:${SlotId}`
-  | `display:${DisplayWindowId}`;
-
 export type ReadinessIssue = {
   severity: 'warning' | 'error';
-  target: ReadinessTarget | string;
+  target: string;
   message: string;
 };
 
@@ -121,42 +147,56 @@ export type CorrectionState = {
   displays: Record<DisplayWindowId, RailCorrection>;
 };
 
-export type PersistedSlotConfig = {
-  id: SlotId;
-  videoPath?: string;
-};
+export type PersistedVisualConfig = Pick<
+  VisualState,
+  'id' | 'label' | 'type' | 'path'
+>;
 
-export type PersistedAudioConfig = {
-  sourceMode?: AudioSourceMode;
-  path?: string;
-  embeddedSlotId?: SlotId;
+export type PersistedAudioSourceConfig =
+  | {
+      id: AudioSourceId;
+      label: string;
+      type: 'external-file';
+      path?: string;
+    }
+  | {
+      id: AudioSourceId;
+      label: string;
+      type: 'embedded-visual';
+      visualId: VisualId;
+    };
+
+export type PersistedVirtualOutputConfig = {
+  id: VirtualOutputId;
+  label: string;
+  sources: VirtualOutputSourceSelection[];
   sinkId?: string;
   sinkLabel?: string;
-  leftSinkId?: string;
-  leftSinkLabel?: string;
-  rightSinkId?: string;
-  rightSinkLabel?: string;
-  fallbackAccepted: boolean;
+  busLevelDb: number;
+  muted?: boolean;
+  fallbackAccepted?: boolean;
 };
 
 export type PersistedDisplayConfig = {
-  layout: LayoutProfile;
+  id?: DisplayWindowId;
+  layout: VisualLayoutProfile;
   fullscreen: boolean;
   displayId?: string;
   bounds?: DisplayWindowState['bounds'];
 };
 
-export type PersistedShowConfig = {
-  schemaVersion: 1;
+export type PersistedShowConfigV3 = {
+  schemaVersion: 3;
   savedAt: string;
-  mode: PlaybackMode;
   rate?: number;
-  durationPolicy: DirectorState['durationPolicy'];
   loop: LoopState;
-  slots: PersistedSlotConfig[];
-  audio: PersistedAudioConfig;
+  visuals: Record<VisualId, PersistedVisualConfig>;
+  audioSources: Record<AudioSourceId, PersistedAudioSourceConfig>;
+  outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>;
   displays: PersistedDisplayConfig[];
 };
+
+export type PersistedShowConfig = PersistedShowConfigV3;
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -197,7 +237,7 @@ export type DriftReport = {
 };
 
 export type DisplayCreateOptions = {
-  layout?: LayoutProfile;
+  layout?: VisualLayoutProfile;
   fullscreen?: boolean;
   displayId?: string;
 };
@@ -213,24 +253,40 @@ export type DisplayMonitorInfo = {
   internal: boolean;
 };
 
-export type SlotMetadataReport = {
-  slotId: SlotId;
+export type VisualMetadataReport = {
+  visualId: VisualId;
   durationSeconds?: number;
+  width?: number;
+  height?: number;
+  hasEmbeddedAudio?: boolean;
   ready: boolean;
   error?: string;
+};
+
+export type VisualImportItem = {
+  id?: VisualId;
+  label?: string;
+  type: VisualMediaType;
+  path: string;
+  url: string;
 };
 
 export type AudioMetadataReport = {
+  audioSourceId: AudioSourceId;
   durationSeconds?: number;
   ready: boolean;
   error?: string;
 };
 
-export type AudioSinkSelection = {
-  path: AudioOutputPath;
-  sinkId?: string;
-  sinkLabel?: string;
-};
+export type AudioSourceCreateResult = AudioSourceState | undefined;
+export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label'>>;
+
+export type VirtualOutputUpdate = Partial<
+  Pick<
+    VirtualOutputState,
+    'label' | 'sources' | 'sinkId' | 'sinkLabel' | 'busLevelDb' | 'muted' | 'meterDb' | 'fallbackAccepted' | 'physicalRoutingAvailable' | 'fallbackReason' | 'error'
+  >
+>;
 
 export type AudioCapabilityStatus =
   | 'unknown'
@@ -247,18 +303,7 @@ export type AudioFallbackReason =
   | 'duplicate-sink-selection'
   | 'missing-selection';
 
-export type AudioCapabilitiesReport = {
-  physicalSplitAvailable: boolean;
-  fallbackAccepted?: boolean;
-  capabilityStatus?: AudioCapabilityStatus;
-  fallbackReason?: AudioFallbackReason;
-};
-
-export type EmbeddedAudioSelection = {
-  slotId?: SlotId;
-};
-
-export type ModePresetResult = {
+export type PresetResult = {
   state: DirectorState;
   primaryDisplayId?: DisplayWindowId;
 };
@@ -273,18 +318,21 @@ export type TransportCommand =
 
 export type IpcChannels = {
   'director:get-state': () => DirectorState;
-  'director:set-mode': (mode: PlaybackMode) => DirectorState;
-  'director:apply-mode-preset': (mode: PlaybackMode) => ModePresetResult;
+  'director:apply-preset': (preset: PresetId) => PresetResult;
   'director:transport': (command: TransportCommand) => DirectorState;
-  'slot:pick-video': (slotId: SlotId) => SlotState | undefined;
-  'slot:clear-video': (slotId: SlotId) => SlotState;
-  'slot:metadata': (report: SlotMetadataReport) => DirectorState;
-  'audio:pick-file': () => AudioRoutingState | undefined;
-  'audio:clear-file': () => AudioRoutingState;
-  'audio:set-embedded-source': (selection: EmbeddedAudioSelection) => AudioRoutingState;
-  'audio:metadata': (report: AudioMetadataReport) => DirectorState;
-  'audio:set-sink': (selection: AudioSinkSelection) => DirectorState;
-  'audio:capabilities': (report: AudioCapabilitiesReport) => DirectorState;
+  'visual:add': () => VisualState[] | undefined;
+  'visual:replace': (visualId: VisualId) => VisualState | undefined;
+  'visual:clear': (visualId: VisualId) => VisualState;
+  'visual:remove': (visualId: VisualId) => boolean;
+  'visual:metadata': (report: VisualMetadataReport) => DirectorState;
+  'audio-source:add-file': () => AudioSourceCreateResult;
+  'audio-source:add-embedded': (visualId: VisualId) => AudioSourceState;
+  'audio-source:update': (audioSourceId: AudioSourceId, update: AudioSourceUpdate) => AudioSourceState;
+  'audio-source:remove': (audioSourceId: AudioSourceId) => boolean;
+  'audio-source:metadata': (report: AudioMetadataReport) => DirectorState;
+  'output:create': () => VirtualOutputState;
+  'output:update': (outputId: VirtualOutputId, update: VirtualOutputUpdate) => VirtualOutputState;
+  'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
   'show:open': () => ShowConfigOperationResult | undefined;

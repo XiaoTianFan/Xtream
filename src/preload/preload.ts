@@ -1,25 +1,27 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AudioMetadataReport,
+  AudioSourceId,
+  AudioSourceState,
+  AudioSourceUpdate,
   DirectorEventName,
   DirectorState,
-  AudioCapabilitiesReport,
-  AudioMetadataReport,
-  AudioRoutingState,
-  AudioSinkSelection,
   DisplayCreateOptions,
   DisplayMonitorInfo,
   DisplayUpdate,
   DisplayWindowState,
   DriftReport,
-  EmbeddedAudioSelection,
-  ModePresetResult,
-  PlaybackMode,
+  PresetId,
+  PresetResult,
   RendererReadyReport,
   ShowConfigOperationResult,
-  SlotId,
-  SlotMetadataReport,
-  SlotState,
   TransportCommand,
+  VisualId,
+  VisualMetadataReport,
+  VisualState,
+  VirtualOutputId,
+  VirtualOutputState,
+  VirtualOutputUpdate,
 } from '../shared/types';
 
 const DIRECTOR_EVENTS = new Set<DirectorEventName>(['director:state']);
@@ -27,11 +29,8 @@ const DIRECTOR_EVENTS = new Set<DirectorEventName>(['director:state']);
 const api = {
   director: {
     getState: (): Promise<DirectorState> => ipcRenderer.invoke('director:get-state'),
-    setMode: (mode: PlaybackMode): Promise<DirectorState> => ipcRenderer.invoke('director:set-mode', mode),
-    applyModePreset: (mode: PlaybackMode): Promise<ModePresetResult> =>
-      ipcRenderer.invoke('director:apply-mode-preset', mode),
-    transport: (command: TransportCommand): Promise<DirectorState> =>
-      ipcRenderer.invoke('director:transport', command),
+    applyPreset: (preset: PresetId): Promise<PresetResult> => ipcRenderer.invoke('director:apply-preset', preset),
+    transport: (command: TransportCommand): Promise<DirectorState> => ipcRenderer.invoke('director:transport', command),
     onState: (callback: (state: DirectorState) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: DirectorState) => callback(state);
       ipcRenderer.on('director:state', listener);
@@ -39,32 +38,33 @@ const api = {
     },
   },
   displays: {
-    create: (options?: DisplayCreateOptions): Promise<DisplayWindowState> =>
-      ipcRenderer.invoke('display:create', options),
-    update: (id: string, update: DisplayUpdate): Promise<DisplayWindowState> =>
-      ipcRenderer.invoke('display:update', id, update),
+    create: (options?: DisplayCreateOptions): Promise<DisplayWindowState> => ipcRenderer.invoke('display:create', options),
+    update: (id: string, update: DisplayUpdate): Promise<DisplayWindowState> => ipcRenderer.invoke('display:update', id, update),
     close: (id: string): Promise<boolean> => ipcRenderer.invoke('display:close', id),
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke('display:remove', id),
     listMonitors: (): Promise<DisplayMonitorInfo[]> => ipcRenderer.invoke('display:list-monitors'),
     reopen: (id: string): Promise<DisplayWindowState> => ipcRenderer.invoke('display:reopen', id),
   },
-  slots: {
-    pickVideo: (slotId: SlotId): Promise<SlotState | undefined> => ipcRenderer.invoke('slot:pick-video', slotId),
-    clearVideo: (slotId: SlotId): Promise<SlotState> => ipcRenderer.invoke('slot:clear-video', slotId),
-    reportMetadata: (report: SlotMetadataReport): Promise<DirectorState> =>
-      ipcRenderer.invoke('slot:metadata', report),
+  visuals: {
+    add: (): Promise<VisualState[] | undefined> => ipcRenderer.invoke('visual:add'),
+    replace: (visualId: VisualId): Promise<VisualState | undefined> => ipcRenderer.invoke('visual:replace', visualId),
+    clear: (visualId: VisualId): Promise<VisualState> => ipcRenderer.invoke('visual:clear', visualId),
+    remove: (visualId: VisualId): Promise<boolean> => ipcRenderer.invoke('visual:remove', visualId),
+    reportMetadata: (report: VisualMetadataReport): Promise<DirectorState> => ipcRenderer.invoke('visual:metadata', report),
   },
-  audio: {
-    pickFile: (): Promise<AudioRoutingState | undefined> => ipcRenderer.invoke('audio:pick-file'),
-    clearFile: (): Promise<AudioRoutingState> => ipcRenderer.invoke('audio:clear-file'),
-    setEmbeddedSource: (selection: EmbeddedAudioSelection): Promise<AudioRoutingState> =>
-      ipcRenderer.invoke('audio:set-embedded-source', selection),
-    reportMetadata: (report: AudioMetadataReport): Promise<DirectorState> =>
-      ipcRenderer.invoke('audio:metadata', report),
-    setSink: (selection: AudioSinkSelection): Promise<DirectorState> =>
-      ipcRenderer.invoke('audio:set-sink', selection),
-    reportCapabilities: (report: AudioCapabilitiesReport): Promise<DirectorState> =>
-      ipcRenderer.invoke('audio:capabilities', report),
+  audioSources: {
+    addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),
+    addEmbedded: (visualId: VisualId): Promise<AudioSourceState> => ipcRenderer.invoke('audio-source:add-embedded', visualId),
+    update: (audioSourceId: AudioSourceId, update: AudioSourceUpdate): Promise<AudioSourceState> =>
+      ipcRenderer.invoke('audio-source:update', audioSourceId, update),
+    remove: (audioSourceId: AudioSourceId): Promise<boolean> => ipcRenderer.invoke('audio-source:remove', audioSourceId),
+    reportMetadata: (report: AudioMetadataReport): Promise<DirectorState> => ipcRenderer.invoke('audio-source:metadata', report),
+  },
+  outputs: {
+    create: (): Promise<VirtualOutputState> => ipcRenderer.invoke('output:create'),
+    update: (outputId: VirtualOutputId, update: VirtualOutputUpdate): Promise<VirtualOutputState> =>
+      ipcRenderer.invoke('output:update', outputId, update),
+    remove: (outputId: VirtualOutputId): Promise<boolean> => ipcRenderer.invoke('output:remove', outputId),
   },
   show: {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),

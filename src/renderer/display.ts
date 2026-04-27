@@ -1,22 +1,20 @@
 import './styles.css';
-import { describeLayout, getLayoutSlots } from '../shared/layouts';
-import { getDirectorSeconds } from '../shared/timeline';
-import type { DirectorState, DisplayWindowState, LayoutProfile, SlotId, SlotState } from '../shared/types';
+import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
+import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
+import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
 const displayId = params.get('id') ?? 'unknown-display';
 const showDiagnosticsOverlay = params.get('diagnostics') === '1';
 
-let currentDisplay: DisplayWindowState | undefined;
 let currentRenderSignature = '';
 let currentState: DirectorState | undefined;
 let currentDirectorSeconds = 0;
 let driftTimer: number | undefined;
 let syncTimer: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
-
-const videoElements = new Map<SlotId, HTMLVideoElement>();
+const videoElements = new Map<VisualId, HTMLVideoElement>();
 const SEEK_THRESHOLD_SECONDS = 0.12;
 
 if (!root) {
@@ -25,15 +23,12 @@ if (!root) {
 
 const displayRoot = root;
 
-function renderLayout(layout: LayoutProfile, slotsById: Record<SlotId, SlotState>): void {
+function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): void {
   displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
   displayRoot.replaceChildren();
   videoElements.clear();
-
-  const slots = getLayoutSlots(layout);
-  for (const slot of slots) {
-    const slotElement = createSlotElement(slot, slotsById[slot]);
-    displayRoot.append(slotElement);
+  for (const visualId of getLayoutVisualIds(layout)) {
+    displayRoot.append(createVisualElement(visualId, visualsById[visualId]));
   }
 }
 
@@ -41,7 +36,6 @@ function handleState(state: DirectorState): void {
   currentState = state;
   currentDirectorSeconds = getDirectorSeconds(state);
   const display = state.displays[displayId];
-
   if (!display) {
     displayRoot.replaceChildren();
     const missing = document.createElement('section');
@@ -50,63 +44,94 @@ function handleState(state: DirectorState): void {
     displayRoot.append(missing);
     return;
   }
-
-  const renderSignature = createRenderSignature(display.layout, state.slots);
+  const renderSignature = createRenderSignature(display.layout, state.visuals);
   if (currentRenderSignature !== renderSignature) {
-    renderLayout(display.layout, state.slots);
+    renderLayout(display.layout, state.visuals);
     currentRenderSignature = renderSignature;
   }
-
-  currentDisplay = display;
-  syncVideoElements(state);
+  syncVideoElements(display, state);
 }
 
-function createSlotElement(slotId: SlotId, slot: SlotState | undefined): HTMLElement {
-  const slotElement = document.createElement('section');
-  slotElement.className = 'slot';
-
-  if (slot?.videoUrl) {
+function createVisualElement(visualId: VisualId, visual: VisualState | undefined): HTMLElement {
+  const visualElement = document.createElement('section');
+  visualElement.className = 'slot';
+  if (visual?.type === 'image' && visual.url) {
+    const image = document.createElement('img');
+    image.src = visual.url;
+    image.alt = visual.label;
+    image.addEventListener('load', () => {
+      void window.xtream.visuals.reportMetadata({
+        visualId,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        ready: true,
+      });
+    });
+    image.addEventListener('error', () => {
+      void window.xtream.visuals.reportMetadata({ visualId, ready: false, error: 'Image failed to load.' });
+    });
+    visualElement.append(image, ...(showDiagnosticsOverlay ? [createOverlay(visualId, 'static image')] : []));
+    return visualElement;
+  }
+  if (visual?.url) {
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
-    video.src = slot.videoUrl;
-    video.dataset.slotId = slotId;
+    video.src = visual.url;
+    video.dataset.visualId = visualId;
     video.addEventListener('loadedmetadata', () => {
-      void window.xtream.slots.reportMetadata({
-        slotId,
+      void window.xtream.visuals.reportMetadata({
+        visualId,
         durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
+        width: video.videoWidth || undefined,
+        height: video.videoHeight || undefined,
+        hasEmbeddedAudio: hasAudioTracks(video),
         ready: true,
       });
     });
     video.addEventListener('error', () => {
-      void window.xtream.slots.reportMetadata({
-        slotId,
+      void window.xtream.visuals.reportMetadata({
+        visualId,
         ready: false,
         error: video.error?.message ?? 'Video failed to load.',
       });
     });
-
-    if (showDiagnosticsOverlay) {
-      const overlay = document.createElement('div');
-      overlay.className = 'slot-overlay';
-      overlay.append(createTextSpan(`Slot ${slotId}`), createTextSpan('muted video rail'));
-      slotElement.append(video, overlay);
-    } else {
-      slotElement.append(video);
-    }
-    videoElements.set(slotId, video);
-    return slotElement;
+    visualElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(visualId, 'muted visual rail')] : []));
+    videoElements.set(visualId, video);
+    return visualElement;
   }
+  const visualLabel = document.createElement('span');
+  visualLabel.textContent = visual?.label ?? visualId;
+  const visualMeta = document.createElement('small');
+  visualMeta.textContent = 'no visual selected';
+  visualElement.append(visualLabel, visualMeta);
+  return visualElement;
+}
 
-  const slotLabel = document.createElement('span');
-  slotLabel.textContent = slotId;
+function createOverlay(visualId: string, detail: string): HTMLElement {
+  const overlay = document.createElement('div');
+  overlay.className = 'slot-overlay';
+  overlay.append(createTextSpan(`Visual ${visualId}`), createTextSpan(detail));
+  return overlay;
+}
 
-  const slotMeta = document.createElement('small');
-  slotMeta.textContent = 'no video selected';
-
-  slotElement.append(slotLabel, slotMeta);
-  return slotElement;
+function hasAudioTracks(video: HTMLVideoElement): boolean | undefined {
+  const maybeTracks = video as HTMLVideoElement & {
+    audioTracks?: { length: number };
+    mozHasAudio?: boolean;
+    webkitAudioDecodedByteCount?: number;
+  };
+  if (maybeTracks.audioTracks) {
+    return maybeTracks.audioTracks.length > 0;
+  }
+  if (typeof maybeTracks.mozHasAudio === 'boolean') {
+    return maybeTracks.mozHasAudio;
+  }
+  if (typeof maybeTracks.webkitAudioDecodedByteCount === 'number') {
+    return maybeTracks.webkitAudioDecodedByteCount > 0;
+  }
+  return undefined;
 }
 
 function createTextSpan(text: string): HTMLSpanElement {
@@ -115,47 +140,40 @@ function createTextSpan(text: string): HTMLSpanElement {
   return span;
 }
 
-function createRenderSignature(layout: LayoutProfile, slotsById: Record<SlotId, SlotState>): string {
-  const slotParts = getLayoutSlots(layout).map((slotId) => {
-    const slot = slotsById[slotId];
-    return `${slotId}:${slot?.videoUrl ?? 'empty'}:${slot?.ready ? 'ready' : 'not-ready'}:${slot?.error ?? ''}`;
+function createRenderSignature(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): string {
+  const visualParts = getLayoutVisualIds(layout).map((visualId) => {
+    const visual = visualsById[visualId];
+    return `${visualId}:${visual?.url ?? 'empty'}:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}`;
   });
-
-  return `${describeLayout(layout)}|${slotParts.join('|')}`;
+  return `${describeLayout(layout)}|${visualParts.join('|')}`;
 }
 
-function syncVideoElements(state: DirectorState): void {
+function syncVideoElements(display: DisplayWindowState, state: DirectorState): void {
   const targetSeconds = getDirectorSeconds(state);
   currentDirectorSeconds = targetSeconds;
-
   for (const video of videoElements.values()) {
     if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
       continue;
     }
-
-    const correction = state.corrections.displays[displayId];
+    const correction = state.corrections.displays[display.id];
     const shouldApplyCorrection =
       correction?.action === 'seek' &&
       correction.targetSeconds !== undefined &&
       !appliedCorrectionRevisions.has(correction.revision);
-    const correctionTarget = shouldApplyCorrection ? correction.targetSeconds : undefined;
-    const effectiveTarget = correctionTarget ?? targetSeconds;
-
+    const visualId = video.dataset.visualId;
+    const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
+    const effectiveTarget = getMediaEffectiveTime(shouldApplyCorrection ? correction.targetSeconds! : targetSeconds, visualDuration, state.loop);
     if (Math.abs(video.currentTime - effectiveTarget) > SEEK_THRESHOLD_SECONDS) {
       video.currentTime = clampVideoTime(effectiveTarget, video);
     }
     if (correction?.revision !== undefined && shouldApplyCorrection) {
       appliedCorrectionRevisions.add(correction.revision);
     }
-
     video.playbackRate = state.rate;
-
     if (state.paused) {
       video.pause();
     } else if (video.paused) {
-      void video.play().catch(() => {
-        // Muted video should autoplay, but keep sync attempts non-fatal on platform quirks.
-      });
+      void video.play().catch(() => undefined);
     }
   }
 }
@@ -165,7 +183,6 @@ function clampVideoTime(seconds: number, video: HTMLVideoElement): number {
   if (!Number.isFinite(video.duration)) {
     return safeSeconds;
   }
-
   return Math.min(safeSeconds, Math.max(0, video.duration - 0.001));
 }
 
@@ -174,9 +191,7 @@ void window.xtream.renderer.ready({ kind: 'display', displayId });
 void window.xtream.director.getState().then(handleState);
 
 driftTimer = window.setInterval(() => {
-  const videos = Array.from(videoElements.values()).filter(
-    (video) => video.readyState >= HTMLMediaElement.HAVE_METADATA,
-  );
+  const videos = Array.from(videoElements.values()).filter((video) => video.readyState >= HTMLMediaElement.HAVE_METADATA);
   const directorSeconds = currentState ? getDirectorSeconds(currentState) : currentDirectorSeconds;
   currentDirectorSeconds = directorSeconds;
   const driftSeconds =
@@ -186,7 +201,6 @@ driftTimer = window.setInterval(() => {
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)
       : 0;
-
   void window.xtream.renderer.reportDrift({
     kind: 'display',
     displayId,
@@ -199,7 +213,10 @@ driftTimer = window.setInterval(() => {
 
 syncTimer = window.setInterval(() => {
   if (currentState) {
-    syncVideoElements(currentState);
+    const display = currentState.displays[displayId];
+    if (display) {
+      syncVideoElements(display, currentState);
+    }
   }
 }, 250);
 

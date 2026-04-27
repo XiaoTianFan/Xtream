@@ -1,132 +1,83 @@
 import './styles.css';
-import { assessAudioCapabilities } from '../shared/audioCapabilities';
 import { describeLayout } from '../shared/layouts';
-import { getDirectorSeconds } from '../shared/timeline';
+import { formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
 import type {
-  AudioOutputPath,
+  AudioSourceState,
   DirectorState,
   DisplayMonitorInfo,
   DisplayWindowState,
-  LayoutProfile,
   MediaValidationIssue,
-  SlotId,
-  SlotState,
   TransportCommand,
+  VisualId,
+  VisualLayoutProfile,
+  VisualState,
+  VirtualOutputState,
 } from '../shared/types';
 
-const timecode = document.querySelector<HTMLDivElement>('#timecode');
-const stateView = document.querySelector<HTMLPreElement>('#stateView');
-const showStatus = document.querySelector<HTMLDivElement>('#showStatus');
-const issueList = document.querySelector<HTMLDivElement>('#issueList');
-const slotList = document.querySelector<HTMLDivElement>('#slotList');
-const audioPanel = document.querySelector<HTMLDivElement>('#audioPanel');
-const displayList = document.querySelector<HTMLDivElement>('#displayList');
-const playButton = document.querySelector<HTMLButtonElement>('#playButton');
-const pauseButton = document.querySelector<HTMLButtonElement>('#pauseButton');
-const stopButton = document.querySelector<HTMLButtonElement>('#stopButton');
-const seekInput = document.querySelector<HTMLInputElement>('#seekInput');
-const seekButton = document.querySelector<HTMLButtonElement>('#seekButton');
-const rateInput = document.querySelector<HTMLInputElement>('#rateInput');
-const rateButton = document.querySelector<HTMLButtonElement>('#rateButton');
-const loopEnabledInput = document.querySelector<HTMLInputElement>('#loopEnabledInput');
-const loopStartInput = document.querySelector<HTMLInputElement>('#loopStartInput');
-const loopEndInput = document.querySelector<HTMLInputElement>('#loopEndInput');
-const loopButton = document.querySelector<HTMLButtonElement>('#loopButton');
-const saveShowButton = document.querySelector<HTMLButtonElement>('#saveShowButton');
-const saveShowAsButton = document.querySelector<HTMLButtonElement>('#saveShowAsButton');
-const openShowButton = document.querySelector<HTMLButtonElement>('#openShowButton');
-const exportDiagnosticsButton = document.querySelector<HTMLButtonElement>('#exportDiagnosticsButton');
-const applyMode1Button = document.querySelector<HTMLButtonElement>('#applyMode1Button');
-const applyMode2Button = document.querySelector<HTMLButtonElement>('#applyMode2Button');
-const applyMode3Button = document.querySelector<HTMLButtonElement>('#applyMode3Button');
-const createSingleButton = document.querySelector<HTMLButtonElement>('#createSingleButton');
-const createSplitButton = document.querySelector<HTMLButtonElement>('#createSplitButton');
+type SinkCapableAudioElement = HTMLAudioElement & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
+
+type OutputSourceRuntime = {
+  audioSourceId: string;
+  element: HTMLMediaElement;
+  sourceNode: MediaElementAudioSourceNode;
+  gainNode: GainNode;
+};
+
+type OutputRuntime = {
+  outputId: string;
+  context: AudioContext;
+  sources: OutputSourceRuntime[];
+  busGain: GainNode;
+  analyser: AnalyserNode;
+  destination: MediaStreamAudioDestinationNode;
+  sinkElement: SinkCapableAudioElement;
+  meterData: Uint8Array<ArrayBuffer>;
+  lastMeterReportMs: number;
+};
+
+const elements = {
+  timecode: assertElement(document.querySelector<HTMLDivElement>('#timecode'), 'timecode'),
+  stateView: assertElement(document.querySelector<HTMLPreElement>('#stateView'), 'stateView'),
+  showStatus: assertElement(document.querySelector<HTMLDivElement>('#showStatus'), 'showStatus'),
+  issueList: assertElement(document.querySelector<HTMLDivElement>('#issueList'), 'issueList'),
+  visualList: assertElement(document.querySelector<HTMLDivElement>('#slotList'), 'slotList'),
+  audioPanel: assertElement(document.querySelector<HTMLDivElement>('#audioPanel'), 'audioPanel'),
+  displayList: assertElement(document.querySelector<HTMLDivElement>('#displayList'), 'displayList'),
+  playButton: assertElement(document.querySelector<HTMLButtonElement>('#playButton'), 'playButton'),
+  pauseButton: assertElement(document.querySelector<HTMLButtonElement>('#pauseButton'), 'pauseButton'),
+  stopButton: assertElement(document.querySelector<HTMLButtonElement>('#stopButton'), 'stopButton'),
+  timelineScrubber: assertElement(document.querySelector<HTMLInputElement>('#timelineScrubber'), 'timelineScrubber'),
+  timelineSummary: assertElement(document.querySelector<HTMLDivElement>('#timelineSummary'), 'timelineSummary'),
+  seekInput: assertElement(document.querySelector<HTMLInputElement>('#seekInput'), 'seekInput'),
+  seekButton: assertElement(document.querySelector<HTMLButtonElement>('#seekButton'), 'seekButton'),
+  rateInput: assertElement(document.querySelector<HTMLInputElement>('#rateInput'), 'rateInput'),
+  rateButton: assertElement(document.querySelector<HTMLButtonElement>('#rateButton'), 'rateButton'),
+  loopEnabledInput: assertElement(document.querySelector<HTMLInputElement>('#loopEnabledInput'), 'loopEnabledInput'),
+  loopStartInput: assertElement(document.querySelector<HTMLInputElement>('#loopStartInput'), 'loopStartInput'),
+  loopEndInput: assertElement(document.querySelector<HTMLInputElement>('#loopEndInput'), 'loopEndInput'),
+  loopButton: assertElement(document.querySelector<HTMLButtonElement>('#loopButton'), 'loopButton'),
+  saveShowButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowButton'), 'saveShowButton'),
+  saveShowAsButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowAsButton'), 'saveShowAsButton'),
+  openShowButton: assertElement(document.querySelector<HTMLButtonElement>('#openShowButton'), 'openShowButton'),
+  exportDiagnosticsButton: assertElement(document.querySelector<HTMLButtonElement>('#exportDiagnosticsButton'), 'exportDiagnosticsButton'),
+  applySplitButton: assertElement(document.querySelector<HTMLButtonElement>('#applyMode1Button'), 'applyMode1Button'),
+  applyTwoButton: assertElement(document.querySelector<HTMLButtonElement>('#applyMode2Button'), 'applyMode2Button'),
+  addVisualsButton: assertElement(document.querySelector<HTMLButtonElement>('#addVisualsButton'), 'addVisualsButton'),
+  createSingleButton: assertElement(document.querySelector<HTMLButtonElement>('#createSingleButton'), 'createSingleButton'),
+  createSplitButton: assertElement(document.querySelector<HTMLButtonElement>('#createSplitButton'), 'createSplitButton'),
+};
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
 let driftTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
 let displayMonitors: DisplayMonitorInfo[] = [];
-let audioUrl = '';
-let lastReportedAudioCapabilitySignature = '';
 let currentIssues: MediaValidationIssue[] = [];
-let appliedAudioCorrectionRevision: number | undefined;
-
-type SinkCapableAudioElement = HTMLAudioElement & {
-  setSinkId?: (sinkId: string) => Promise<void>;
-  sinkId?: string;
-};
-
-const audioElement: SinkCapableAudioElement = document.createElement('audio');
-audioElement.preload = 'auto';
-audioElement.style.display = 'none';
-document.body.append(audioElement);
-
-const audioOutputs = {
-  main: createHiddenAudioOutput(),
-  left: createHiddenAudioOutput(),
-  right: createHiddenAudioOutput(),
-};
-
-type AudioGraph = {
-  context: AudioContext;
-  source: MediaElementAudioSourceNode;
-  splitter: ChannelSplitterNode;
-  mainDestination: MediaStreamAudioDestinationNode;
-  leftDestination: MediaStreamAudioDestinationNode;
-  rightDestination: MediaStreamAudioDestinationNode;
-  leftMerger: ChannelMergerNode;
-  rightMerger: ChannelMergerNode;
-};
-
-let audioGraph: AudioGraph | undefined;
-let audioGraphMode: 'main' | 'split' | undefined;
-
-function createHiddenAudioOutput(): SinkCapableAudioElement {
-  const output = document.createElement('audio') as SinkCapableAudioElement;
-  output.autoplay = true;
-  output.style.display = 'none';
-  document.body.append(output);
-  return output;
-}
-
-function assertElement<T extends Element>(element: T | null, name: string): T {
-  if (!element) {
-    throw new Error(`Missing control element: ${name}`);
-  }
-
-  return element;
-}
-
-const elements = {
-  timecode: assertElement(timecode, 'timecode'),
-  stateView: assertElement(stateView, 'stateView'),
-  showStatus: assertElement(showStatus, 'showStatus'),
-  issueList: assertElement(issueList, 'issueList'),
-  slotList: assertElement(slotList, 'slotList'),
-  audioPanel: assertElement(audioPanel, 'audioPanel'),
-  displayList: assertElement(displayList, 'displayList'),
-  playButton: assertElement(playButton, 'playButton'),
-  pauseButton: assertElement(pauseButton, 'pauseButton'),
-  stopButton: assertElement(stopButton, 'stopButton'),
-  seekInput: assertElement(seekInput, 'seekInput'),
-  seekButton: assertElement(seekButton, 'seekButton'),
-  rateInput: assertElement(rateInput, 'rateInput'),
-  rateButton: assertElement(rateButton, 'rateButton'),
-  loopEnabledInput: assertElement(loopEnabledInput, 'loopEnabledInput'),
-  loopStartInput: assertElement(loopStartInput, 'loopStartInput'),
-  loopEndInput: assertElement(loopEndInput, 'loopEndInput'),
-  loopButton: assertElement(loopButton, 'loopButton'),
-  saveShowButton: assertElement(saveShowButton, 'saveShowButton'),
-  saveShowAsButton: assertElement(saveShowAsButton, 'saveShowAsButton'),
-  openShowButton: assertElement(openShowButton, 'openShowButton'),
-  exportDiagnosticsButton: assertElement(exportDiagnosticsButton, 'exportDiagnosticsButton'),
-  applyMode1Button: assertElement(applyMode1Button, 'applyMode1Button'),
-  applyMode2Button: assertElement(applyMode2Button, 'applyMode2Button'),
-  applyMode3Button: assertElement(applyMode3Button, 'applyMode3Button'),
-  createSingleButton: assertElement(createSingleButton, 'createSingleButton'),
-  createSplitButton: assertElement(createSplitButton, 'createSplitButton'),
-};
+let displayRenderSignature = '';
+let audioGraphSignature = '';
+let outputRuntimes = new Map<string, OutputRuntime>();
 
 const transportDraftElements = new Set<HTMLInputElement>([
   elements.rateInput,
@@ -135,40 +86,35 @@ const transportDraftElements = new Set<HTMLInputElement>([
   elements.loopEndInput,
 ]);
 
-function formatTimecode(seconds: number): string {
-  const safeSeconds = Math.max(0, seconds);
-  const minutes = Math.floor(safeSeconds / 60);
-  const wholeSeconds = Math.floor(safeSeconds % 60);
-  const milliseconds = Math.floor((safeSeconds % 1) * 1000);
-
-  return `${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')}.${String(
-    milliseconds,
-  ).padStart(3, '0')}`;
+function assertElement<T extends Element>(element: T | null, name: string): T {
+  if (!element) {
+    throw new Error(`Missing control element: ${name}`);
+  }
+  return element;
 }
 
 function renderState(state: DirectorState): void {
   currentState = state;
   elements.stateView.textContent = JSON.stringify(state, null, 2);
-  syncAudioSource(state);
-  void configureAudioRoutingForState(state);
+  syncVirtualAudioGraph(state);
   syncTransportInputs(state);
-  renderSlots(Object.values(state.slots));
+  renderVisuals(Object.values(state.visuals));
   if (!isPanelInteractionActive(elements.audioPanel)) {
     renderAudio(state);
   }
-  if (!isPanelInteractionActive(elements.displayList)) {
+  const nextDisplayRenderSignature = createDisplayRenderSignature(state);
+  if (!isPanelInteractionActive(elements.displayList) && displayRenderSignature !== nextDisplayRenderSignature) {
+    displayRenderSignature = nextDisplayRenderSignature;
     renderDisplays(Object.values(state.displays));
+  } else {
+    syncDisplayCardSummaries(Object.values(state.displays));
   }
   renderIssues([...state.readiness.issues, ...currentIssues]);
 }
 
 function isPanelInteractionActive(panel: HTMLElement): boolean {
   const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLElement) || !panel.contains(activeElement)) {
-    return false;
-  }
-
-  return activeElement.matches('select, input, textarea');
+  return activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('select, input, textarea');
 }
 
 function renderIssues(issues: MediaValidationIssue[]): void {
@@ -197,380 +143,481 @@ function syncTransportInputs(state: DirectorState): void {
     elements.loopEnabledInput.checked = state.loop.enabled;
   }
   if (!isTransportDraftActive(elements.loopStartInput)) {
-    elements.loopStartInput.value = String(state.loop.startSeconds);
+    elements.loopStartInput.value = formatTimecode(state.loop.startSeconds);
   }
   if (!isTransportDraftActive(elements.loopEndInput)) {
-    elements.loopEndInput.value = state.loop.endSeconds === undefined ? '' : String(state.loop.endSeconds);
+    elements.loopEndInput.value = state.loop.endSeconds === undefined ? '' : formatTimecode(state.loop.endSeconds);
   }
   elements.showStatus.textContent = state.readiness.ready
     ? 'Show readiness: ready'
     : `Show readiness: blocked by ${state.readiness.issues.filter((issue) => issue.severity === 'error').length} issue(s)`;
+  syncTimelineScrubber(state);
+}
+
+function syncTimelineScrubber(state: DirectorState): void {
+  const duration = state.activeTimeline.durationSeconds;
+  const currentSeconds = getDirectorSeconds(state);
+  if (duration === undefined) {
+    elements.timelineScrubber.disabled = true;
+    elements.timelineScrubber.max = '0';
+    elements.timelineScrubber.value = '0';
+    elements.timelineSummary.textContent = 'No active timeline duration';
+    return;
+  }
+  elements.timelineScrubber.disabled = false;
+  elements.timelineScrubber.max = String(duration);
+  if (document.activeElement !== elements.timelineScrubber) {
+    elements.timelineScrubber.value = String(Math.min(currentSeconds, duration));
+  }
+  if (document.activeElement !== elements.seekInput) {
+    elements.seekInput.value = formatTimecode(Math.min(currentSeconds, duration));
+  }
+  const loopLimit = state.activeTimeline.loopRangeLimit;
+  elements.timelineSummary.textContent = `Timeline ${formatTimecode(Math.min(currentSeconds, duration))} / ${formatTimecode(duration)}${
+    loopLimit ? ` | loop range limit: ${formatTimecode(loopLimit.startSeconds)}-${formatTimecode(loopLimit.endSeconds)}` : ''
+  }`;
 }
 
 function isTransportDraftActive(input: HTMLInputElement): boolean {
   return document.activeElement === input || (transportDraftElements.has(input) && input.dataset.dirty === 'true');
 }
 
-function syncAudioSource(state: DirectorState): void {
-  const nextUrl = getAudioSourceUrl(state);
-  if (audioUrl === nextUrl) {
-    return;
-  }
+function renderVisuals(visuals: VisualState[]): void {
+  elements.visualList.replaceChildren(
+    ...visuals.map((visual) => {
+      const card = document.createElement('article');
+      card.className = 'slot-card';
+      const header = document.createElement('header');
+      const title = document.createElement('strong');
+      title.textContent = visual.label;
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = visual.ready ? 'ready' : visual.path ? 'loading' : 'empty';
+      header.append(title, badge);
 
-  audioUrl = nextUrl;
-  audioElement.pause();
-  audioElement.removeAttribute('src');
+      const preview = document.createElement('div');
+      preview.className = 'visual-preview';
+      if (visual.url && visual.type === 'image') {
+        const image = document.createElement('img');
+        image.src = visual.url;
+        image.alt = visual.label;
+        preview.append(image);
+      }
 
-  if (nextUrl) {
-    audioElement.src = nextUrl;
-    audioElement.load();
-  }
-}
+      const pathText = document.createElement('div');
+      pathText.className = 'path-text';
+      pathText.title = visual.path ?? '';
+      pathText.textContent = visual.path ?? 'No visual selected';
 
-function getAudioSourceUrl(state: DirectorState): string {
-  if (state.audio.sourceMode === 'embedded-slot' && state.audio.embeddedSlotId) {
-    return state.slots[state.audio.embeddedSlotId]?.videoUrl ?? '';
-  }
+      const meta = document.createElement('div');
+      meta.className = visual.error ? 'warning' : 'hint';
+      meta.textContent = visual.error
+        ? `Error: ${visual.error}`
+        : `${visual.type} | duration: ${visual.durationSeconds?.toFixed(3) ?? 'n/a'}s | size: ${
+            visual.width && visual.height ? `${visual.width}x${visual.height}` : 'n/a'
+          } | embedded audio: ${visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'}`;
 
-  return state.audio.url ?? '';
-}
-
-async function ensureAudioGraph(): Promise<AudioGraph | undefined> {
-  if (audioGraph) {
-    return audioGraph;
-  }
-
-  const AudioContextCtor = window.AudioContext;
-  if (!AudioContextCtor) {
-    return undefined;
-  }
-
-  const context = new AudioContextCtor();
-  const source = context.createMediaElementSource(audioElement);
-  const splitter = context.createChannelSplitter(2);
-  const mainDestination = context.createMediaStreamDestination();
-  const leftDestination = context.createMediaStreamDestination();
-  const rightDestination = context.createMediaStreamDestination();
-  const leftMerger = context.createChannelMerger(2);
-  const rightMerger = context.createChannelMerger(2);
-
-  audioOutputs.main.srcObject = mainDestination.stream;
-  audioOutputs.left.srcObject = leftDestination.stream;
-  audioOutputs.right.srcObject = rightDestination.stream;
-
-  audioGraph = {
-    context,
-    source,
-    splitter,
-    mainDestination,
-    leftDestination,
-    rightDestination,
-    leftMerger,
-    rightMerger,
-  };
-
-  return audioGraph;
-}
-
-async function configureAudioGraphForMode(state: DirectorState): Promise<boolean> {
-  const graph = await ensureAudioGraph();
-  if (!graph) {
-    return false;
-  }
-
-  const nextMode = state.mode === 3 && state.audio.physicalSplitAvailable ? 'split' : 'main';
-  if (audioGraphMode === nextMode) {
-    return true;
-  }
-
-  graph.source.disconnect();
-  graph.splitter.disconnect();
-  graph.leftMerger.disconnect();
-  graph.rightMerger.disconnect();
-
-  if (nextMode === 'split') {
-    graph.source.connect(graph.splitter);
-    graph.splitter.connect(graph.leftMerger, 0, 0);
-    graph.splitter.connect(graph.leftMerger, 0, 1);
-    graph.splitter.connect(graph.rightMerger, 1, 0);
-    graph.splitter.connect(graph.rightMerger, 1, 1);
-    graph.leftMerger.connect(graph.leftDestination);
-    graph.rightMerger.connect(graph.rightDestination);
-    audioOutputs.main.pause();
-  } else {
-    graph.source.connect(graph.mainDestination);
-    audioOutputs.left.pause();
-    audioOutputs.right.pause();
-  }
-
-  audioGraphMode = nextMode;
-  return true;
-}
-
-function getActiveAudioOutputs(mode: DirectorState['mode']): SinkCapableAudioElement[] {
-  const state = currentState;
-  return mode === 3 && state?.audio.physicalSplitAvailable ? [audioOutputs.left, audioOutputs.right] : [audioOutputs.main];
-}
-
-async function configureAudioRoutingForState(state: DirectorState): Promise<void> {
-  const graphReady = await configureAudioGraphForMode(state);
-  await Promise.all([
-    applyAudioSink('main', state.audio.sinkId),
-    applyAudioSink('left', state.audio.leftSinkId),
-    applyAudioSink('right', state.audio.rightSinkId),
-  ]);
-
-  const assessment = assessAudioCapabilities({
-    graphReady,
-    setSinkIdSupported: Boolean(audioOutputs.left.setSinkId) && Boolean(audioOutputs.right.setSinkId),
-    outputDeviceCount: audioDevices.length,
-    leftSinkId: state.audio.leftSinkId,
-    rightSinkId: state.audio.rightSinkId,
-  });
-  const signature = JSON.stringify(assessment);
-
-  if (lastReportedAudioCapabilitySignature !== signature) {
-    lastReportedAudioCapabilitySignature = signature;
-    await window.xtream.audio.reportCapabilities({
-      ...assessment,
-      fallbackAccepted: state.audio.fallbackAccepted,
-    });
-  }
+      const buttons = document.createElement('div');
+      buttons.className = 'button-row';
+      const replaceButton = createButton('Replace', 'secondary', async () => {
+        await window.xtream.visuals.replace(visual.id);
+        renderState(await window.xtream.director.getState());
+      });
+      const clearButton = createButton('Clear', 'secondary', async () => {
+        await window.xtream.visuals.clear(visual.id);
+        renderState(await window.xtream.director.getState());
+      });
+      const removeButton = createButton('Remove', 'secondary', async () => {
+        await window.xtream.visuals.remove(visual.id);
+        renderState(await window.xtream.director.getState());
+      });
+      buttons.append(replaceButton, clearButton, removeButton);
+      card.append(header, preview, pathText, meta, buttons);
+      return card;
+    }),
+  );
 }
 
 function renderAudio(state: DirectorState): void {
+  const sourceSection = document.createElement('section');
+  sourceSection.className = 'audio-section';
+  sourceSection.append(createSectionHeading('Audio Pool'));
+  const sourceButtons = document.createElement('div');
+  sourceButtons.className = 'button-row';
+  sourceButtons.append(createButton('Add External Audio', '', async () => {
+    await window.xtream.audioSources.addFile();
+    renderState(await window.xtream.director.getState());
+  }));
+  const embeddedSelect = createSelect(
+    'Add Embedded Audio',
+    [['', 'Choose visual'], ...Object.values(state.visuals).map((visual): [string, string] => [visual.id, visual.label])],
+    '',
+    (visualId) => {
+      if (visualId) {
+        void window.xtream.audioSources.addEmbedded(visualId).then(async () => renderState(await window.xtream.director.getState()));
+      }
+    },
+  );
+  sourceSection.append(sourceButtons, embeddedSelect);
+  const sourceCards = Object.values(state.audioSources).map((source) => createAudioSourceCard(source, state));
+  sourceSection.append(...(sourceCards.length > 0 ? sourceCards : [createHint('No audio sources yet.')]));
+
+  const outputSection = document.createElement('section');
+  outputSection.className = 'audio-section';
+  outputSection.append(createSectionHeading('Virtual Outputs'));
+  const outputButtons = document.createElement('div');
+  outputButtons.className = 'button-row';
+  outputButtons.append(
+    createButton('Create Output', '', async () => {
+      await window.xtream.outputs.create();
+      renderState(await window.xtream.director.getState());
+    }),
+    createButton('Refresh Outputs', 'secondary', async () => {
+      await loadAudioDevices();
+      renderState(await window.xtream.director.getState());
+    }),
+  );
+  outputSection.append(outputButtons, ...Object.values(state.outputs).map((output) => createVirtualOutputCard(output, state)));
+  elements.audioPanel.replaceChildren(sourceSection, outputSection);
+}
+
+function createAudioSourceCard(source: AudioSourceState, state: DirectorState): HTMLElement {
   const card = document.createElement('article');
   card.className = 'audio-card';
-
   const header = document.createElement('header');
   const title = document.createElement('strong');
-  title.textContent = 'Audio source';
-
+  title.textContent = source.label;
   const badge = document.createElement('span');
   badge.className = 'badge';
-  badge.textContent = state.audio.ready ? 'ready' : state.audio.sourceMode !== 'none' ? 'loading' : 'empty';
+  badge.textContent = source.ready ? 'ready' : 'loading';
   header.append(title, badge);
-
   const pathText = document.createElement('div');
   pathText.className = 'path-text';
-  pathText.title = state.audio.path ?? '';
   pathText.textContent =
-    state.audio.sourceMode === 'embedded-slot'
-      ? `Embedded audio from slot ${state.audio.embeddedSlotId ?? 'none'}`
-      : state.audio.path ?? 'No audio selected';
-
+    source.type === 'external-file' ? source.path ?? 'No file path' : `Embedded audio from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
   const meta = document.createElement('div');
-  meta.className = 'hint';
-  meta.textContent = state.audio.error
-    ? `Error: ${state.audio.error}`
-    : `duration: ${state.audio.durationSeconds?.toFixed(3) ?? 'n/a'}s | drift: ${
-        state.audio.lastDriftSeconds?.toFixed(3) ?? 'n/a'
-      }`;
-
-  const sourceField = createSelect(
-    'Audio source',
-    [
-      ['none', 'No audio source'],
-      ['external-file', state.audio.path ? 'External audio file' : 'External audio file (choose below)'],
-      ...Object.keys(state.slots).map((slotId): [string, string] => [`embedded:${slotId}`, `Slot ${slotId} embedded audio`]),
-    ],
-    state.audio.sourceMode === 'embedded-slot' && state.audio.embeddedSlotId
-      ? `embedded:${state.audio.embeddedSlotId}`
-      : state.audio.sourceMode,
-    (value) => {
-      if (value.startsWith('embedded:')) {
-        void window.xtream.audio.setEmbeddedSource({ slotId: value.slice('embedded:'.length) }).then(async () => {
-          renderState(await window.xtream.director.getState());
-        });
-        return;
-      }
-
-      if (value === 'none') {
-        void window.xtream.audio.setEmbeddedSource({}).then(async () => {
-          renderState(await window.xtream.director.getState());
-        });
-      }
-    },
-  );
-
-  const sinkField = createSelect(
-    'Main output',
-    getAudioSinkOptions(),
-    state.audio.sinkId ?? '',
-    (sinkId) => {
-      const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
-      void setAudioSink('main', sinkId, sinkLabel);
-    },
-  );
-
-  const leftSinkField = createSelect(
-    'Mode 3 left output',
-    getAudioSinkOptions(),
-    state.audio.leftSinkId ?? '',
-    (sinkId) => {
-      const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
-      void setAudioSink('left', sinkId, sinkLabel);
-    },
-  );
-
-  const rightSinkField = createSelect(
-    'Mode 3 right output',
-    getAudioSinkOptions(),
-    state.audio.rightSinkId ?? '',
-    (sinkId) => {
-      const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
-      void setAudioSink('right', sinkId, sinkLabel);
-    },
-  );
-
-  const splitStatus = document.createElement('div');
-  splitStatus.className = state.mode === 3 && !state.audio.physicalSplitAvailable ? 'warning' : 'hint';
-  splitStatus.textContent =
-    state.mode === 3 && !state.audio.physicalSplitAvailable
-      ? `Mode 3 fallback: stereo will use the main/default output until physical split is available. Reason: ${
-          state.audio.fallbackReason ?? 'unknown'
-        }.`
-      : `Mode 3 split routing: ${state.audio.physicalSplitAvailable ? 'available' : 'not active'} (${
-          state.audio.capabilityStatus ?? 'unknown'
-        })`;
-
+  meta.className = source.error ? 'warning' : 'hint';
+  meta.textContent = source.error ? `Error: ${source.error}` : `duration: ${source.durationSeconds?.toFixed(3) ?? 'n/a'}s`;
   const buttons = document.createElement('div');
   buttons.className = 'button-row';
-
-  const chooseButton = document.createElement('button');
-  chooseButton.type = 'button';
-  chooseButton.textContent = state.audio.path ? 'Replace Audio' : 'Choose Audio';
-  chooseButton.addEventListener('click', async () => {
-    await window.xtream.audio.pickFile();
+  buttons.append(createButton('Remove', 'secondary', async () => {
+    await window.xtream.audioSources.remove(source.id);
     renderState(await window.xtream.director.getState());
-  });
+  }));
+  card.append(header, pathText, meta, buttons);
+  return card;
+}
 
-  const refreshDevicesButton = document.createElement('button');
-  refreshDevicesButton.type = 'button';
-  refreshDevicesButton.className = 'secondary';
-  refreshDevicesButton.textContent = 'Refresh Outputs';
-  refreshDevicesButton.addEventListener('click', async () => {
-    await loadAudioDevices();
-    renderState(await window.xtream.director.getState());
+function createVirtualOutputCard(output: VirtualOutputState, state: DirectorState): HTMLElement {
+  const card = document.createElement('article');
+  card.className = 'audio-card';
+  const header = document.createElement('header');
+  const title = document.createElement('strong');
+  title.textContent = output.label;
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.textContent = output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'empty';
+  header.append(title, badge);
+  const sourceControls = createOutputSourceControls(output, state);
+  const busControl = createDbFader('Bus level dB', output.busLevelDb, (busLevelDb) => {
+    void window.xtream.outputs.update(output.id, { busLevelDb });
   });
-
-  const clearButton = document.createElement('button');
-  clearButton.type = 'button';
-  clearButton.className = 'secondary';
-  clearButton.textContent = 'Clear';
-  clearButton.disabled = !state.audio.path && state.audio.sourceMode !== 'embedded-slot';
-  clearButton.addEventListener('click', async () => {
-    if (state.audio.path) {
-      await window.xtream.audio.clearFile();
-    } else {
-      await window.xtream.audio.setEmbeddedSource({});
-    }
-    renderState(await window.xtream.director.getState());
+  const sinkField = createSelect('Physical output', getAudioSinkOptions(), output.sinkId ?? '', (sinkId) => {
+    const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
+    void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel });
   });
-
-  const testMainButton = createTestToneButton('Test Main', 'main');
-  const testLeftButton = createTestToneButton('Test Left', 'left');
-  const testRightButton = createTestToneButton('Test Right', 'right');
-  const acceptFallbackButton = document.createElement('button');
-  acceptFallbackButton.type = 'button';
-  acceptFallbackButton.className = 'secondary';
-  acceptFallbackButton.textContent = state.audio.fallbackAccepted ? 'Fallback Accepted' : 'Accept Fallback';
-  acceptFallbackButton.disabled = state.mode !== 3 || state.audio.physicalSplitAvailable;
-  acceptFallbackButton.addEventListener('click', async () => {
-    renderState(
-      await window.xtream.audio.reportCapabilities({
-        physicalSplitAvailable: state.audio.physicalSplitAvailable,
-        fallbackAccepted: true,
-      }),
-    );
-  });
-
+  const meter = document.createElement('div');
+  meter.className = 'meter';
+  const meterFill = document.createElement('div');
+  meterFill.dataset.meterFill = output.id;
+  meterFill.style.width = meterWidth(output.meterDb);
+  meter.append(meterFill);
+  const status = document.createElement('div');
+  status.className = output.error ? 'warning' : 'hint';
+  status.textContent = output.error ?? `Routing: ${output.physicalRoutingAvailable ? 'available' : 'fallback/default'} | meter: ${
+    output.meterDb?.toFixed(1) ?? '-inf'
+  } dB`;
+  const buttons = document.createElement('div');
+  buttons.className = 'button-row';
   buttons.append(
-    chooseButton,
-    refreshDevicesButton,
-    clearButton,
-    testMainButton,
-    testLeftButton,
-    testRightButton,
-    acceptFallbackButton,
+    createButton('Test Tone', 'secondary', () => playOutputTestTone(output)),
+    createButton(output.fallbackAccepted ? 'Fallback Accepted' : 'Accept Fallback', 'secondary', async () => {
+      await window.xtream.outputs.update(output.id, { fallbackAccepted: true });
+      renderState(await window.xtream.director.getState());
+    }),
+    createButton('Remove', 'secondary', async () => {
+      await window.xtream.outputs.remove(output.id);
+      renderState(await window.xtream.director.getState());
+    }),
   );
-  card.append(header, pathText, meta, sourceField, sinkField, leftSinkField, rightSinkField, splitStatus, buttons);
-  elements.audioPanel.replaceChildren(card);
+  card.append(header, sourceControls, busControl, sinkField, meter, status, buttons);
+  return card;
 }
 
-function getAudioSinkOptions(): Array<[string, string]> {
-  const options: Array<[string, string]> = [['', 'System default output']];
-  for (const device of audioDevices) {
-    options.push([device.deviceId, device.label || `Audio output ${options.length}`]);
+function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'output-source-list';
+  for (const selection of output.sources) {
+    const source = state.audioSources[selection.audioSourceId];
+    const row = document.createElement('div');
+    row.className = 'output-source-row';
+    const label = document.createElement('strong');
+    label.textContent = source?.label ?? selection.audioSourceId;
+    const levelControl = createDbFader('Level dB', selection.levelDb, (levelDb) => {
+      void window.xtream.outputs.update(output.id, {
+        sources: output.sources.map((candidate) =>
+          candidate.audioSourceId === selection.audioSourceId ? { ...candidate, levelDb } : candidate,
+        ),
+      });
+    });
+    const removeButton = createButton('Remove Source', 'secondary', async () => {
+      await window.xtream.outputs.update(output.id, {
+        sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
+      });
+      renderState(await window.xtream.director.getState());
+    });
+    row.append(label, levelControl, removeButton);
+    wrapper.append(row);
   }
-
-  return options;
+  const availableSources = Object.values(state.audioSources).filter(
+    (source) => !output.sources.some((selection) => selection.audioSourceId === source.id),
+  );
+  if (availableSources.length > 0) {
+    wrapper.append(
+      createSelect(
+        'Add source',
+        [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
+        '',
+        (audioSourceId) => {
+          if (audioSourceId) {
+            void window.xtream.outputs
+              .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] })
+              .then(async () => renderState(await window.xtream.director.getState()));
+          }
+        },
+      ),
+    );
+  }
+  if (output.sources.length === 0) {
+    wrapper.append(createHint('No sources selected.'));
+  }
+  return wrapper;
 }
 
-function createTestToneButton(label: string, path: AudioOutputPath): HTMLButtonElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'secondary';
-  button.textContent = label;
-  button.addEventListener('click', () => {
-    void playTestTone(path);
-  });
-  return button;
+function syncVirtualAudioGraph(state: DirectorState): void {
+  const signature = JSON.stringify(
+    Object.values(state.outputs)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((output) => ({
+        id: output.id,
+        sinkId: output.sinkId,
+        sources: output.sources.map((selection) => ({
+          id: selection.audioSourceId,
+          url: getAudioSourceUrl(selection.audioSourceId, state),
+        })),
+      })),
+  );
+  if (signature !== audioGraphSignature) {
+    audioGraphSignature = signature;
+    void rebuildAudioGraph(state);
+  }
+  syncAudioRuntimeToDirector(state);
 }
 
-async function setAudioSink(path: AudioOutputPath, sinkId: string, sinkLabel?: string): Promise<void> {
-  await applyAudioSink(path, sinkId);
-  renderState(await window.xtream.audio.setSink({ path, sinkId: sinkId || undefined, sinkLabel }));
+async function rebuildAudioGraph(state: DirectorState): Promise<void> {
+  for (const runtime of outputRuntimes.values()) {
+    runtime.sinkElement.pause();
+    runtime.sinkElement.remove();
+    for (const source of runtime.sources) {
+      source.element.pause();
+      source.element.remove();
+    }
+    await runtime.context.close().catch(() => undefined);
+  }
+  outputRuntimes = new Map();
+  const AudioContextCtor = window.AudioContext;
+  for (const output of Object.values(state.outputs)) {
+    const context = new AudioContextCtor();
+    const busGain = context.createGain();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    const destination = context.createMediaStreamDestination();
+    const sinkElement = createHiddenAudioOutput();
+    sinkElement.srcObject = destination.stream;
+    busGain.connect(analyser);
+    analyser.connect(destination);
+    const runtime: OutputRuntime = {
+      outputId: output.id,
+      context,
+      sources: [],
+      busGain,
+      analyser,
+      destination,
+      sinkElement,
+      meterData: new Uint8Array(analyser.fftSize),
+      lastMeterReportMs: 0,
+    };
+    for (const selection of output.sources) {
+      const url = getAudioSourceUrl(selection.audioSourceId, state);
+      if (!url) {
+        continue;
+      }
+      const element = document.createElement('audio');
+      element.preload = 'auto';
+      element.style.display = 'none';
+      element.src = url;
+      document.body.append(element);
+      const sourceNode = context.createMediaElementSource(element);
+      const gainNode = context.createGain();
+      sourceNode.connect(gainNode).connect(busGain);
+      element.addEventListener('loadedmetadata', () => {
+        void window.xtream.audioSources.reportMetadata({
+          audioSourceId: selection.audioSourceId,
+          durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
+          ready: true,
+        });
+      });
+      element.addEventListener('error', () => {
+        void window.xtream.audioSources.reportMetadata({
+          audioSourceId: selection.audioSourceId,
+          durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
+          ready: false,
+          error: element.error?.message ?? 'Audio failed to load.',
+        });
+      });
+      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode });
+    }
+    outputRuntimes.set(output.id, runtime);
+    await applyOutputSink(output, runtime);
+  }
 }
 
-async function applyAudioSink(path: AudioOutputPath, sinkId: string | undefined): Promise<void> {
-  const output = getOutputForPath(path);
-  if (!output.setSinkId) {
+async function applyOutputSink(output: VirtualOutputState, runtime: OutputRuntime): Promise<void> {
+  if (!runtime.sinkElement.setSinkId) {
+    await window.xtream.outputs.update(output.id, {
+      physicalRoutingAvailable: false,
+      fallbackReason: 'setSinkId unavailable',
+    });
     return;
   }
-
   try {
-    await output.setSinkId(sinkId ?? '');
+    await runtime.sinkElement.setSinkId(output.sinkId ?? '');
+    await window.xtream.outputs.update(output.id, {
+      physicalRoutingAvailable: true,
+      fallbackReason: 'none',
+      error: undefined,
+    });
   } catch (error) {
-    await window.xtream.audio.reportMetadata({
-      durationSeconds: Number.isFinite(audioElement.duration) ? audioElement.duration : undefined,
-      ready: false,
+    await window.xtream.outputs.update(output.id, {
+      physicalRoutingAvailable: false,
+      fallbackReason: error instanceof Error ? error.message : 'sink assignment failed',
       error: error instanceof Error ? error.message : 'Audio sink assignment failed.',
     });
   }
 }
 
-function getOutputForPath(path: AudioOutputPath): SinkCapableAudioElement {
-  return audioOutputs[path];
+function syncAudioRuntimeToDirector(state: DirectorState): void {
+  const directorSeconds = getDirectorSeconds(state);
+  for (const output of Object.values(state.outputs)) {
+    const runtime = outputRuntimes.get(output.id);
+    if (!runtime) {
+      continue;
+    }
+    runtime.busGain.gain.value = output.muted ? 0 : dbToGain(output.busLevelDb);
+    for (const sourceRuntime of runtime.sources) {
+      const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
+      const source = state.audioSources[sourceRuntime.audioSourceId];
+      if (!selection || !source) {
+        continue;
+      }
+      sourceRuntime.gainNode.gain.value = selection.muted ? 0 : dbToGain(selection.levelDb);
+      const targetSeconds = getMediaEffectiveTime(directorSeconds, source.durationSeconds, state.loop);
+      if (sourceRuntime.element.readyState >= HTMLMediaElement.HAVE_METADATA && Math.abs(sourceRuntime.element.currentTime - targetSeconds) > 0.08) {
+        sourceRuntime.element.currentTime = targetSeconds;
+      }
+      sourceRuntime.element.playbackRate = state.rate;
+      if (state.paused) {
+        sourceRuntime.element.pause();
+      } else if (sourceRuntime.element.paused) {
+        void runtime.context.resume().then(() => sourceRuntime.element.play()).catch(() => undefined);
+      }
+    }
+    if (state.paused) {
+      runtime.sinkElement.pause();
+    } else if (runtime.sinkElement.paused) {
+      void runtime.sinkElement.play().catch(() => undefined);
+    }
+  }
 }
 
-async function playTestTone(path: AudioOutputPath): Promise<void> {
+function sampleMeters(state: DirectorState): void {
+  const now = Date.now();
+  for (const [outputId, runtime] of outputRuntimes) {
+    runtime.analyser.getByteTimeDomainData(runtime.meterData);
+    let peak = 0;
+    for (const sample of runtime.meterData) {
+      peak = Math.max(peak, Math.abs((sample - 128) / 128));
+    }
+    const meterDb = peak <= 0.00001 ? -60 : Math.max(-60, 20 * Math.log10(peak));
+    const fill = elements.audioPanel.querySelector<HTMLElement>(`[data-meter-fill="${outputId}"]`);
+    if (fill) {
+      fill.style.width = meterWidth(meterDb);
+    }
+    if (now - runtime.lastMeterReportMs > 250 && currentState?.outputs[outputId]) {
+      runtime.lastMeterReportMs = now;
+      void window.xtream.outputs.update(outputId, { meterDb });
+    }
+  }
+}
+
+function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string {
+  const source = state.audioSources[audioSourceId];
+  if (!source) {
+    return '';
+  }
+  if (source.type === 'external-file') {
+    return source.url ?? '';
+  }
+  return state.visuals[source.visualId]?.url ?? '';
+}
+
+function createHiddenAudioOutput(): SinkCapableAudioElement {
+  const output = document.createElement('audio') as SinkCapableAudioElement;
+  output.autoplay = true;
+  output.style.display = 'none';
+  document.body.append(output);
+  return output;
+}
+
+async function playOutputTestTone(output: VirtualOutputState): Promise<void> {
   const context = new AudioContext();
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   const destination = context.createMediaStreamDestination();
-  const output = createHiddenAudioOutput();
-
-  oscillator.frequency.value = path === 'right' ? 880 : path === 'left' ? 440 : 660;
-  gain.gain.value = 0.18;
+  const toneOutput = createHiddenAudioOutput();
+  oscillator.frequency.value = 660;
+  gain.gain.value = dbToGain(output.busLevelDb) * 0.18;
   oscillator.connect(gain).connect(destination);
-  output.srcObject = destination.stream;
-
-  const state = currentState;
-  const sinkId =
-    path === 'left' ? state?.audio.leftSinkId : path === 'right' ? state?.audio.rightSinkId : state?.audio.sinkId;
-  if (output.setSinkId) {
-    await output.setSinkId(sinkId ?? '');
+  toneOutput.srcObject = destination.stream;
+  if (toneOutput.setSinkId) {
+    await toneOutput.setSinkId(output.sinkId ?? '');
   }
-
   oscillator.start();
-  await output.play();
+  await toneOutput.play();
   window.setTimeout(() => {
     oscillator.stop();
-    output.pause();
-    output.remove();
+    toneOutput.pause();
+    toneOutput.remove();
     void context.close();
   }, 850);
+}
+
+function dbToGain(db: number): number {
+  return db <= -60 ? 0 : 10 ** (db / 20);
+}
+
+function meterWidth(db: number | undefined): string {
+  return `${Math.max(0, Math.min(100, ((db ?? -60) + 60) * (100 / 72)))}%`;
 }
 
 async function loadAudioDevices(): Promise<void> {
@@ -578,7 +625,6 @@ async function loadAudioDevices(): Promise<void> {
     audioDevices = [];
     return;
   }
-
   const devices = await navigator.mediaDevices.enumerateDevices();
   audioDevices = devices.filter((device) => device.kind === 'audiooutput');
 }
@@ -587,211 +633,182 @@ async function loadDisplayMonitors(): Promise<void> {
   displayMonitors = await window.xtream.displays.listMonitors();
 }
 
-function renderSlots(slots: SlotState[]): void {
-  elements.slotList.replaceChildren(
-    ...slots.map((slot) => {
-      const card = document.createElement('article');
-      card.className = 'slot-card';
-
-      const header = document.createElement('header');
-      const title = document.createElement('strong');
-      title.textContent = `Slot ${slot.id}`;
-
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = slot.ready ? 'ready' : slot.videoPath ? 'loading' : 'empty';
-      header.append(title, badge);
-
-      const pathText = document.createElement('div');
-      pathText.className = 'path-text';
-      pathText.title = slot.videoPath ?? '';
-      pathText.textContent = slot.videoPath ?? 'No video selected';
-
-      const meta = document.createElement('div');
-      meta.className = 'hint';
-      meta.textContent = slot.error
-        ? `Error: ${slot.error}`
-        : `duration: ${slot.durationSeconds?.toFixed(3) ?? 'n/a'}s`;
-
-      const buttons = document.createElement('div');
-      buttons.className = 'button-row';
-
-      const chooseButton = document.createElement('button');
-      chooseButton.type = 'button';
-      chooseButton.textContent = slot.videoPath ? 'Replace Video' : 'Choose Video';
-      chooseButton.addEventListener('click', async () => {
-        await window.xtream.slots.pickVideo(slot.id);
-        renderState(await window.xtream.director.getState());
-      });
-
-      const clearButton = document.createElement('button');
-      clearButton.type = 'button';
-      clearButton.className = 'secondary';
-      clearButton.textContent = 'Clear';
-      clearButton.disabled = !slot.videoPath;
-      clearButton.addEventListener('click', async () => {
-        await window.xtream.slots.clearVideo(slot.id);
-        renderState(await window.xtream.director.getState());
-      });
-
-      buttons.append(chooseButton, clearButton);
-      card.append(header, pathText, meta, buttons);
-      return card;
-    }),
-  );
-}
-
 function renderDisplays(displays: DisplayWindowState[]): void {
-  const slots = Object.keys(currentState?.slots ?? {});
+  const visualIds = Object.keys(currentState?.visuals ?? {});
   elements.displayList.replaceChildren(
     ...displays.map((display) => {
-      const hasLiveWindow = display.health !== 'closed';
       const card = document.createElement('article');
       card.className = 'display-card';
-
       const header = document.createElement('header');
       const title = document.createElement('strong');
       title.textContent = display.id;
-
       const badge = document.createElement('span');
       badge.className = 'badge';
+      badge.dataset.displayBadge = display.id;
       badge.textContent = `${display.layout.type} / ${display.health}`;
-
       header.append(title, badge);
-
       const details = document.createElement('div');
-      details.textContent = `${describeLayout(display.layout)} | fullscreen: ${
-        display.fullscreen ? 'yes' : 'no'
-      } | drift: ${
+      details.className = 'hint';
+      details.dataset.displayDetails = display.id;
+      details.textContent = `${describeLayout(display.layout)} | fullscreen: ${display.fullscreen ? 'yes' : 'no'} | drift: ${
         display.lastDriftSeconds?.toFixed(3) ?? 'n/a'
       }`;
-
-      const mapping = createMappingControls(display, slots, hasLiveWindow);
+      const preview = createDisplayPreview(display, currentState);
+      const mapping = createMappingControls(display, visualIds, display.health !== 'closed');
       const monitorSelect = createSelect(
         'Monitor',
-        [
-          ['', 'Current / manual'],
-          ...displayMonitors.map((monitor): [string, string] => [monitor.id, monitor.label]),
-        ],
+        [['', 'Current/default'], ...displayMonitors.map((monitor): [string, string] => [monitor.id, monitor.label])],
         display.displayId ?? '',
         (displayId) => {
-          void window.xtream.displays.update(display.id, { displayId: displayId || undefined }).then(async () => {
-            renderState(await window.xtream.director.getState());
-          });
+          void window.xtream.displays.update(display.id, { displayId: displayId || undefined });
         },
       );
-      const monitorControl = monitorSelect.querySelector('select');
-      if (monitorControl) {
-        monitorControl.disabled = !hasLiveWindow;
-      }
-
       const buttons = document.createElement('div');
       buttons.className = 'button-row';
-
-      const fullscreenButton = document.createElement('button');
-      fullscreenButton.type = 'button';
-      fullscreenButton.className = 'secondary';
-      fullscreenButton.textContent = display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen';
-      fullscreenButton.disabled = !hasLiveWindow;
-      fullscreenButton.addEventListener('click', () => {
-        void window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
-      });
-
-      const closeButton = document.createElement('button');
-      closeButton.type = 'button';
-      closeButton.className = 'secondary';
-      closeButton.textContent = 'Close Window';
-      closeButton.disabled = !hasLiveWindow;
-      closeButton.addEventListener('click', async () => {
-        await window.xtream.displays.close(display.id);
-        renderState(await window.xtream.director.getState());
-      });
-
-      const reopenButton = document.createElement('button');
-      reopenButton.type = 'button';
-      reopenButton.className = 'secondary';
-      reopenButton.textContent = 'Reopen With Mapping';
-      reopenButton.disabled = display.health !== 'closed' && display.health !== 'degraded';
-      reopenButton.addEventListener('click', async () => {
-        await window.xtream.displays.reopen(display.id);
-        renderState(await window.xtream.director.getState());
-      });
-
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'secondary';
-      removeButton.textContent = 'Remove Display';
-      removeButton.addEventListener('click', async () => {
-        await window.xtream.displays.remove(display.id);
-        renderState(await window.xtream.director.getState());
-      });
-
-      buttons.append(fullscreenButton, closeButton, reopenButton, removeButton);
-      card.append(header, details, mapping, monitorSelect, buttons);
+      buttons.append(
+        createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', () => {
+          void window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
+        }),
+        createButton('Close Window', 'secondary', async () => {
+          await window.xtream.displays.close(display.id);
+          renderState(await window.xtream.director.getState());
+        }),
+        createButton('Reopen With Mapping', 'secondary', async () => {
+          await window.xtream.displays.reopen(display.id);
+          renderState(await window.xtream.director.getState());
+        }),
+        createButton('Remove Display', 'secondary', async () => {
+          await window.xtream.displays.remove(display.id);
+          renderState(await window.xtream.director.getState());
+        }),
+      );
+      card.append(header, details, preview, mapping, monitorSelect, buttons);
       return card;
     }),
   );
 }
 
-function createMappingControls(display: DisplayWindowState, slots: SlotId[], enabled = true): HTMLDivElement {
+function createDisplayRenderSignature(state: DirectorState): string {
+  const displayParts = Object.values(state.displays)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((display) => {
+      const visualParts = getPreviewVisualIds(display.layout).map((visualId) => {
+        const visual = state.visuals[visualId];
+        return `${visualId}:${visual?.type ?? 'missing'}:${visual?.url ?? ''}:${visual?.label ?? ''}:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}`;
+      });
+      return `${display.id}:${display.layout.type}:${JSON.stringify(display.layout)}:${display.health}:${display.fullscreen}:${display.displayId ?? ''}:${visualParts.join(',')}`;
+    });
+  const monitorSignature = displayMonitors.map((monitor) => `${monitor.id}:${monitor.label}`).join(',');
+  return `${displayParts.join('|')}::${monitorSignature}`;
+}
+
+function syncDisplayCardSummaries(displays: DisplayWindowState[]): void {
+  for (const display of displays) {
+    const badge = elements.displayList.querySelector<HTMLElement>(`[data-display-badge="${display.id}"]`);
+    if (badge) {
+      badge.textContent = `${display.layout.type} / ${display.health}`;
+    }
+    const details = elements.displayList.querySelector<HTMLElement>(`[data-display-details="${display.id}"]`);
+    if (details) {
+      details.textContent = `${describeLayout(display.layout)} | fullscreen: ${
+        display.fullscreen ? 'yes' : 'no'
+      } | drift: ${display.lastDriftSeconds?.toFixed(3) ?? 'n/a'}`;
+    }
+  }
+}
+
+function createDisplayPreview(display: DisplayWindowState, state: DirectorState | undefined): HTMLElement {
+  const preview = document.createElement('div');
+  preview.className = `display-preview ${display.layout.type}`;
+  if (!state) {
+    preview.textContent = 'Preview unavailable';
+    return preview;
+  }
+  for (const visualId of getPreviewVisualIds(display.layout)) {
+    const visual = state.visuals[visualId];
+    const pane = document.createElement('section');
+    pane.className = 'display-preview-pane';
+    pane.dataset.visualId = visualId;
+    if (!visual?.url) {
+      pane.append(createPreviewLabel(visual?.label ?? visualId, 'No visual selected'));
+    } else if (visual.type === 'image') {
+      const image = document.createElement('img');
+      image.src = visual.url;
+      image.alt = visual.label;
+      pane.append(image);
+    } else {
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      video.src = visual.url;
+      video.dataset.visualId = visualId;
+      video.dataset.previewVideo = 'true';
+      video.playbackRate = state.rate;
+      pane.append(video);
+    }
+    preview.append(pane);
+  }
+  return preview;
+}
+
+function createPreviewLabel(label: string, detail: string): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'preview-empty';
+  const title = document.createElement('strong');
+  title.textContent = label;
+  const description = document.createElement('small');
+  description.textContent = detail;
+  wrapper.append(title, description);
+  return wrapper;
+}
+
+function getPreviewVisualIds(layout: VisualLayoutProfile): VisualId[] {
+  return layout.type === 'single' ? (layout.visualId ? [layout.visualId] : []) : layout.visualIds.filter(Boolean) as VisualId[];
+}
+
+function createMappingControls(display: DisplayWindowState, visualIds: VisualId[], enabled = true): HTMLDivElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'mapping-grid';
-
   const layoutSelect = createSelect(
     'Layout',
     [
-      ['single', 'Single slot'],
-      ['split', 'Split A/B'],
+      ['single', 'Single visual'],
+      ['split', 'Split visuals'],
     ],
     display.layout.type,
     (value) => {
-      const nextLayout =
+      const nextLayout: VisualLayoutProfile =
         value === 'split'
-          ? ({ type: 'split', slots: getSplitSlots(display.layout, slots) } satisfies LayoutProfile)
-          : ({ type: 'single', slot: getPrimarySlot(display.layout, slots) } satisfies LayoutProfile);
+          ? { type: 'split', visualIds: getSplitVisuals(display.layout, visualIds) }
+          : { type: 'single', visualId: getPrimaryVisual(display.layout, visualIds) };
       void updateDisplayLayout(display.id, nextLayout);
     },
   );
-
   wrapper.append(layoutSelect);
   setSelectEnabled(layoutSelect, enabled);
-
   if (display.layout.type === 'single') {
-    const slotSelect = createSelect(
-        'Slot',
-        slots.map((slot) => [slot, slot]),
-        display.layout.slot,
-        (slot) => {
-          void updateDisplayLayout(display.id, { type: 'single', slot });
-        },
+    const visualSelect = createSelect(
+      'Visual',
+      visualIds.map((visualId) => [visualId, currentState?.visuals[visualId]?.label ?? visualId]),
+      display.layout.visualId ?? '',
+      (visualId) => void updateDisplayLayout(display.id, { type: 'single', visualId }),
     );
-    setSelectEnabled(slotSelect, enabled);
-    wrapper.append(slotSelect);
+    setSelectEnabled(visualSelect, enabled);
+    wrapper.append(visualSelect);
     return wrapper;
   }
-
-  const [leftSlot, rightSlot] = display.layout.slots;
-
-  const leftSelect = createSelect(
-      'Left slot',
-      slots.map((slot) => [slot, slot]),
-      leftSlot,
-      (slot) => {
-        void updateDisplayLayout(display.id, { type: 'split', slots: [slot, rightSlot] });
-      },
-    );
-  const rightSelect = createSelect(
-      'Right slot',
-      slots.map((slot) => [slot, slot]),
-      rightSlot,
-      (slot) => {
-        void updateDisplayLayout(display.id, { type: 'split', slots: [leftSlot, slot] });
-      },
-    );
+  const [leftVisual, rightVisual] = display.layout.visualIds;
+  const options = visualIds.map((visualId) => [visualId, currentState?.visuals[visualId]?.label ?? visualId] as [string, string]);
+  const leftSelect = createSelect('Left visual', options, leftVisual ?? '', (visualId) => {
+    void updateDisplayLayout(display.id, { type: 'split', visualIds: [visualId, rightVisual] });
+  });
+  const rightSelect = createSelect('Right visual', options, rightVisual ?? '', (visualId) => {
+    void updateDisplayLayout(display.id, { type: 'split', visualIds: [leftVisual, visualId] });
+  });
   setSelectEnabled(leftSelect, enabled);
   setSelectEnabled(rightSelect, enabled);
   wrapper.append(leftSelect, rightSelect);
-
   return wrapper;
 }
 
@@ -802,18 +819,11 @@ function setSelectEnabled(wrapper: HTMLDivElement, enabled: boolean): void {
   }
 }
 
-function createSelect(
-  labelText: string,
-  options: Array<[string, string]>,
-  value: string,
-  onChange: (value: string) => void,
-): HTMLDivElement {
+function createSelect(labelText: string, options: Array<[string, string]>, value: string, onChange: (value: string) => void): HTMLDivElement {
   const field = document.createElement('div');
   field.className = 'mapping-field';
-
   const label = document.createElement('label');
   label.textContent = labelText;
-
   const select = document.createElement('select');
   for (const [optionValue, optionLabel] of options) {
     const option = document.createElement('option');
@@ -821,27 +831,60 @@ function createSelect(
     option.textContent = optionLabel;
     select.append(option);
   }
-
   select.value = value;
   select.addEventListener('change', () => onChange(select.value));
   field.append(label, select);
   return field;
 }
 
-function getPrimarySlot(layout: LayoutProfile, slots: SlotId[]): SlotId {
-  return layout.type === 'single' ? layout.slot : layout.slots[0] ?? slots[0] ?? 'A';
+function createDbFader(labelText: string, value: number, onChange: (value: number) => void): HTMLDivElement {
+  const field = document.createElement('div');
+  field.className = 'db-control';
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  const range = document.createElement('input');
+  range.type = 'range';
+  range.min = '-60';
+  range.max = '12';
+  range.step = '1';
+  range.value = String(value);
+  const number = document.createElement('input');
+  number.type = 'number';
+  number.min = '-60';
+  number.max = '12';
+  number.step = '1';
+  number.value = String(value);
+  const commit = (rawValue: string) => {
+    const nextValue = Math.min(12, Math.max(-60, Number(rawValue)));
+    if (Number.isFinite(nextValue)) {
+      range.value = String(nextValue);
+      number.value = String(nextValue);
+      onChange(nextValue);
+    }
+  };
+  range.addEventListener('input', () => {
+    number.value = range.value;
+    commit(range.value);
+  });
+  number.addEventListener('change', () => commit(number.value));
+  field.append(label, range, number);
+  return field;
 }
 
-function getSplitSlots(layout: LayoutProfile, slots: SlotId[]): [SlotId, SlotId] {
+function getPrimaryVisual(layout: VisualLayoutProfile, visualIds: VisualId[]): VisualId | undefined {
+  return layout.type === 'single' ? layout.visualId ?? visualIds[0] : layout.visualIds[0] ?? visualIds[0];
+}
+
+function getSplitVisuals(layout: VisualLayoutProfile, visualIds: VisualId[]): [VisualId | undefined, VisualId | undefined] {
   if (layout.type === 'split') {
-    return layout.slots;
+    return layout.visualIds;
   }
-
-  const fallbackRight = slots.find((slot) => slot !== layout.slot) ?? layout.slot;
-  return [layout.slot, fallbackRight];
+  const left = layout.visualId ?? visualIds[0];
+  const right = visualIds.find((visualId) => visualId !== left) ?? visualIds[1];
+  return [left, right];
 }
 
-async function updateDisplayLayout(displayId: string, layout: LayoutProfile): Promise<void> {
+async function updateDisplayLayout(displayId: string, layout: VisualLayoutProfile): Promise<void> {
   await window.xtream.displays.update(displayId, { layout });
   renderState(await window.xtream.director.getState());
 }
@@ -849,69 +892,34 @@ async function updateDisplayLayout(displayId: string, layout: LayoutProfile): Pr
 function tick(): void {
   if (currentState) {
     elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState));
-    syncAudioToDirector(currentState);
+    syncTimelineScrubber(currentState);
+    syncAudioRuntimeToDirector(currentState);
+    syncPreviewElements(currentState);
+    sampleMeters(currentState);
   }
-
   animationFrame = window.requestAnimationFrame(tick);
 }
 
-function syncAudioToDirector(state: DirectorState): void {
-  if (!getAudioSourceUrl(state) || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
-    return;
-  }
-
-  const correction = state.corrections.audio;
-  const shouldApplyCorrection =
-    correction?.action === 'seek' &&
-    correction.targetSeconds !== undefined &&
-    appliedAudioCorrectionRevision !== correction.revision;
-  const correctionTarget = shouldApplyCorrection ? correction.targetSeconds : undefined;
-  const targetSeconds = clampAudioTime(correctionTarget ?? getDirectorSeconds(state));
-  if (Math.abs(audioElement.currentTime - targetSeconds) > 0.08) {
-    audioElement.currentTime = targetSeconds;
-  }
-  if (shouldApplyCorrection) {
-    appliedAudioCorrectionRevision = correction.revision;
-  }
-
-  audioElement.playbackRate = state.rate;
-
-  if (state.paused) {
-    audioElement.pause();
-    for (const output of Object.values(audioOutputs)) {
-      output.pause();
+function syncPreviewElements(state: DirectorState): void {
+  const targetSeconds = getDirectorSeconds(state);
+  const videos = document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]');
+  for (const video of videos) {
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      continue;
     }
-  } else if (audioElement.paused) {
-    void playAudioRail(state).catch((error: unknown) => {
-      void window.xtream.audio.reportMetadata({
-        durationSeconds: Number.isFinite(audioElement.duration) ? audioElement.duration : undefined,
-        ready: false,
-        error: error instanceof Error ? error.message : 'Audio playback failed.',
-      });
-    });
+    const visualId = video.dataset.visualId;
+    const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
+    const effectiveTarget = getMediaEffectiveTime(targetSeconds, visualDuration ?? video.duration, state.loop);
+    if (Math.abs(video.currentTime - effectiveTarget) > 0.12) {
+      video.currentTime = effectiveTarget;
+    }
+    video.playbackRate = state.rate;
+    if (state.paused) {
+      video.pause();
+    } else if (video.paused) {
+      void video.play().catch(() => undefined);
+    }
   }
-}
-
-async function playAudioRail(state: DirectorState): Promise<void> {
-  if (audioGraph?.context.state === 'suspended') {
-    await audioGraph.context.resume();
-  }
-
-  await audioElement.play();
-  await Promise.all(
-    getActiveAudioOutputs(state.mode).map((output) => {
-      return output.play().catch(() => undefined);
-    }),
-  );
-}
-
-function clampAudioTime(seconds: number): number {
-  const safeSeconds = Math.max(0, seconds);
-  if (!Number.isFinite(audioElement.duration)) {
-    return safeSeconds;
-  }
-
-  return Math.min(safeSeconds, Math.max(0, audioElement.duration - 0.001));
 }
 
 async function sendTransport(command: TransportCommand): Promise<void> {
@@ -919,11 +927,12 @@ async function sendTransport(command: TransportCommand): Promise<void> {
 }
 
 function readLoopDraft(): DirectorState['loop'] {
-  const endSeconds = elements.loopEndInput.value === '' ? undefined : Number(elements.loopEndInput.value);
+  const start = parseTimecodeInput(elements.loopStartInput.value);
+  const end = elements.loopEndInput.value.trim() === '' ? undefined : parseTimecodeInput(elements.loopEndInput.value);
   return {
     enabled: elements.loopEnabledInput.checked,
-    startSeconds: Number(elements.loopStartInput.value) || 0,
-    endSeconds: Number.isFinite(endSeconds) ? endSeconds : undefined,
+    startSeconds: start.ok ? start.seconds : 0,
+    endSeconds: end === undefined ? undefined : end.ok ? end.seconds : undefined,
   };
 }
 
@@ -947,100 +956,109 @@ async function commitLoopDraft(): Promise<void> {
   clearTransportDrafts([elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]);
 }
 
-elements.playButton.addEventListener('click', () => {
-  void sendTransport({ type: 'play' });
-});
-
-elements.pauseButton.addEventListener('click', () => {
-  void sendTransport({ type: 'pause' });
-});
-
-elements.stopButton.addEventListener('click', () => {
-  void sendTransport({ type: 'stop' });
-});
-
-elements.seekButton.addEventListener('click', () => {
-  void sendTransport({ type: 'seek', seconds: Number(elements.seekInput.value) || 0 });
-});
-
-elements.rateButton.addEventListener('click', () => {
-  void commitRateDraft();
-});
-
-elements.loopButton.addEventListener('click', () => {
-  void commitLoopDraft();
-});
-
-elements.rateInput.addEventListener('input', () => markTransportDraft(elements.rateInput));
-elements.rateInput.addEventListener('change', () => {
-  void commitRateDraft();
-});
-
-for (const input of [elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]) {
-  input.addEventListener('input', () => markTransportDraft(input));
-  input.addEventListener('change', () => {
-    void commitLoopDraft();
-  });
+function getAudioSinkOptions(): Array<[string, string]> {
+  const options: Array<[string, string]> = [['', 'System default output']];
+  for (const device of audioDevices) {
+    options.push([device.deviceId, device.label || `Audio output ${options.length}`]);
+  }
+  return options;
 }
 
+function createSectionHeading(text: string): HTMLHeadingElement {
+  const heading = document.createElement('h3');
+  heading.textContent = text;
+  return heading;
+}
+
+function createHint(text: string): HTMLParagraphElement {
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = text;
+  return hint;
+}
+
+function createButton(label: string, className: string, onClick: () => void | Promise<void>): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  if (className) {
+    button.className = className;
+  }
+  button.textContent = label;
+  button.addEventListener('click', () => void onClick());
+  return button;
+}
+
+elements.playButton.addEventListener('click', () => void sendTransport({ type: 'play' }));
+elements.pauseButton.addEventListener('click', () => void sendTransport({ type: 'pause' }));
+elements.stopButton.addEventListener('click', () => void sendTransport({ type: 'stop' }));
+elements.timelineScrubber.addEventListener('input', () => {
+  elements.seekInput.value = formatTimecode(Number(elements.timelineScrubber.value) || 0);
+});
+elements.timelineScrubber.addEventListener('change', () => {
+  void sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 });
+});
+elements.seekButton.addEventListener('click', () => {
+  const result = parseTimecodeInput(elements.seekInput.value);
+  if (!result.ok) {
+    setShowStatus(`Seek timecode rejected: ${result.error}`);
+    return;
+  }
+  void sendTransport({ type: 'seek', seconds: result.seconds });
+});
+elements.rateButton.addEventListener('click', () => void commitRateDraft());
+elements.loopButton.addEventListener('click', () => void commitLoopDraft());
+elements.rateInput.addEventListener('input', () => markTransportDraft(elements.rateInput));
+elements.rateInput.addEventListener('change', () => void commitRateDraft());
+for (const input of [elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]) {
+  input.addEventListener('input', () => markTransportDraft(input));
+  input.addEventListener('change', () => void commitLoopDraft());
+}
 elements.saveShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.save();
   renderState(result.state);
   setShowStatus(`Saved show config: ${result.filePath ?? 'default location'}`, result.issues);
 });
-
 elements.saveShowAsButton.addEventListener('click', async () => {
   const result = await window.xtream.show.saveAs();
-  if (!result) {
-    return;
+  if (result) {
+    renderState(result.state);
+    setShowStatus(`Saved show config: ${result.filePath ?? 'selected location'}`, result.issues);
   }
-
-  renderState(result.state);
-  setShowStatus(`Saved show config: ${result.filePath ?? 'selected location'}`, result.issues);
 });
-
 elements.openShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.open();
-  if (!result) {
-    return;
+  if (result) {
+    renderState(result.state);
+    setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
   }
-
-  renderState(result.state);
-  setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
 });
-
 elements.exportDiagnosticsButton.addEventListener('click', async () => {
   const filePath = await window.xtream.show.exportDiagnostics();
   if (filePath) {
     setShowStatus(`Exported diagnostics: ${filePath}`);
   }
 });
-
-elements.applyMode1Button.addEventListener('click', async () => {
-  const result = await window.xtream.director.applyModePreset(1);
+elements.applySplitButton.addEventListener('click', async () => {
+  const result = await window.xtream.director.applyPreset('split-display-one-screen');
   renderState(result.state);
 });
-
-elements.applyMode2Button.addEventListener('click', async () => {
-  const result = await window.xtream.director.applyModePreset(2);
+elements.applyTwoButton.addEventListener('click', async () => {
+  const result = await window.xtream.director.applyPreset('two-displays');
   renderState(result.state);
 });
-
-elements.applyMode3Button.addEventListener('click', async () => {
-  const result = await window.xtream.director.applyModePreset(3);
-  renderState(result.state);
+elements.addVisualsButton.addEventListener('click', async () => {
+  await window.xtream.visuals.add();
+  renderState(await window.xtream.director.getState());
 });
-
 elements.createSingleButton.addEventListener('click', async () => {
-  await window.xtream.displays.create({ layout: { type: 'single', slot: 'A' } });
+  await window.xtream.displays.create({ layout: { type: 'single', visualId: Object.keys(currentState?.visuals ?? {})[0] } });
   renderState(await window.xtream.director.getState());
 });
-
 elements.createSplitButton.addEventListener('click', async () => {
-  await window.xtream.displays.create({ layout: { type: 'split', slots: ['A', 'B'] } });
+  const [left, right] = Object.keys(currentState?.visuals ?? {});
+  await window.xtream.displays.create({ layout: { type: 'split', visualIds: [left, right] } });
   renderState(await window.xtream.director.getState());
 });
-
 document.addEventListener('focusout', () => {
   window.setTimeout(() => {
     if (currentState) {
@@ -1055,33 +1073,22 @@ void loadAudioDevices();
 void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);
 
-audioElement.addEventListener('loadedmetadata', () => {
-  void window.xtream.audio.reportMetadata({
-    durationSeconds: Number.isFinite(audioElement.duration) ? audioElement.duration : undefined,
-    ready: true,
-  });
-});
-
-audioElement.addEventListener('error', () => {
-  void window.xtream.audio.reportMetadata({
-    durationSeconds: Number.isFinite(audioElement.duration) ? audioElement.duration : undefined,
-    ready: false,
-    error: audioElement.error?.message ?? 'Audio failed to load.',
-  });
-});
-
 animationFrame = window.requestAnimationFrame(tick);
 driftTimer = window.setInterval(() => {
-  if (!currentState || !getAudioSourceUrl(currentState) || audioElement.readyState < HTMLMediaElement.HAVE_METADATA) {
+  if (!currentState) {
     return;
   }
-
+  const firstRuntime = outputRuntimes.values().next().value as OutputRuntime | undefined;
+  const firstSource = firstRuntime?.sources.find((source) => source.element.readyState >= HTMLMediaElement.HAVE_METADATA);
+  if (!firstSource) {
+    return;
+  }
   const directorSeconds = getDirectorSeconds(currentState);
   void window.xtream.renderer.reportDrift({
     kind: 'control',
-    observedSeconds: audioElement.currentTime,
+    observedSeconds: firstSource.element.currentTime,
     directorSeconds,
-    driftSeconds: audioElement.currentTime - directorSeconds,
+    driftSeconds: firstSource.element.currentTime - directorSeconds,
     reportedAtWallTimeMs: Date.now(),
   });
 }, 1000);

@@ -1,60 +1,57 @@
 import { EventEmitter } from 'node:events';
 import type {
+  AudioMetadataReport,
+  AudioSourceState,
   DirectorState,
   DisplayWindowState,
   DriftReport,
-  LayoutProfile,
-  PlaybackMode,
+  PersistedShowConfigV3,
+  PresetId,
+  PresetResult,
   RailCorrection,
   ReadinessIssue,
-  AudioCapabilitiesReport,
-  AudioMetadataReport,
-  AudioRoutingState,
-  AudioSinkSelection,
-  EmbeddedAudioSelection,
-  PersistedShowConfig,
-  PersistedSlotConfig,
-  SlotMetadataReport,
-  SlotState,
   TransportCommand,
+  VisualImportItem,
+  VisualMetadataReport,
+  VisualState,
+  VirtualOutputState,
+  VirtualOutputUpdate,
 } from '../shared/types';
-import { DEFAULT_SLOT_IDS, getActiveDisplays, getLayoutSlots } from '../shared/layouts';
+import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds } from '../shared/timeline';
 
-const DEFAULT_SLOTS = Object.fromEntries(DEFAULT_SLOT_IDS.map((id) => [id, { id, ready: false }]));
-const DURATION_TOLERANCE_SECONDS = 0.5;
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
 const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.1;
 const MAX_CORRECTION_ATTEMPTS = 3;
 
 export class Director extends EventEmitter {
   private state: DirectorState;
+  private readonly now: () => number;
+  private readonly correctionCounts = new Map<string, number>();
+  private correctionRevision = 0;
+  private visualSequence = 0;
+  private audioSourceSequence = 0;
+  private outputSequence = 1;
 
   constructor(now: () => number = Date.now) {
     super();
-
     this.now = now;
     this.state = {
       paused: true,
       rate: 1,
       anchorWallTimeMs: this.now(),
       offsetSeconds: 0,
-      durationPolicy: 'longest-video',
-      loop: {
-        enabled: false,
-        startSeconds: 0,
-      },
-      mode: 1,
-      slots: structuredClone(DEFAULT_SLOTS),
-      audio: {
-        sourceMode: 'none',
-        ready: false,
-        physicalSplitAvailable: false,
-        fallbackAccepted: false,
-        capabilityStatus: 'unknown',
-        fallbackReason: 'none',
+      loop: { enabled: false, startSeconds: 0 },
+      visuals: {},
+      audioSources: {},
+      outputs: {
+        'output-main': this.createOutputState('output-main', 'Main Output'),
       },
       displays: {},
+      activeTimeline: {
+        assignedVideoIds: [],
+        activeAudioSourceIds: [],
+      },
       readiness: {
         ready: false,
         checkedAtWallTimeMs: this.now(),
@@ -66,10 +63,6 @@ export class Director extends EventEmitter {
     };
   }
 
-  private readonly now: () => number;
-  private readonly correctionCounts = new Map<string, number>();
-  private correctionRevision = 0;
-
   getState(): DirectorState {
     this.refreshReadiness();
     return structuredClone(this.state);
@@ -79,289 +72,347 @@ export class Director extends EventEmitter {
     return getDirectorSeconds(this.state, atWallTimeMs);
   }
 
-  setMode(mode: PlaybackMode): DirectorState {
-    this.state.mode = mode;
+  addVisuals(items: VisualImportItem[]): VisualState[] {
+    const added: VisualState[] = [];
+    for (const item of items) {
+      const id = item.id ?? this.createVisualId();
+      this.state.visuals[id] = {
+        id,
+        label: item.label ?? `Visual ${Object.keys(this.state.visuals).length + 1}`,
+        type: item.type,
+        path: item.path,
+        url: item.url,
+        ready: false,
+      };
+      added.push(structuredClone(this.state.visuals[id]));
+    }
+    this.recalculateTimeline();
+    this.emitState();
+    return added;
+  }
+
+  replaceVisual(visualId: string, item: VisualImportItem): VisualState {
+    const previous = this.state.visuals[visualId];
+    this.state.visuals[visualId] = {
+      id: visualId,
+      label: previous?.label ?? item.label ?? visualId,
+      type: item.type,
+      path: item.path,
+      url: item.url,
+      ready: false,
+    };
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.visuals[visualId]);
+  }
+
+  clearVisual(visualId: string): VisualState {
+    const previous = this.state.visuals[visualId];
+    this.state.visuals[visualId] = {
+      id: visualId,
+      label: previous?.label ?? visualId,
+      type: previous?.type ?? 'video',
+      ready: false,
+    };
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.visuals[visualId]);
+  }
+
+  removeVisual(visualId: string): DirectorState {
+    delete this.state.visuals[visualId];
+    for (const display of Object.values(this.state.displays)) {
+      display.layout =
+        display.layout.type === 'single'
+          ? display.layout.visualId === visualId
+            ? { type: 'single' }
+            : display.layout
+          : {
+              type: 'split',
+              visualIds: display.layout.visualIds.map((id) => (id === visualId ? undefined : id)) as [
+                string | undefined,
+                string | undefined,
+              ],
+            };
+    }
+    for (const source of Object.values(this.state.audioSources)) {
+      if (source.type === 'embedded-visual' && source.visualId === visualId) {
+        this.removeAudioSource(source.id);
+      }
+    }
+    this.recalculateTimeline();
     this.emitState();
     return this.getState();
   }
 
-  setSlotVideo(slotId: string, videoPath: string, videoUrl: string): SlotState {
-    this.ensureSlot(slotId);
-    this.state.slots[slotId] = {
-      ...this.state.slots[slotId],
-      videoPath,
-      videoUrl,
-      ready: false,
-      error: undefined,
-      durationSeconds: undefined,
-    };
-    this.recalculateDuration();
-    this.emitState();
-    return structuredClone(this.state.slots[slotId]);
-  }
-
-  clearSlotVideo(slotId: string): SlotState {
-    this.ensureSlot(slotId);
-    this.state.slots[slotId] = {
-      id: slotId,
+  updateVisualMetadata(report: VisualMetadataReport): DirectorState {
+    this.state.visuals[report.visualId] ??= {
+      id: report.visualId,
+      label: report.visualId,
+      type: 'video',
       ready: false,
     };
-    this.recalculateDuration();
-    this.emitState();
-    return structuredClone(this.state.slots[slotId]);
-  }
-
-  updateSlotMetadata(report: SlotMetadataReport): DirectorState {
-    this.ensureSlot(report.slotId);
-    this.state.slots[report.slotId] = {
-      ...this.state.slots[report.slotId],
+    this.state.visuals[report.visualId] = {
+      ...this.state.visuals[report.visualId],
       durationSeconds: report.durationSeconds,
+      width: report.width,
+      height: report.height,
+      hasEmbeddedAudio: report.hasEmbeddedAudio,
       ready: report.ready,
       error: report.error,
     };
-    this.recalculateDuration();
+    for (const source of Object.values(this.state.audioSources)) {
+      if (source.type === 'embedded-visual' && source.visualId === report.visualId) {
+        source.durationSeconds = report.durationSeconds;
+        source.ready = report.ready;
+        source.error = report.error;
+      }
+    }
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
     this.emitState();
     return this.getState();
   }
 
-  setAudioFile(audioPath: string, audioUrl: string): AudioRoutingState {
-    this.state.audio = {
-      ...this.state.audio,
-      sourceMode: 'external-file',
+  addAudioFileSource(audioPath: string, audioUrl: string): AudioSourceState {
+    const id = this.createAudioSourceId();
+    this.state.audioSources[id] = {
+      id,
+      label: `Audio Source ${Object.keys(this.state.audioSources).length + 1}`,
+      type: 'external-file',
       path: audioPath,
       url: audioUrl,
-      embeddedSlotId: undefined,
-      durationSeconds: undefined,
       ready: false,
-      error: undefined,
     };
-    this.state.durationPolicy = 'audio';
-    this.recalculateDuration();
+    this.ensurePrimaryOutputUsesSource(id);
+    this.recalculateTimeline();
     this.emitState();
-    return structuredClone(this.state.audio);
+    return structuredClone(this.state.audioSources[id]);
   }
 
-  clearAudioFile(): AudioRoutingState {
-    this.state.audio = {
-      sourceMode: 'none',
-      sinkId: this.state.audio.sinkId,
-      sinkLabel: this.state.audio.sinkLabel,
-      leftSinkId: this.state.audio.leftSinkId,
-      leftSinkLabel: this.state.audio.leftSinkLabel,
-      rightSinkId: this.state.audio.rightSinkId,
-      rightSinkLabel: this.state.audio.rightSinkLabel,
-      ready: false,
-      physicalSplitAvailable: this.state.audio.physicalSplitAvailable,
-      fallbackAccepted: this.state.audio.fallbackAccepted,
-      capabilityStatus: this.state.audio.capabilityStatus,
-      fallbackReason: this.state.audio.fallbackReason,
+  addEmbeddedAudioSource(visualId: string): AudioSourceState {
+    const id = `audio-source-embedded-${visualId}`;
+    const visual = this.state.visuals[visualId];
+    this.state.audioSources[id] = {
+      id,
+      label: `Embedded Audio ${visual?.label ?? visualId}`,
+      type: 'embedded-visual',
+      visualId,
+      durationSeconds: visual?.durationSeconds,
+      ready: Boolean(visual?.ready),
+      error: visual?.error,
     };
-    this.state.durationPolicy = 'longest-video';
-    this.recalculateDuration();
+    this.ensurePrimaryOutputUsesSource(id);
+    this.recalculateTimeline();
     this.emitState();
-    return structuredClone(this.state.audio);
+    return structuredClone(this.state.audioSources[id]);
   }
 
-  setEmbeddedAudioSource(selection: EmbeddedAudioSelection): AudioRoutingState {
-    if (!selection.slotId) {
-      this.state.audio = {
-        ...this.state.audio,
-        sourceMode: 'none',
-        embeddedSlotId: undefined,
-        ready: false,
-        durationSeconds: undefined,
-        error: undefined,
-      };
-      this.state.durationPolicy = 'longest-video';
-      this.recalculateDuration();
-      this.emitState();
-      return structuredClone(this.state.audio);
+  updateAudioSource(audioSourceId: string, update: Partial<Pick<AudioSourceState, 'label'>>): AudioSourceState {
+    const source = this.state.audioSources[audioSourceId];
+    if (!source) {
+      throw new Error(`Unknown audio source: ${audioSourceId}`);
     }
-
-    this.ensureSlot(selection.slotId);
-    this.state.audio = {
-      ...this.state.audio,
-      sourceMode: 'embedded-slot',
-      path: undefined,
-      url: undefined,
-      embeddedSlotId: selection.slotId,
-      durationSeconds: undefined,
-      ready: false,
-      error: undefined,
-    };
-    this.state.durationPolicy = 'audio';
-    this.recalculateDuration();
+    this.state.audioSources[audioSourceId] = { ...source, ...update } as AudioSourceState;
     this.emitState();
-    return structuredClone(this.state.audio);
+    return structuredClone(this.state.audioSources[audioSourceId]);
+  }
+
+  removeAudioSource(audioSourceId: string): DirectorState {
+    delete this.state.audioSources[audioSourceId];
+    for (const output of Object.values(this.state.outputs)) {
+      output.sources = output.sources.filter((source) => source.audioSourceId !== audioSourceId);
+    }
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return this.getState();
   }
 
   updateAudioMetadata(report: AudioMetadataReport): DirectorState {
-    this.state.audio = {
-      ...this.state.audio,
-      durationSeconds: report.durationSeconds,
-      ready: report.ready,
-      error: report.error,
-      degraded: report.ready ? false : this.state.audio.degraded,
-    };
-    this.recalculateDuration();
+    const source = this.state.audioSources[report.audioSourceId];
+    if (source) {
+      this.state.audioSources[report.audioSourceId] = {
+        ...source,
+        durationSeconds: report.durationSeconds,
+        ready: report.ready,
+        error: report.error,
+      } as AudioSourceState;
+    }
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
     this.emitState();
     return this.getState();
   }
 
-  setAudioSink(selection: AudioSinkSelection): DirectorState {
-    if (selection.path === 'left') {
-      this.state.audio = {
-        ...this.state.audio,
-        leftSinkId: selection.sinkId,
-        leftSinkLabel: selection.sinkLabel,
-      };
-      this.emitState();
-      return this.getState();
+  createVirtualOutput(): VirtualOutputState {
+    const id = `output-${++this.outputSequence}`;
+    const firstSourceId = Object.keys(this.state.audioSources)[0];
+    this.state.outputs[id] = this.createOutputState(id, `Output ${this.outputSequence}`, firstSourceId);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.outputs[id]);
+  }
+
+  updateVirtualOutput(outputId: string, update: VirtualOutputUpdate): VirtualOutputState {
+    const output = this.state.outputs[outputId];
+    if (!output) {
+      throw new Error(`Unknown virtual output: ${outputId}`);
+    }
+    this.state.outputs[outputId] = {
+      ...output,
+      ...update,
+      ready: output.ready,
+      error: update.error ?? output.error,
+    };
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.outputs[outputId]);
+  }
+
+  removeVirtualOutput(outputId: string): DirectorState {
+    delete this.state.outputs[outputId];
+    if (Object.keys(this.state.outputs).length === 0) {
+      this.state.outputs['output-main'] = this.createOutputState('output-main', 'Main Output');
+    }
+    this.recalculateTimeline();
+    this.emitState();
+    return this.getState();
+  }
+
+  applyPreset(preset: PresetId, ensureDisplay: (layout: DisplayWindowState['layout'], index: number) => DisplayWindowState): PresetResult {
+    const visualIds = Object.keys(this.state.visuals);
+    if (preset === 'split-display-one-screen') {
+      const display = ensureDisplay({ type: 'split', visualIds: [visualIds[0], visualIds[1]] }, 0);
+      const state = this.updateDisplay(display);
+      return { state, primaryDisplayId: display.id };
     }
 
-    if (selection.path === 'right') {
-      this.state.audio = {
-        ...this.state.audio,
-        rightSinkId: selection.sinkId,
-        rightSinkLabel: selection.sinkLabel,
-      };
-      this.emitState();
-      return this.getState();
-    }
-
-    this.state.audio = {
-      ...this.state.audio,
-      sinkId: selection.sinkId,
-      sinkLabel: selection.sinkLabel,
-    };
-    this.emitState();
-    return this.getState();
+    const first = ensureDisplay({ type: 'single', visualId: visualIds[0] }, 0);
+    const second = ensureDisplay({ type: 'single', visualId: visualIds[1] }, 1);
+    this.updateDisplay(first);
+    const state = this.updateDisplay(second);
+    return { state, primaryDisplayId: first.id };
   }
 
-  updateAudioCapabilities(report: AudioCapabilitiesReport): DirectorState {
-    this.state.audio = {
-      ...this.state.audio,
-      physicalSplitAvailable: report.physicalSplitAvailable,
-      fallbackAccepted: report.fallbackAccepted ?? this.state.audio.fallbackAccepted,
-      capabilityStatus: report.capabilityStatus ?? this.state.audio.capabilityStatus,
-      fallbackReason: report.fallbackReason ?? this.state.audio.fallbackReason,
-    };
-    this.emitState();
-    return this.getState();
-  }
-
-  createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
+  createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfigV3 {
     return {
-      schemaVersion: 1,
+      schemaVersion: 3,
       savedAt,
-      mode: this.state.mode,
       rate: this.state.rate,
-      durationPolicy: this.state.durationPolicy,
       loop: structuredClone(this.state.loop),
-      slots: Object.values(this.state.slots).map((slot) => ({
-        id: slot.id,
-        videoPath: slot.videoPath,
+      visuals: Object.fromEntries(
+        Object.values(this.state.visuals).map((visual) => [
+          visual.id,
+          {
+            id: visual.id,
+            label: visual.label,
+            type: visual.type,
+            path: visual.path,
+          },
+        ]),
+      ),
+      audioSources: Object.fromEntries(
+        Object.values(this.state.audioSources).map((source) => [
+          source.id,
+          source.type === 'external-file'
+            ? { id: source.id, label: source.label, type: source.type, path: source.path }
+            : { id: source.id, label: source.label, type: source.type, visualId: source.visualId },
+        ]),
+      ),
+      outputs: Object.fromEntries(
+        Object.values(this.state.outputs).map((output) => [
+          output.id,
+          {
+            id: output.id,
+            label: output.label,
+            sources: structuredClone(output.sources),
+            sinkId: output.sinkId,
+            sinkLabel: output.sinkLabel,
+            busLevelDb: output.busLevelDb,
+            muted: output.muted,
+            fallbackAccepted: output.fallbackAccepted,
+          },
+        ]),
+      ),
+      displays: Object.values(this.state.displays).map((display) => ({
+        id: display.id,
+        layout: structuredClone(display.layout),
+        fullscreen: display.fullscreen,
+        displayId: display.displayId,
+        bounds: display.bounds,
       })),
-      audio: {
-        sourceMode: this.state.audio.sourceMode,
-        path: this.state.audio.path,
-        embeddedSlotId: this.state.audio.embeddedSlotId,
-        sinkId: this.state.audio.sinkId,
-        sinkLabel: this.state.audio.sinkLabel,
-        leftSinkId: this.state.audio.leftSinkId,
-        leftSinkLabel: this.state.audio.leftSinkLabel,
-        rightSinkId: this.state.audio.rightSinkId,
-        rightSinkLabel: this.state.audio.rightSinkLabel,
-        fallbackAccepted: this.state.audio.fallbackAccepted,
-      },
-      displays: Object.values(this.state.displays)
-        .map((display) => ({
-          layout: structuredClone(display.layout),
-          fullscreen: display.fullscreen,
-          displayId: display.displayId,
-          bounds: display.bounds,
-        })),
     };
   }
 
-  restoreShowConfig(
-    config: PersistedShowConfig,
-    urls: { slots: Record<string, string | undefined>; audio?: string },
-  ): DirectorState {
+  restoreShowConfig(config: PersistedShowConfigV3, urls: { visuals: Record<string, string | undefined>; audioSources: Record<string, string | undefined> }): DirectorState {
     this.state.paused = true;
     this.state.rate = config.rate ?? 1;
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
-    this.state.durationPolicy = config.durationPolicy;
-    this.state.durationSeconds = undefined;
     this.state.loop = structuredClone(config.loop);
-    this.state.mode = config.mode;
-    this.state.slots = this.restoreSlots(config.slots, urls.slots);
-    this.state.audio = {
-      sourceMode: config.audio.sourceMode ?? (config.audio.path ? 'external-file' : 'none'),
-      path: config.audio.path,
-      url: urls.audio,
-      embeddedSlotId: config.audio.embeddedSlotId,
-      sinkId: config.audio.sinkId,
-      sinkLabel: config.audio.sinkLabel,
-      leftSinkId: config.audio.leftSinkId,
-      leftSinkLabel: config.audio.leftSinkLabel,
-      rightSinkId: config.audio.rightSinkId,
-      rightSinkLabel: config.audio.rightSinkLabel,
-      ready: false,
-      physicalSplitAvailable: false,
-      fallbackAccepted: config.audio.fallbackAccepted,
-      capabilityStatus: 'unknown',
-      fallbackReason: 'none',
-    };
+    this.state.visuals = Object.fromEntries(
+      Object.values(config.visuals).map((visual) => [
+        visual.id,
+        {
+          id: visual.id,
+          label: visual.label,
+          type: visual.type,
+          path: visual.path,
+          url: urls.visuals[visual.id],
+          ready: false,
+        } satisfies VisualState,
+      ]),
+    );
+    this.state.audioSources = Object.fromEntries(
+      Object.values(config.audioSources).map((source) => [
+        source.id,
+        source.type === 'external-file'
+          ? {
+              id: source.id,
+              label: source.label,
+              type: source.type,
+              path: source.path,
+              url: urls.audioSources[source.id],
+              ready: false,
+            }
+          : {
+              id: source.id,
+              label: source.label,
+              type: source.type,
+              visualId: source.visualId,
+              ready: false,
+            },
+      ]),
+    );
+    this.state.outputs = Object.fromEntries(
+      Object.values(config.outputs).map((output) => [
+        output.id,
+        {
+          id: output.id,
+          label: output.label,
+          sources: structuredClone(output.sources),
+          sinkId: output.sinkId,
+          sinkLabel: output.sinkLabel,
+          busLevelDb: output.busLevelDb,
+          muted: output.muted,
+          ready: false,
+          physicalRoutingAvailable: true,
+          fallbackAccepted: output.fallbackAccepted ?? false,
+          fallbackReason: 'none',
+        } satisfies VirtualOutputState,
+      ]),
+    );
+    if (Object.keys(this.state.outputs).length === 0) {
+      this.state.outputs['output-main'] = this.createOutputState('output-main', 'Main Output');
+    }
     this.state.displays = {};
     this.state.corrections = { displays: {} };
     this.correctionCounts.clear();
-    this.recalculateDuration();
-    this.emitState();
-    return this.getState();
-  }
-
-  updateDisplayLayout(id: string, layout: LayoutProfile): DirectorState {
-    const display = this.state.displays[id];
-    if (!display) {
-      throw new Error(`Unknown display window: ${id}`);
-    }
-
-    this.state.displays[id] = {
-      ...display,
-      layout,
-    };
-    this.emitState();
-    return this.getState();
-  }
-
-  registerDisplay(display: DisplayWindowState): DirectorState {
-    this.state.displays[display.id] = display;
-    this.emitState();
-    return this.getState();
-  }
-
-  updateDisplay(display: DisplayWindowState): DirectorState {
-    this.state.displays[display.id] = display;
-    this.emitState();
-    return this.getState();
-  }
-
-  markDisplayClosed(id: string): DirectorState {
-    const current = this.state.displays[id];
-    if (current) {
-      this.state.displays[id] = { ...current, health: 'closed' };
-      this.emitState();
-    }
-
-    return this.getState();
-  }
-
-  removeDisplay(id: string): DirectorState {
-    delete this.state.displays[id];
-    delete this.state.corrections.displays[id];
-    this.correctionCounts.delete(`display:${id}`);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
     this.emitState();
     return this.getState();
   }
@@ -369,12 +420,9 @@ export class Director extends EventEmitter {
   applyTransport(command: TransportCommand): DirectorState {
     switch (command.type) {
       case 'play':
-        this.refreshReadiness();
-        if (!this.state.readiness.ready) {
-          this.state.paused = true;
-          break;
+        if (this.getState().readiness.ready) {
+          this.play();
         }
-        this.play();
         break;
       case 'pause':
         this.pause();
@@ -392,38 +440,71 @@ export class Director extends EventEmitter {
         this.setLoop(command.loop);
         break;
     }
+    this.emitState();
+    return this.getState();
+  }
 
+  registerDisplay(display: DisplayWindowState): DirectorState {
+    this.state.displays[display.id] = display;
+    this.recalculateTimeline();
+    this.emitState();
+    return this.getState();
+  }
+
+  updateDisplay(display: DisplayWindowState): DirectorState {
+    this.state.displays[display.id] = display;
+    this.recalculateTimeline();
+    this.emitState();
+    return this.getState();
+  }
+
+  updateDisplayLayout(id: string, layout: DisplayWindowState['layout']): DirectorState {
+    const display = this.state.displays[id];
+    if (!display) {
+      throw new Error(`Unknown display window: ${id}`);
+    }
+    this.state.displays[id] = { ...display, layout };
+    this.recalculateTimeline();
+    this.emitState();
+    return this.getState();
+  }
+
+  markDisplayClosed(id: string): DirectorState {
+    const display = this.state.displays[id];
+    if (display) {
+      this.state.displays[id] = { ...display, health: 'closed' };
+      this.recalculateTimeline();
+      this.emitState();
+    }
+    return this.getState();
+  }
+
+  removeDisplay(id: string): DirectorState {
+    delete this.state.displays[id];
+    delete this.state.corrections.displays[id];
+    this.correctionCounts.delete(`display:${id}`);
+    this.recalculateTimeline();
     this.emitState();
     return this.getState();
   }
 
   ingestDrift(report: DriftReport): DirectorState {
-    if (report.kind === 'control') {
-      const correction = this.createCorrection('audio', report.driftSeconds);
-      this.state.audio = {
-        ...this.state.audio,
-        lastDriftSeconds: report.driftSeconds,
-        degraded: correction.action === 'degraded',
-        degradationReason: correction.action === 'degraded' ? correction.reason : undefined,
-      };
-      this.state.corrections.audio = correction;
-      this.emitState();
-      return this.getState();
-    }
-
-    if (report.displayId && this.state.displays[report.displayId]) {
+    const correction = this.createCorrection(`${report.kind}:${report.displayId ?? 'control'}`, report.driftSeconds);
+    if (report.kind === 'display' && report.displayId) {
       const display = this.state.displays[report.displayId];
-      const correction = this.createCorrection(`display:${report.displayId}`, report.driftSeconds);
-      this.state.displays[report.displayId] = {
-        ...display,
-        lastDriftSeconds: report.driftSeconds,
-        health: correction.action === 'degraded' ? 'degraded' : 'ready',
-        degradationReason: correction.action === 'degraded' ? correction.reason : undefined,
-      };
+      if (display) {
+        this.state.displays[report.displayId] = {
+          ...display,
+          health: correction.action === 'degraded' ? 'degraded' : display.health === 'degraded' ? 'degraded' : 'ready',
+          lastDriftSeconds: report.driftSeconds,
+          degradationReason: correction.action === 'degraded' ? correction.reason : display.degradationReason,
+        };
+      }
       this.state.corrections.displays[report.displayId] = correction;
-      this.emitState();
+    } else {
+      this.state.corrections.audio = correction;
     }
-
+    this.emitState();
     return this.getState();
   }
 
@@ -431,7 +512,6 @@ export class Director extends EventEmitter {
     if (!this.state.paused) {
       return;
     }
-
     this.state.anchorWallTimeMs = this.now();
     this.state.paused = false;
   }
@@ -440,7 +520,6 @@ export class Director extends EventEmitter {
     if (this.state.paused) {
       return;
     }
-
     this.state.offsetSeconds = this.getPlaybackTimeSeconds();
     this.state.anchorWallTimeMs = this.now();
     this.state.paused = true;
@@ -453,7 +532,8 @@ export class Director extends EventEmitter {
   }
 
   private seek(seconds: number): void {
-    this.state.offsetSeconds = Math.max(0, seconds);
+    const duration = this.state.activeTimeline.durationSeconds;
+    this.state.offsetSeconds = duration === undefined ? Math.max(0, seconds) : Math.min(Math.max(0, seconds), duration);
     this.state.anchorWallTimeMs = this.now();
   }
 
@@ -461,72 +541,71 @@ export class Director extends EventEmitter {
     if (rate <= 0) {
       throw new Error('Playback rate must be greater than zero.');
     }
-
     this.state.offsetSeconds = this.getPlaybackTimeSeconds();
     this.state.anchorWallTimeMs = this.now();
     this.state.rate = rate;
   }
 
   private setLoop(loop: DirectorState['loop']): void {
-    this.state.loop = structuredClone(loop);
+    const clamped = this.clampLoop(loop);
+    if (JSON.stringify(clamped) !== JSON.stringify(loop)) {
+      this.state.activeTimeline.notice = 'Loop range was adjusted to fit the active timeline.';
+    }
+    this.state.loop = clamped;
     this.state.offsetSeconds = this.getPlaybackTimeSeconds();
     this.state.anchorWallTimeMs = this.now();
   }
 
-  private ensureSlot(slotId: string): void {
-    if (!this.state.slots[slotId]) {
-      this.state.slots[slotId] = {
-        id: slotId,
-        ready: false,
-      };
+  private clampLoop(loop: DirectorState['loop']): DirectorState['loop'] {
+    const nextLoop = structuredClone(loop);
+    const limit = this.state.activeTimeline.loopRangeLimit;
+    if (!nextLoop.enabled || !limit) {
+      return nextLoop;
     }
+    nextLoop.startSeconds = Math.min(Math.max(0, nextLoop.startSeconds), limit.endSeconds);
+    if (nextLoop.endSeconds !== undefined) {
+      nextLoop.endSeconds = Math.min(Math.max(0, nextLoop.endSeconds), limit.endSeconds);
+    }
+    if (nextLoop.endSeconds !== undefined && nextLoop.endSeconds <= nextLoop.startSeconds) {
+      nextLoop.startSeconds = 0;
+      nextLoop.endSeconds = limit.endSeconds;
+    }
+    return nextLoop;
   }
 
-  private restoreSlots(
-    slots: PersistedSlotConfig[],
-    urls: Record<string, string | undefined>,
-  ): Record<string, SlotState> {
-    const restored = structuredClone(DEFAULT_SLOTS) as Record<string, SlotState>;
-    for (const slot of slots) {
-      restored[slot.id] = {
-        id: slot.id,
-        videoPath: slot.videoPath,
-        videoUrl: urls[slot.id],
-        ready: false,
-      };
+  private recalculateTimeline(): void {
+    const activeVisualIds = Array.from(
+      new Set(getActiveDisplays(this.state.displays).flatMap((display) => getLayoutVisualIds(display.layout))),
+    );
+    const assignedVideoIds = activeVisualIds.filter((visualId) => {
+      const visual = this.state.visuals[visualId];
+      return visual?.type === 'video' && typeof visual.durationSeconds === 'number';
+    });
+    const assignedVideoDurations = assignedVideoIds
+      .map((visualId) => this.state.visuals[visualId]?.durationSeconds)
+      .filter((duration): duration is number => Number.isFinite(duration));
+    const activeAudioSourceIds = Array.from(
+      new Set(Object.values(this.state.outputs).flatMap((output) => output.sources.map((source) => source.audioSourceId))),
+    ).filter((sourceId) => Boolean(this.state.audioSources[sourceId]));
+    const activeAudioDurations =
+      assignedVideoDurations.length === 0
+        ? activeAudioSourceIds
+            .map((sourceId) => this.state.audioSources[sourceId]?.durationSeconds)
+            .filter((duration): duration is number => Number.isFinite(duration))
+        : [];
+    const durations = assignedVideoDurations.length > 0 ? assignedVideoDurations : activeAudioDurations;
+    this.state.activeTimeline = {
+      durationSeconds: durations.length > 0 ? Math.max(...durations) : undefined,
+      assignedVideoIds,
+      activeAudioSourceIds,
+      loopRangeLimit: durations.length > 0 ? { startSeconds: 0, endSeconds: Math.min(...durations) } : undefined,
+    };
+
+    const clamped = this.clampLoop(this.state.loop);
+    if (JSON.stringify(clamped) !== JSON.stringify(this.state.loop)) {
+      this.state.loop = clamped;
+      this.state.activeTimeline.notice = 'Loop range was adjusted to fit the active timeline.';
     }
-
-    return restored;
-  }
-
-  private recalculateDuration(): void {
-    if (this.state.durationPolicy === 'audio' && this.state.audio.durationSeconds !== undefined) {
-      this.state.durationSeconds = this.state.audio.durationSeconds;
-      return;
-    }
-
-    if (this.state.durationPolicy !== 'longest-video') {
-      const durations = Object.values(this.state.slots)
-        .map((slot) => slot.durationSeconds)
-        .filter((duration): duration is number => typeof duration === 'number' && Number.isFinite(duration));
-
-      if (durations.length > 0 && !this.state.durationSeconds) {
-        this.state.durationSeconds = Math.max(...durations);
-      }
-
-      return;
-    }
-
-    const durations = Object.values(this.state.slots)
-      .map((slot) => slot.durationSeconds)
-      .filter((duration): duration is number => typeof duration === 'number' && Number.isFinite(duration));
-
-    this.state.durationSeconds = durations.length > 0 ? Math.max(...durations) : undefined;
-  }
-
-  private emitState(): void {
-    this.refreshReadiness();
-    this.emit('state', this.getState());
   }
 
   private refreshReadiness(): void {
@@ -541,17 +620,11 @@ export class Director extends EventEmitter {
   private evaluateReadinessIssues(): ReadinessIssue[] {
     const issues: ReadinessIssue[] = [];
     const activeDisplays = getActiveDisplays(this.state.displays);
-    const requiredDisplayCount = this.state.mode === 1 ? 1 : 2;
-
-    if (activeDisplays.length < requiredDisplayCount) {
-      issues.push({
-        severity: 'error',
-        target: 'display',
-        message: `Mode ${this.state.mode} requires ${requiredDisplayCount} active display window(s).`,
-      });
+    if (activeDisplays.length === 0) {
+      issues.push({ severity: 'error', target: 'display', message: 'At least one active display window is required.' });
     }
 
-    for (const display of activeDisplays.slice(0, requiredDisplayCount)) {
+    for (const display of activeDisplays) {
       if (display.health === 'closed' || display.health === 'stale' || display.health === 'degraded') {
         issues.push({
           severity: 'error',
@@ -559,114 +632,108 @@ export class Director extends EventEmitter {
           message: `Display ${display.id} is ${display.health}${display.degradationReason ? `: ${display.degradationReason}` : ''}.`,
         });
       }
-
-      for (const slotId of getLayoutSlots(display.layout)) {
-        const slot = this.state.slots[slotId];
-        if (!slot?.videoPath) {
-          issues.push({
-            severity: 'error',
-            target: `slot:${slotId}`,
-            message: `Slot ${slotId} has no video selected.`,
-          });
-          continue;
-        }
-        if (!slot.ready) {
-          issues.push({
-            severity: 'error',
-            target: `slot:${slotId}`,
-            message: slot.error ?? `Slot ${slotId} video is not ready.`,
-          });
+      for (const visualId of getLayoutVisualIds(display.layout)) {
+        const visual = this.state.visuals[visualId];
+        if (!visual?.path) {
+          issues.push({ severity: 'error', target: `visual:${visualId}`, message: `Visual ${visualId} has no media selected.` });
+        } else if (!visual.ready) {
+          issues.push({ severity: 'error', target: `visual:${visualId}`, message: visual.error ?? `${visual.label} is not ready.` });
         }
       }
     }
 
-    if (this.state.audio.sourceMode === 'embedded-slot') {
-      const slotId = this.state.audio.embeddedSlotId;
-      const slot = slotId ? this.state.slots[slotId] : undefined;
-      if (!slotId || !slot?.videoPath) {
+    for (const output of Object.values(this.state.outputs)) {
+      for (const selection of output.sources) {
+        const source = this.state.audioSources[selection.audioSourceId];
+        if (!source) {
+          issues.push({
+            severity: 'error',
+            target: `output:${output.id}`,
+            message: `${output.label} references missing audio source ${selection.audioSourceId}.`,
+          });
+        } else if (!source.ready) {
+          issues.push({ severity: 'error', target: `audio-source:${source.id}`, message: source.error ?? `${source.label} is not ready.` });
+        }
+      }
+      if (output.sources.length > 0 && !output.physicalRoutingAvailable && !output.fallbackAccepted) {
         issues.push({
           severity: 'error',
-          target: 'audio',
-          message: 'Selected embedded audio slot has no video selected.',
-        });
-      } else if (!slot.ready) {
-        issues.push({
-          severity: 'error',
-          target: 'audio',
-          message: slot.error ?? `Selected embedded audio slot ${slotId} is not ready.`,
-        });
-      } else if (!this.state.audio.ready) {
-        issues.push({
-          severity: 'error',
-          target: 'audio',
-          message: this.state.audio.error ?? `Embedded audio from slot ${slotId} is not ready.`,
+          target: `output:${output.id}`,
+          message: `${output.label} physical routing is unavailable; accept fallback or choose another endpoint.`,
         });
       }
-    } else if (!this.state.audio.path) {
-      issues.push({
-        severity: 'error',
-        target: 'audio',
-        message: 'A stereo audio file is required for playback.',
-      });
-    } else if (!this.state.audio.ready) {
-      issues.push({
-        severity: 'error',
-        target: 'audio',
-        message: this.state.audio.error ?? 'Audio file is not ready.',
-      });
     }
 
-    if (this.state.mode === 3 && !this.state.audio.physicalSplitAvailable && !this.state.audio.fallbackAccepted) {
-      issues.push({
-        severity: 'error',
-        target: 'audio:mode3',
-        message: 'Mode 3 physical split routing is unavailable; accept fallback before rehearsal playback.',
-      });
+    if (this.state.loop.enabled && this.state.loop.endSeconds !== undefined && this.state.activeTimeline.loopRangeLimit) {
+      if (this.state.loop.endSeconds > this.state.activeTimeline.loopRangeLimit.endSeconds) {
+        issues.push({ severity: 'error', target: 'loop', message: 'Loop end is outside the active loop range limit.' });
+      }
+    }
+    if (this.state.activeTimeline.notice) {
+      issues.push({ severity: 'warning', target: 'loop', message: this.state.activeTimeline.notice });
     }
 
-    this.addDurationIssues(issues, activeDisplays);
     return issues;
   }
 
-  private addDurationIssues(issues: ReadinessIssue[], activeDisplays: DisplayWindowState[]): void {
-    const directorDuration = this.state.durationSeconds;
-    if (directorDuration === undefined) {
-      return;
-    }
+  private emitState(): void {
+    this.refreshReadiness();
+    this.emit('state', this.getState());
+  }
 
-    const activeSlotIds = new Set(activeDisplays.flatMap((display) => getLayoutSlots(display.layout)));
-    for (const slotId of activeSlotIds) {
-      const duration = this.state.slots[slotId]?.durationSeconds;
-      if (duration === undefined) {
-        continue;
-      }
-      if (Math.abs(duration - directorDuration) > DURATION_TOLERANCE_SECONDS) {
-        issues.push({
-          severity: 'warning',
-          target: 'duration',
-          message: `Slot ${slotId} duration (${duration.toFixed(3)}s) differs from director duration (${directorDuration.toFixed(3)}s).`,
-        });
-      }
-    }
+  private createVisualId(): string {
+    let id: string;
+    do {
+      this.visualSequence += 1;
+      id = `visual-${this.visualSequence}`;
+    } while (this.state.visuals[id]);
+    return id;
+  }
 
-    const audioDuration = this.state.audio.durationSeconds;
-    if (audioDuration !== undefined && Math.abs(audioDuration - directorDuration) > DURATION_TOLERANCE_SECONDS) {
-      issues.push({
-        severity: 'warning',
-        target: 'duration',
-        message: `Audio duration (${audioDuration.toFixed(3)}s) differs from director duration (${directorDuration.toFixed(3)}s).`,
+  private createAudioSourceId(): string {
+    let id: string;
+    do {
+      this.audioSourceSequence += 1;
+      id = `audio-source-${this.audioSourceSequence}`;
+    } while (this.state.audioSources[id]);
+    return id;
+  }
+
+  private createOutputState(id: string, label: string, sourceId?: string): VirtualOutputState {
+    return {
+      id,
+      label,
+      sources: sourceId ? [{ audioSourceId: sourceId, levelDb: 0 }] : [],
+      busLevelDb: 0,
+      ready: false,
+      physicalRoutingAvailable: true,
+      fallbackAccepted: false,
+      fallbackReason: 'none',
+    };
+  }
+
+  private ensurePrimaryOutputUsesSource(audioSourceId: string): void {
+    const output = this.state.outputs['output-main'] ?? this.createOutputState('output-main', 'Main Output');
+    if (!output.sources.some((source) => source.audioSourceId === audioSourceId)) {
+      output.sources.push({ audioSourceId, levelDb: 0 });
+    }
+    this.state.outputs[output.id] = output;
+    this.updateOutputReadiness();
+  }
+
+  private updateOutputReadiness(): void {
+    for (const output of Object.values(this.state.outputs)) {
+      const missingSource = output.sources.find((source) => !this.state.audioSources[source.audioSourceId]);
+      const unreadySource = output.sources.find((source) => {
+        const audioSource = this.state.audioSources[source.audioSourceId];
+        return audioSource && !audioSource.ready;
       });
-    }
-
-    if (this.state.loop.enabled && this.state.loop.endSeconds !== undefined) {
-      const loopEnd = this.state.loop.endSeconds;
-      if (loopEnd > directorDuration + DURATION_TOLERANCE_SECONDS) {
-        issues.push({
-          severity: 'error',
-          target: 'loop',
-          message: `Loop end (${loopEnd.toFixed(3)}s) is beyond director duration (${directorDuration.toFixed(3)}s).`,
-        });
-      }
+      output.ready = output.sources.length > 0 && !missingSource && !unreadySource;
+      output.error = missingSource
+        ? `Missing audio source ${missingSource.audioSourceId}.`
+        : unreadySource
+          ? this.state.audioSources[unreadySource.audioSourceId]?.error ?? 'Selected audio source is not ready.'
+          : undefined;
     }
   }
 
@@ -674,14 +741,8 @@ export class Director extends EventEmitter {
     const absoluteDrift = Math.abs(driftSeconds);
     if (absoluteDrift <= DRIFT_WARN_THRESHOLD_SECONDS) {
       this.correctionCounts.set(railKey, 0);
-      return {
-        action: 'none',
-        driftSeconds,
-        issuedAtWallTimeMs: this.now(),
-        revision: ++this.correctionRevision,
-      };
+      return { action: 'none', driftSeconds, issuedAtWallTimeMs: this.now(), revision: ++this.correctionRevision };
     }
-
     if (absoluteDrift <= DRIFT_CORRECTION_THRESHOLD_SECONDS) {
       this.correctionCounts.set(railKey, 0);
       return {
@@ -692,10 +753,8 @@ export class Director extends EventEmitter {
         revision: ++this.correctionRevision,
       };
     }
-
     const attempts = (this.correctionCounts.get(railKey) ?? 0) + 1;
     this.correctionCounts.set(railKey, attempts);
-
     if (attempts > MAX_CORRECTION_ATTEMPTS) {
       return {
         action: 'degraded',
@@ -706,7 +765,6 @@ export class Director extends EventEmitter {
         revision: ++this.correctionRevision,
       };
     }
-
     return {
       action: 'seek',
       targetSeconds: this.getPlaybackTimeSeconds(),
