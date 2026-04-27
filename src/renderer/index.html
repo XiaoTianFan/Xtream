@@ -8,100 +8,143 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">Xtream Exhibition Player</p>
-          <h1>Control</h1>
-          <p class="lede">One operator surface for transport, display windows, mappings, and diagnostics.</p>
-        </div>
-        <div class="timecode" id="timecode">00:00.000</div>
-      </section>
+      <aside class="nav-rail" aria-label="Primary">
+        <div class="brand-mark">XT</div>
+        <nav class="rail-items" aria-label="Xtream surfaces">
+          <button id="patchRailButton" class="rail-item active" type="button" aria-current="page">Patch</button>
+          <button id="cueRailButton" class="rail-item" type="button" title="Cue surface planned">Cue</button>
+          <button id="performanceRailButton" class="rail-item" type="button" title="Performance surface planned">Perf</button>
+          <button id="configRailButton" class="rail-item" type="button" title="Config and diagnostics">Config</button>
+          <button id="logsRailButton" class="rail-item" type="button" title="Logs and readiness issues">Logs</button>
+        </nav>
+      </aside>
 
-      <section class="panel">
-        <h2>Transport</h2>
-        <div class="button-row">
-          <button id="playButton" type="button">Play</button>
-          <button id="pauseButton" type="button">Pause</button>
-          <button id="stopButton" type="button">Stop</button>
-        </div>
-        <div class="timeline-control">
-          <input id="timelineScrubber" type="range" min="0" max="0" step="0.01" value="0" />
-          <div id="timelineSummary" class="hint">No active timeline duration</div>
-        </div>
-        <div class="transport-grid">
-          <label>
-            Seek timecode
-            <input id="seekInput" type="text" value="00:00.000" />
-          </label>
-          <button id="seekButton" class="secondary" type="button">Seek</button>
-          <label>
-            Rate
-            <input id="rateInput" type="number" min="0.1" step="0.1" value="1" />
-          </label>
-          <button id="rateButton" class="secondary" type="button">Set Rate</button>
-          <label>
-            <input id="loopEnabledInput" type="checkbox" />
-            Loop
-          </label>
-          <label>
-            Loop start
-            <input id="loopStartInput" type="number" min="0" step="0.1" value="0" />
-          </label>
-          <label>
-            Loop end
-            <input id="loopEndInput" type="number" min="0" step="0.1" />
-          </label>
-          <button id="loopButton" class="secondary" type="button">Apply Loop</button>
-        </div>
-      </section>
+      <div class="app-frame">
+        <header class="top-bar">
+          <div class="timecode" id="timecode">00:00.000</div>
+          <div class="transport-cluster" aria-label="Transport controls">
+            <button id="playButton" type="button">Play</button>
+            <button id="pauseButton" type="button">Pause</button>
+            <button id="stopButton" type="button">Stop</button>
+            <div class="loop-control">
+              <button id="loopToggleButton" type="button">Loop</button>
+              <div id="loopPopover" class="loop-popover" hidden>
+                <label>
+                  <input id="loopEnabledInput" type="checkbox" />
+                  Loop enabled
+                </label>
+                <label>
+                  Loop start
+                  <input id="loopStartInput" type="text" value="00:00.000" />
+                </label>
+                <label>
+                  Loop end
+                  <input id="loopEndInput" type="text" />
+                </label>
+                <button id="loopButton" class="secondary" type="button">Apply Loop</button>
+              </div>
+            </div>
+            <button id="rateDisplayButton" type="button">1.0x</button>
+          </div>
+          <div class="timeline-control">
+            <input id="timelineScrubber" class="mini-slider timeline-slider" type="range" min="0" max="0" step="0.01" value="0" aria-label="Timeline scrubber" />
+            <div id="timelineSummary" class="timeline-summary">No active timeline duration</div>
+          </div>
+          <div class="utility-cluster" aria-label="Show utilities">
+            <button id="saveShowButton" type="button">Save</button>
+            <button id="saveShowAsButton" type="button">Save As</button>
+            <button id="openShowButton" type="button">Open</button>
+            <button id="exportDiagnosticsButton" type="button">Diagnostics</button>
+            <span id="liveState" class="status-chip" aria-live="polite">Standby</span>
+          </div>
+        </header>
 
-      <section class="panel">
-        <h2>Show Config and Diagnostics</h2>
-        <div class="button-row">
-          <button id="saveShowButton" type="button">Save</button>
-          <button id="saveShowAsButton" type="button">Save As</button>
-          <button id="openShowButton" type="button">Open</button>
-          <button id="exportDiagnosticsButton" type="button">Export Diagnostics</button>
-        </div>
-        <div id="showStatus" class="hint">No show config saved this session.</div>
-        <div id="issueList" class="issue-list"></div>
-      </section>
+        <section id="surfacePanel" class="surface-panel" aria-live="polite" hidden></section>
 
-      <section class="panel">
-        <h2>Setup Presets</h2>
-        <div class="button-row">
-          <button id="applyMode1Button" type="button">Split Display on One Screen</button>
-          <button id="applyMode2Button" type="button">Two Displays</button>
-        </div>
-        <p class="hint">Presets map the first available visuals while preserving existing audio outputs.</p>
-      </section>
+        <section class="workspace" aria-label="Patch workspace">
+          <section class="panel media-pool" aria-labelledby="mediaPoolHeading">
+            <div class="panel-header">
+              <h2 id="mediaPoolHeading">Media Pool</h2>
+              <button id="addVisualsButton" type="button">Add Media</button>
+            </div>
+            <div class="media-pool-main">
+              <div class="pool-tabs" role="tablist" aria-label="Media pool tabs">
+                <button id="visualTabButton" class="pool-tab active" type="button" role="tab" aria-selected="true">Visuals</button>
+                <button id="audioTabButton" class="pool-tab" type="button" role="tab" aria-selected="false">Audio</button>
+              </div>
+              <div class="pool-toolbar">
+                <label>
+                  <span class="sr-only">Search media pool</span>
+                  <input id="poolSearchInput" type="search" placeholder="Search media" />
+                </label>
+                <select id="poolSortSelect" aria-label="Sort media pool">
+                  <option value="label">Label</option>
+                  <option value="duration">Duration</option>
+                  <option value="status">Status</option>
+                </select>
+              </div>
+              <div class="media-list-region">
+                <div id="visualList" class="visual-list"></div>
+                <div id="audioPanel" class="audio-panel"></div>
+              </div>
+            </div>
+            <div id="assetPreviewRegion" class="asset-preview-region" hidden>
+              <div id="assetPreviewSplitter" class="splitter horizontal" role="separator" aria-label="Resize asset preview" tabindex="0"></div>
+              <div id="assetPreview" class="asset-preview" aria-live="polite"></div>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>Visual Pool</h2>
-        <div class="button-row">
-          <button id="addVisualsButton" type="button">Add Visuals</button>
-        </div>
-        <div id="slotList" class="slot-list"></div>
-      </section>
+          <div id="workspaceSplitter" class="splitter vertical" role="separator" aria-label="Resize media and display panes" tabindex="0"></div>
 
-      <section class="panel">
-        <h2>Audio Pool</h2>
-        <div id="audioPanel" class="audio-panel"></div>
-      </section>
+          <section class="panel display-workspace" aria-labelledby="displayWorkspaceHeading">
+            <div class="panel-header">
+              <h2 id="displayWorkspaceHeading">Display Windows</h2>
+              <div class="button-row">
+                <button id="createDisplayButton" type="button">Add</button>
+              </div>
+            </div>
+            <div id="displayList" class="display-list" aria-live="polite"></div>
+          </section>
+        </section>
 
-      <section class="panel">
-        <h2>Display Windows and Mapping</h2>
-        <div class="button-row">
-          <button id="createSingleButton" type="button">Open Single Display</button>
-          <button id="createSplitButton" type="button">Open Split Display</button>
-        </div>
-        <div id="displayList" class="display-list" aria-live="polite"></div>
-      </section>
+        <div id="mainFooterSplitter" class="splitter horizontal" role="separator" aria-label="Resize workspace and footer" tabindex="0"></div>
 
-      <details class="panel">
-        <summary>Director State</summary>
-        <pre id="stateView"></pre>
-      </details>
+        <section class="operator-footer" aria-label="Mixer and details">
+          <section class="panel mixer-panel" aria-labelledby="mixerHeading">
+            <div class="panel-header">
+              <h2 id="mixerHeading">Audio Mixer</h2>
+              <div class="button-row">
+                <button id="createOutputButton" type="button">Create Output</button>
+                <button id="refreshOutputsButton" class="secondary" type="button">Refresh Outputs</button>
+              </div>
+            </div>
+            <div id="outputPanel" class="output-panel"></div>
+          </section>
+
+          <div id="footerSplitter" class="splitter vertical" role="separator" aria-label="Resize mixer and details panes" tabindex="0"></div>
+
+          <section class="panel details-panel" aria-labelledby="detailsHeading">
+            <div class="panel-header">
+              <h2 id="detailsHeading">Patch Summary</h2>
+              <div id="showStatus" class="hint detail-status" aria-live="polite">No show config saved this session.</div>
+            </div>
+            <div class="details-body">
+              <div id="issueList" class="issue-list"></div>
+              <div id="detailsContent" class="details-content"></div>
+            </div>
+          </section>
+        </section>
+
+        <footer class="status-footer">
+          <span id="runtimeVersionLabel">Xtream runtime</span>
+          <span class="status-actions">
+            <button id="globalAudioMuteButton" class="secondary" type="button">Audio Mute</button>
+            <button id="displayBlackoutButton" class="secondary" type="button">Display Blackout</button>
+            <button id="clearSoloButton" class="secondary" type="button">Clear Solo</button>
+            <button id="resetMetersButton" class="secondary" type="button">Reset Meters</button>
+          </span>
+        </footer>
+      </div>
     </main>
   </body>
 </html>

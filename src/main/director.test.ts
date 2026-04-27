@@ -90,6 +90,39 @@ describe('Director', () => {
     });
   });
 
+  it('auto-creates embedded audio sources when video metadata reports audio tracks', () => {
+    const director = new Director(() => 1000);
+    director.addVisuals([
+      {
+        id: 'visual-with-audio',
+        label: 'Video With Audio',
+        type: 'video',
+        path: 'F:\\media\\video-with-audio.mp4',
+        url: 'file:///F:/media/video-with-audio.mp4',
+      },
+    ]);
+    const state = director.updateVisualMetadata({
+      visualId: 'visual-with-audio',
+      durationSeconds: 12,
+      ready: true,
+      hasEmbeddedAudio: true,
+    });
+    expect(state.audioSources['audio-source-embedded-visual-with-audio']).toMatchObject({
+      type: 'embedded-visual',
+      visualId: 'visual-with-audio',
+      durationSeconds: 12,
+      ready: true,
+    });
+  });
+
+  it('updates session global controls without persisting them to show config', () => {
+    const director = new Director(() => 1000);
+    const state = director.updateGlobalState({ globalAudioMuted: true, globalDisplayBlackout: true });
+    expect(state).toMatchObject({ globalAudioMuted: true, globalDisplayBlackout: true });
+    expect(director.createShowConfig()).not.toHaveProperty('globalAudioMuted');
+    expect(director.createShowConfig()).not.toHaveProperty('globalDisplayBlackout');
+  });
+
   it('clamps invalid loop settings to the active unison span', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
@@ -175,6 +208,16 @@ describe('Director', () => {
       });
     }
     expect(director.getState().displays['display-0']).toMatchObject({ health: 'ready', lastDriftSeconds: 0.25 });
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1,
+      directorSeconds: 1,
+      driftSeconds: 0,
+      frameRateFps: 59.8,
+      reportedAtWallTimeMs: 1500,
+    });
+    expect(director.getState().displays['display-0'].lastFrameRateFps).toBe(59.8);
 
     for (let index = 0; index < 12; index += 1) {
       director.ingestDrift({
@@ -224,7 +267,7 @@ describe('Director', () => {
     expect(director.getState().displays['display-1'].layout).toEqual({ type: 'single', visualId: 'visual-b' });
   });
 
-  it('serializes runtime state into schema v3', () => {
+  it('serializes runtime state into schema v4', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
     director.registerDisplay({
@@ -234,8 +277,8 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 3,
-      visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4' } },
+      schemaVersion: 4,
+      visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
     });
   });

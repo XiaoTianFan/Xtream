@@ -1,4 +1,5 @@
-import './styles.css';
+/// <reference path="./global.d.ts" />
+import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
@@ -13,6 +14,9 @@ let currentState: DirectorState | undefined;
 let currentDirectorSeconds = 0;
 let driftTimer: number | undefined;
 let syncTimer: number | undefined;
+let frameCounter = 0;
+let lastFrameSampleMs = performance.now();
+let lastFrameRateFps: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
 const videoElements = new Map<VisualId, HTMLVideoElement>();
 const mediaSyncStates = new WeakMap<HTMLMediaElement, MediaSyncState>();
@@ -43,11 +47,12 @@ function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId,
 function handleState(state: DirectorState): void {
   currentState = state;
   currentDirectorSeconds = getDirectorSeconds(state);
+  displayRoot.classList.toggle('blacked-out', state.globalDisplayBlackout);
   const display = state.displays[displayId];
   if (!display) {
     displayRoot.replaceChildren();
     const missing = document.createElement('section');
-    missing.className = 'slot';
+    missing.className = 'display-output';
     missing.textContent = 'UNMAPPED';
     displayRoot.append(missing);
     return;
@@ -62,11 +67,12 @@ function handleState(state: DirectorState): void {
 
 function createVisualElement(visualId: VisualId, visual: VisualState | undefined): HTMLElement {
   const visualElement = document.createElement('section');
-  visualElement.className = 'slot';
+  visualElement.className = 'display-output';
   if (visual?.type === 'image' && visual.url) {
     const image = document.createElement('img');
     image.src = visual.url;
     image.alt = visual.label;
+    applyVisualStyle(image, visual);
     image.addEventListener('load', () => {
       void window.xtream.visuals.reportMetadata({
         visualId,
@@ -88,6 +94,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
     video.preload = 'auto';
     video.src = visual.url;
     video.dataset.visualId = visualId;
+    applyVisualStyle(video, visual);
     video.addEventListener('loadedmetadata', () => {
       void window.xtream.visuals.reportMetadata({
         visualId,
@@ -119,7 +126,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
 
 function createOverlay(visualId: string, detail: string): HTMLElement {
   const overlay = document.createElement('div');
-  overlay.className = 'slot-overlay';
+  overlay.className = 'display-output-overlay';
   overlay.append(createTextSpan(`Visual ${visualId}`), createTextSpan(detail));
   return overlay;
 }
@@ -151,7 +158,9 @@ function createTextSpan(text: string): HTMLSpanElement {
 function createRenderSignature(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): string {
   const visualParts = getLayoutVisualIds(layout).map((visualId) => {
     const visual = visualsById[visualId];
-    return `${visualId}:${visual?.url ?? 'empty'}:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}`;
+    return `${visualId}:${visual?.url ?? 'empty'}:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}:${visual?.opacity ?? 1}:${
+      visual?.brightness ?? 1
+    }:${visual?.contrast ?? 1}:${visual?.playbackRate ?? 1}`;
   });
   return `${describeLayout(layout)}|${visualParts.join('|')}`;
 }
@@ -170,14 +179,24 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
       correction.targetSeconds !== undefined &&
       !appliedCorrectionRevisions.has(correction.revision);
     const visualId = video.dataset.visualId;
-    const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
-    const effectiveTarget = getMediaEffectiveTime(shouldApplyCorrection ? correction.targetSeconds! : targetSeconds, visualDuration, state.loop);
+    const visual = visualId ? state.visuals[visualId] : undefined;
+    const visualDuration = visual?.durationSeconds;
+    const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
+    const effectiveTarget = getMediaEffectiveTime(baseTarget * (visual?.playbackRate ?? 1), visualDuration, state.loop);
     syncTimedMediaElement(video, effectiveTarget, !state.paused, shouldApplyCorrection ? `${syncKey}:correction:${correction.revision}` : syncKey, 0.75, clampVideoTime);
     if (correction?.revision !== undefined && shouldApplyCorrection) {
       appliedCorrectionRevisions.add(correction.revision);
     }
-    video.playbackRate = state.rate;
+    video.playbackRate = state.rate * (visual?.playbackRate ?? 1);
+    if (visual) {
+      applyVisualStyle(video, visual);
+    }
   }
+}
+
+function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
+  element.style.opacity = String(visual.opacity ?? 1);
+  element.style.filter = `brightness(${visual.brightness ?? 1}) contrast(${visual.contrast ?? 1})`;
 }
 
 function syncTimedMediaElement(
@@ -273,6 +292,19 @@ window.xtream.director.onState(handleState);
 void window.xtream.renderer.ready({ kind: 'display', displayId });
 void window.xtream.director.getState().then(handleState);
 
+function sampleFrameRate(): void {
+  frameCounter += 1;
+  const now = performance.now();
+  if (now - lastFrameSampleMs >= 1000) {
+    lastFrameRateFps = (frameCounter * 1000) / (now - lastFrameSampleMs);
+    frameCounter = 0;
+    lastFrameSampleMs = now;
+  }
+  window.requestAnimationFrame(sampleFrameRate);
+}
+
+window.requestAnimationFrame(sampleFrameRate);
+
 driftTimer = window.setInterval(() => {
   if (currentState?.paused) {
     return;
@@ -300,6 +332,7 @@ driftTimer = window.setInterval(() => {
     observedSeconds: videos[0]?.currentTime ?? directorSeconds,
     directorSeconds,
     driftSeconds,
+    frameRateFps: lastFrameRateFps,
     reportedAtWallTimeMs: Date.now(),
   });
 }, 1000);

@@ -11,6 +11,7 @@ import type {
   DisplayUpdate,
   DisplayWindowState,
   DriftReport,
+  GlobalStateUpdate,
   PreviewStatus,
   PresetId,
   PresetResult,
@@ -33,6 +34,7 @@ const api = {
     getState: (): Promise<DirectorState> => ipcRenderer.invoke('director:get-state'),
     applyPreset: (preset: PresetId): Promise<PresetResult> => ipcRenderer.invoke('director:apply-preset', preset),
     transport: (command: TransportCommand): Promise<DirectorState> => ipcRenderer.invoke('director:transport', command),
+    updateGlobalState: (update: GlobalStateUpdate): Promise<DirectorState> => ipcRenderer.invoke('director:update-global-state', update),
     onState: (callback: (state: DirectorState) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: DirectorState) => callback(state);
       ipcRenderer.on('director:state', listener);
@@ -49,6 +51,7 @@ const api = {
   },
   visuals: {
     add: (): Promise<VisualState[] | undefined> => ipcRenderer.invoke('visual:add'),
+    addDropped: (filePaths: string[]): Promise<VisualState[]> => ipcRenderer.invoke('visual:add-dropped', filePaths),
     update: (visualId: VisualId, update: VisualUpdate): Promise<VisualState> => ipcRenderer.invoke('visual:update', visualId, update),
     replace: (visualId: VisualId): Promise<VisualState | undefined> => ipcRenderer.invoke('visual:replace', visualId),
     clear: (visualId: VisualId): Promise<VisualState> => ipcRenderer.invoke('visual:clear', visualId),

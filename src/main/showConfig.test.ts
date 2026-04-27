@@ -7,15 +7,17 @@ import {
   buildMediaUrls,
   createDiagnosticsReport,
   getDefaultShowConfigPath,
+  migrateV3ToV4,
   readShowConfig,
   validateRuntimeState,
   writeShowConfig,
 } from './showConfig';
 import { toRendererFileUrl } from './fileUrls';
+import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type { DirectorState, PersistedShowConfig } from '../shared/types';
 
 const config: PersistedShowConfig = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   savedAt: '2026-04-26T00:00:00.000Z',
   rate: 1,
   loop: { enabled: true, startSeconds: 0, endSeconds: 10 },
@@ -25,6 +27,11 @@ const config: PersistedShowConfig = {
       label: 'Visual A',
       type: 'video',
       path: 'F:\\media\\a.mp4',
+      opacity: 0.9,
+      brightness: 1.1,
+      contrast: 1.2,
+      playbackRate: 0.8,
+      fileSizeBytes: 1234,
     },
   },
   audioSources: {
@@ -33,6 +40,9 @@ const config: PersistedShowConfig = {
       label: 'Audio Source 1',
       type: 'external-file',
       path: 'F:\\media\\mix.wav',
+      playbackRate: 1.2,
+      levelDb: -3,
+      fileSizeBytes: 5678,
     },
   },
   outputs: {
@@ -61,6 +71,8 @@ function createRuntimeState(): DirectorState {
     anchorWallTimeMs: 0,
     offsetSeconds: 0,
     loop: { enabled: false, startSeconds: 0 },
+    globalAudioMuted: false,
+    globalDisplayBlackout: false,
     visuals: {},
     audioSources: {},
     outputs: {},
@@ -79,9 +91,49 @@ function createRuntimeState(): DirectorState {
 }
 
 describe('show config persistence helpers', () => {
-  it('validates schema v3 config shape and rejects older versions', () => {
+  it('validates schema v4 config shape and rejects older versions', () => {
     expect(assertShowConfig(config)).toEqual(config);
-    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/version 3 only/i);
+    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3 and 4/i);
+  });
+
+  it('migrates schema v3 configs to schema v4 defaults', () => {
+    const v3Config = {
+      ...config,
+      schemaVersion: 3,
+      visuals: {
+        'visual-a': {
+          id: 'visual-a',
+          label: 'Visual A',
+          type: 'video',
+          path: 'F:\\media\\a.mp4',
+        },
+      },
+      audioSources: {
+        'audio-source-main': {
+          id: 'audio-source-main',
+          label: 'Audio Source 1',
+          type: 'external-file',
+          path: 'F:\\media\\mix.wav',
+        },
+      },
+    } as const;
+    expect(migrateV3ToV4(v3Config)).toMatchObject({
+      schemaVersion: 4,
+      visuals: {
+        'visual-a': {
+          opacity: 1,
+          brightness: 1,
+          contrast: 1,
+          playbackRate: 1,
+        },
+      },
+      audioSources: {
+        'audio-source-main': {
+          playbackRate: 1,
+          levelDb: 0,
+        },
+      },
+    });
   });
 
   it('builds renderer-safe file URLs from persisted media paths', () => {
@@ -108,8 +160,9 @@ describe('show config persistence helpers', () => {
   it('creates diagnostics with current runtime state and issues', () => {
     const state = createRuntimeState();
     state.readiness.issues = [{ severity: 'error', target: 'display', message: 'At least one active display window is required.' }];
-    const report = createDiagnosticsReport(state, '1.0.0');
+    const report = createDiagnosticsReport(state, '1.0.0', XTREAM_RUNTIME_VERSION);
     expect(report.appVersion).toBe('1.0.0');
+    expect(report.runtimeVersion).toBe(XTREAM_RUNTIME_VERSION);
     expect(report.state).toEqual(state);
     expect(report.issues).toContainEqual(expect.objectContaining({ target: 'display' }));
   });

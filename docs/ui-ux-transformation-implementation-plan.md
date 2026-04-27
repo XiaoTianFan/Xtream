@@ -59,7 +59,7 @@ The current styling in `src/renderer/styles.css` uses rounded cards, spacious pa
 - `package.json` currently has no Tailwind or Lucide dependency despite `DESIGN.md` specifying mandatory utility-first CSS and Lucide icons.
 - The static prototype uses Tailwind CDN and Material Symbols, while `DESIGN.md` explicitly asks for Lucide icons. Implementation should follow `DESIGN.md` and use the prototype as a layout reference, not as literal dependency guidance.
 - Current control rendering is centralized in one large `src/renderer/control.ts`, which increases risk for a large visual refactor unless the work introduces componentized renderer modules.
-- Current element ids preserve some old names such as `slotList` and `applyMode1Button`; these are not user-facing but should be renamed during the UI refactor to prevent future slot/mode leakage.
+- Historical slot/mode naming should stay out of new user-facing control surfaces; display internals now use display-output naming and preset controls use explicit split/two-display ids.
 
 ## 4. Design And Requirements Alignment
 
@@ -353,7 +353,7 @@ Visual-specific details:
 
 - Video or image icon.
 - Dimensions and duration where available.
-- Embedded audio indicator and action to add embedded audio source.
+- Embedded audio indicator; imported videos with detectable audio tracks automatically create linked audio sources in the Audio tab.
 
 Audio-specific details:
 
@@ -484,8 +484,8 @@ Current state lacks global mute/blackout. Add after the shell is in place:
 
 ```ts
 type DirectorState = {
-  globalAudioMuted?: boolean;
-  globalDisplayBlackout?: boolean;
+  globalAudioMuted: boolean;
+  globalDisplayBlackout: boolean;
 };
 ```
 
@@ -578,6 +578,7 @@ Tasks:
 - Add persistent add buttons.
 - Add isolated selected-asset preview with local transport.
 - Select row updates dynamic detail pane.
+- Auto-create linked audio-pool sources when imported videos report embedded audio tracks.
 - Preserve existing add/replace/clear/remove behavior.
 
 Acceptance:

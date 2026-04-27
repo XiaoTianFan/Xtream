@@ -8,6 +8,7 @@ import type {
   MediaValidationIssue,
   PersistedShowConfig,
   PersistedShowConfigV3,
+  PersistedShowConfigV4,
 } from '../shared/types';
 
 export const SHOW_CONFIG_EXTENSION = 'xtream-show.json';
@@ -34,9 +35,9 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!value || typeof value !== 'object') {
     throw new Error('Show config must be a JSON object.');
   }
-  const candidate = value as Partial<PersistedShowConfigV3>;
-  if (candidate.schemaVersion !== 3) {
-    throw new Error('Unsupported show config schema version. This build supports schema version 3 only.');
+  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4>;
+  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4) {
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 and 4 only.');
   }
   if (!candidate.visuals || typeof candidate.visuals !== 'object') {
     throw new Error('Show config is missing visuals.');
@@ -50,7 +51,37 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!Array.isArray(candidate.displays)) {
     throw new Error('Show config is missing display mappings.');
   }
-  return candidate as PersistedShowConfig;
+  return candidate.schemaVersion === 3 ? migrateV3ToV4(candidate as PersistedShowConfigV3) : (candidate as PersistedShowConfigV4);
+}
+
+export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfigV4 {
+  return {
+    ...config,
+    schemaVersion: 4,
+    visuals: Object.fromEntries(
+      Object.values(config.visuals).map((visual) => [
+        visual.id,
+        {
+          ...visual,
+          opacity: visual.opacity ?? 1,
+          brightness: visual.brightness ?? 1,
+          contrast: visual.contrast ?? 1,
+          playbackRate: visual.playbackRate ?? 1,
+        },
+      ]),
+    ),
+    audioSources: Object.fromEntries(
+      Object.values(config.audioSources).map((source) => [
+        source.id,
+        {
+          ...source,
+          playbackRate: source.playbackRate ?? 1,
+          levelDb: source.levelDb ?? 0,
+        },
+      ]),
+    ),
+    displays: config.displays.map((display) => ({ ...display })),
+  };
 }
 
 export function buildMediaUrls(config: PersistedShowConfig): {
@@ -133,10 +164,11 @@ export function validateRuntimeState(state: DirectorState): MediaValidationIssue
   return issues;
 }
 
-export function createDiagnosticsReport(state: DirectorState, appVersion: string): DiagnosticsReport {
+export function createDiagnosticsReport(state: DirectorState, appVersion: string, runtimeVersion: string): DiagnosticsReport {
   return {
     generatedAt: new Date().toISOString(),
     appVersion,
+    runtimeVersion,
     platform: process.platform,
     versions: process.versions,
     state,

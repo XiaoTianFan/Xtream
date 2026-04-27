@@ -267,8 +267,23 @@ Then complete the manual test matrix above on the actual target hardware, especi
 - media decoding for final codecs and resolutions,
 - audio output enumeration,
 - `setSinkId` behavior,
-- Mode 3 left/right sink independence,
+- split display left/right visual independence,
 - drift behavior after play, seek, and loop boundaries,
 - save/restore and diagnostics export.
 
-Phase 6 hardware validation remains mandatory because Electron, Chromium, operating systems, HDMI devices, Bluetooth devices, and audio interfaces can expose different routing capabilities depending on the packaged build and machine.
+## Phase 8/9 Operator Console Validation
+
+Complete this pass after `npm run build` and before moving beyond the `v0.0.4` runtime line:
+
+1. Launch with `npm start` and confirm the Patch rail is active by default with Media Pool, Display Windows, Audio Mixer, Details, and Status Footer visible.
+2. Import a video with an embedded audio track and confirm a linked embedded audio source appears in the Audio tab after metadata loads.
+3. Open Config and confirm it shows runtime version, readiness, global audio state, display blackout state, patch topology, system actions, and raw Director State.
+4. Open Logs and confirm readiness issues, display telemetry, and audio routing status are visible without changing show state.
+5. Open Cue and Performance and confirm they are clear placeholders only, with no fake triggering or state-changing controls.
+6. Toggle Audio Mute while playing routed audio and confirm meters may continue to report signal while live output is muted, then restore audio.
+7. Toggle Display Blackout and confirm public display windows and control previews go black, then restore display output.
+8. Click Reset Meters and confirm visible mixer meters reset before live signal updates resume.
+9. Export diagnostics and confirm the JSON includes both package `appVersion` and `runtimeVersion`.
+10. Save, reopen, and confirm session controls such as Audio Mute and Display Blackout are not restored from the show file.
+
+Phase 9 hardware validation remains mandatory because Electron, Chromium, operating systems, HDMI devices, Bluetooth devices, and audio interfaces can expose different routing capabilities depending on the packaged build and machine.

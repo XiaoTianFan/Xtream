@@ -1,11 +1,13 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import type {
   AudioMetadataReport,
   AudioSourceState,
   DirectorState,
   DisplayWindowState,
   DriftReport,
-  PersistedShowConfigV3,
+  GlobalStateUpdate,
+  PersistedShowConfig,
   PreviewStatus,
   PresetId,
   PresetResult,
@@ -46,6 +48,8 @@ export class Director extends EventEmitter {
       anchorWallTimeMs: this.now(),
       offsetSeconds: 0,
       loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
       visuals: {},
       audioSources: {},
       outputs: {
@@ -87,6 +91,11 @@ export class Director extends EventEmitter {
         type: item.type,
         path: item.path,
         url: item.url,
+        opacity: 1,
+        brightness: 1,
+        contrast: 1,
+        playbackRate: 1,
+        fileSizeBytes: this.getFileSizeBytes(item.path),
         ready: false,
       };
       added.push(structuredClone(this.state.visuals[id]));
@@ -104,6 +113,11 @@ export class Director extends EventEmitter {
       type: item.type,
       path: item.path,
       url: item.url,
+      opacity: previous?.opacity ?? 1,
+      brightness: previous?.brightness ?? 1,
+      contrast: previous?.contrast ?? 1,
+      playbackRate: previous?.playbackRate ?? 1,
+      fileSizeBytes: this.getFileSizeBytes(item.path),
       ready: false,
     };
     this.recalculateTimeline();
@@ -127,6 +141,10 @@ export class Director extends EventEmitter {
       id: visualId,
       label: previous?.label ?? visualId,
       type: previous?.type ?? 'video',
+      opacity: previous?.opacity ?? 1,
+      brightness: previous?.brightness ?? 1,
+      contrast: previous?.contrast ?? 1,
+      playbackRate: previous?.playbackRate ?? 1,
       ready: false,
     };
     this.recalculateTimeline();
@@ -173,6 +191,7 @@ export class Director extends EventEmitter {
       width: report.width,
       height: report.height,
       hasEmbeddedAudio: report.hasEmbeddedAudio,
+      fileSizeBytes: this.getFileSizeBytes(this.state.visuals[report.visualId].path),
       ready: report.ready,
       error: report.error,
     };
@@ -182,6 +201,9 @@ export class Director extends EventEmitter {
         source.ready = report.ready;
         source.error = report.error;
       }
+    }
+    if (report.ready && report.hasEmbeddedAudio) {
+      this.ensureEmbeddedAudioSource(report.visualId);
     }
     this.updateOutputReadiness();
     this.recalculateTimeline();
@@ -197,6 +219,9 @@ export class Director extends EventEmitter {
       type: 'external-file',
       path: audioPath,
       url: audioUrl,
+      playbackRate: 1,
+      levelDb: 0,
+      fileSizeBytes: this.getFileSizeBytes(audioPath),
       ready: false,
     };
     this.recalculateTimeline();
@@ -206,6 +231,10 @@ export class Director extends EventEmitter {
 
   addEmbeddedAudioSource(visualId: string): AudioSourceState {
     const id = `audio-source-embedded-${visualId}`;
+    const existing = this.state.audioSources[id];
+    if (existing) {
+      return structuredClone(existing);
+    }
     const visual = this.state.visuals[visualId];
     this.state.audioSources[id] = {
       id,
@@ -213,12 +242,24 @@ export class Director extends EventEmitter {
       type: 'embedded-visual',
       visualId,
       durationSeconds: visual?.durationSeconds,
+      playbackRate: 1,
+      levelDb: 0,
+      fileSizeBytes: visual?.fileSizeBytes,
       ready: Boolean(visual?.ready),
       error: visual?.error,
     };
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.audioSources[id]);
+  }
+
+  updateGlobalState(update: GlobalStateUpdate): DirectorState {
+    this.state = {
+      ...this.state,
+      ...update,
+    };
+    this.emitState();
+    return this.getState();
   }
 
   replaceAudioFileSource(audioSourceId: string, audioPath: string, audioUrl: string): AudioSourceState {
@@ -232,6 +273,9 @@ export class Director extends EventEmitter {
       type: 'external-file',
       path: audioPath,
       url: audioUrl,
+      playbackRate: source.playbackRate ?? 1,
+      levelDb: source.levelDb ?? 0,
+      fileSizeBytes: this.getFileSizeBytes(audioPath),
       ready: false,
     };
     this.updateOutputReadiness();
@@ -253,6 +297,8 @@ export class Director extends EventEmitter {
       id: source.id,
       label: source.label,
       type: 'external-file',
+      playbackRate: source.playbackRate ?? 1,
+      levelDb: source.levelDb ?? 0,
       ready: false,
     };
     this.updateOutputReadiness();
@@ -261,7 +307,7 @@ export class Director extends EventEmitter {
     return structuredClone(this.state.audioSources[audioSourceId]);
   }
 
-  updateAudioSource(audioSourceId: string, update: Partial<Pick<AudioSourceState, 'label'>>): AudioSourceState {
+  updateAudioSource(audioSourceId: string, update: Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>): AudioSourceState {
     const source = this.state.audioSources[audioSourceId];
     if (!source) {
       throw new Error(`Unknown audio source: ${audioSourceId}`);
@@ -288,6 +334,7 @@ export class Director extends EventEmitter {
       this.state.audioSources[report.audioSourceId] = {
         ...source,
         durationSeconds: report.durationSeconds,
+        fileSizeBytes: source.type === 'external-file' ? this.getFileSizeBytes(source.path) : source.fileSizeBytes,
         ready: report.ready,
         error: report.error,
       } as AudioSourceState;
@@ -365,9 +412,9 @@ export class Director extends EventEmitter {
     return { state, primaryDisplayId: first.id };
   }
 
-  createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfigV3 {
+  createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       savedAt,
       rate: this.state.rate,
       loop: structuredClone(this.state.loop),
@@ -379,6 +426,11 @@ export class Director extends EventEmitter {
             label: visual.label,
             type: visual.type,
             path: visual.path,
+            opacity: visual.opacity ?? 1,
+            brightness: visual.brightness ?? 1,
+            contrast: visual.contrast ?? 1,
+            playbackRate: visual.playbackRate ?? 1,
+            fileSizeBytes: visual.fileSizeBytes,
           },
         ]),
       ),
@@ -386,8 +438,24 @@ export class Director extends EventEmitter {
         Object.values(this.state.audioSources).map((source) => [
           source.id,
           source.type === 'external-file'
-            ? { id: source.id, label: source.label, type: source.type, path: source.path }
-            : { id: source.id, label: source.label, type: source.type, visualId: source.visualId },
+            ? {
+                id: source.id,
+                label: source.label,
+                type: source.type,
+                path: source.path,
+                playbackRate: source.playbackRate ?? 1,
+                levelDb: source.levelDb ?? 0,
+                fileSizeBytes: source.fileSizeBytes,
+              }
+            : {
+                id: source.id,
+                label: source.label,
+                type: source.type,
+                visualId: source.visualId,
+                playbackRate: source.playbackRate ?? 1,
+                levelDb: source.levelDb ?? 0,
+                fileSizeBytes: source.fileSizeBytes,
+              },
         ]),
       ),
       outputs: Object.fromEntries(
@@ -407,6 +475,7 @@ export class Director extends EventEmitter {
       ),
       displays: Object.values(this.state.displays).map((display) => ({
         id: display.id,
+        label: display.label,
         layout: structuredClone(display.layout),
         fullscreen: display.fullscreen,
         displayId: display.displayId,
@@ -415,8 +484,10 @@ export class Director extends EventEmitter {
     };
   }
 
-  restoreShowConfig(config: PersistedShowConfigV3, urls: { visuals: Record<string, string | undefined>; audioSources: Record<string, string | undefined> }): DirectorState {
+  restoreShowConfig(config: PersistedShowConfig, urls: { visuals: Record<string, string | undefined>; audioSources: Record<string, string | undefined> }): DirectorState {
     this.state.paused = true;
+    this.state.globalAudioMuted = false;
+    this.state.globalDisplayBlackout = false;
     this.state.rate = config.rate ?? 1;
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
@@ -430,6 +501,11 @@ export class Director extends EventEmitter {
           type: visual.type,
           path: visual.path,
           url: urls.visuals[visual.id],
+          opacity: visual.opacity ?? 1,
+          brightness: visual.brightness ?? 1,
+          contrast: visual.contrast ?? 1,
+          playbackRate: visual.playbackRate ?? 1,
+          fileSizeBytes: visual.fileSizeBytes,
           ready: false,
         } satisfies VisualState,
       ]),
@@ -444,6 +520,9 @@ export class Director extends EventEmitter {
               type: source.type,
               path: source.path,
               url: urls.audioSources[source.id],
+              playbackRate: source.playbackRate ?? 1,
+              levelDb: source.levelDb ?? 0,
+              fileSizeBytes: source.fileSizeBytes,
               ready: false,
             }
           : {
@@ -451,6 +530,9 @@ export class Director extends EventEmitter {
               label: source.label,
               type: source.type,
               visualId: source.visualId,
+              playbackRate: source.playbackRate ?? 1,
+              levelDb: source.levelDb ?? 0,
+              fileSizeBytes: source.fileSizeBytes,
               ready: false,
             },
       ]),
@@ -567,6 +649,7 @@ export class Director extends EventEmitter {
           ...display,
           health: correction.action === 'degraded' || hasNonDriftDegradation ? 'degraded' : 'ready',
           lastDriftSeconds: report.driftSeconds,
+          lastFrameRateFps: report.frameRateFps ?? display.lastFrameRateFps,
           degradationReason: correction.action === 'degraded' || hasNonDriftDegradation ? correction.reason ?? display.degradationReason : undefined,
         };
       }
@@ -624,6 +707,17 @@ export class Director extends EventEmitter {
     this.state.loop = clamped;
     this.state.offsetSeconds = this.getPlaybackTimeSeconds();
     this.state.anchorWallTimeMs = this.now();
+  }
+
+  private getFileSizeBytes(filePath: string | undefined): number | undefined {
+    if (!filePath) {
+      return undefined;
+    }
+    try {
+      return fs.statSync(filePath).size;
+    } catch {
+      return undefined;
+    }
   }
 
   private clampLoop(loop: DirectorState['loop']): DirectorState['loop'] {
@@ -772,6 +866,41 @@ export class Director extends EventEmitter {
       id = `audio-source-${this.audioSourceSequence}`;
     } while (this.state.audioSources[id]);
     return id;
+  }
+
+  private ensureEmbeddedAudioSource(visualId: string): AudioSourceState | undefined {
+    const visual = this.state.visuals[visualId];
+    if (!visual) {
+      return undefined;
+    }
+    const id = `audio-source-embedded-${visualId}`;
+    const existing = this.state.audioSources[id];
+    if (existing?.type === 'embedded-visual') {
+      this.state.audioSources[id] = {
+        ...existing,
+        label: existing.label || `Embedded Audio ${visual.label}`,
+        durationSeconds: visual.durationSeconds,
+        fileSizeBytes: visual.fileSizeBytes,
+        ready: visual.ready,
+        error: visual.error,
+      };
+    } else {
+      this.state.audioSources[id] = {
+        id,
+        label: `Embedded Audio ${visual.label}`,
+        type: 'embedded-visual',
+        visualId,
+        durationSeconds: visual.durationSeconds,
+        playbackRate: 1,
+        levelDb: 0,
+        fileSizeBytes: visual.fileSizeBytes,
+        ready: visual.ready,
+        error: visual.error,
+      };
+    }
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    return structuredClone(this.state.audioSources[id]);
   }
 
   private createOutputState(id: string, label: string, sourceId?: string): VirtualOutputState {

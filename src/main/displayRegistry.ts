@@ -8,6 +8,7 @@ type RegistryEntry = {
 };
 
 const DEFAULT_LAYOUT = { type: 'single' } as const;
+const USE_SIMPLE_FULLSCREEN = process.platform === 'darwin';
 
 export class DisplayRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -38,9 +39,11 @@ export class DisplayRegistry {
     }
 
     return this.createEntry(state.id, {
+      label: state.label,
       layout: state.layout,
       fullscreen: state.fullscreen,
       displayId: state.displayId,
+      bounds: state.bounds,
     });
   }
 
@@ -77,7 +80,8 @@ export class DisplayRegistry {
       y: bounds?.y,
       width: bounds?.width ?? 960,
       height: bounds?.height ?? 540,
-      fullscreen: options.fullscreen ?? false,
+      fullscreenable: true,
+      ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: options.fullscreen === true } : { fullscreen: options.fullscreen === true }),
       autoHideMenuBar: true,
       title: `Xtream ${id}`,
       webPreferences: {
@@ -89,9 +93,10 @@ export class DisplayRegistry {
 
     const state: DisplayWindowState = {
       id,
+      label: options.label,
       bounds: window.getBounds(),
       displayId: options.displayId,
-      fullscreen: window.isFullScreen(),
+      fullscreen: this.isDisplayFullscreen(window),
       layout: options.layout ?? DEFAULT_LAYOUT,
       health: 'starting',
     };
@@ -112,6 +117,19 @@ export class DisplayRegistry {
     window.webContents.on('render-process-gone', (_event, details) => {
       this.markDegraded(id, `Display renderer process exited: ${details.reason}.`);
     });
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') {
+        return;
+      }
+
+      if (input.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        this.update(id, { fullscreen: !this.isDisplayFullscreen(window) });
+      } else if (input.key === 'Escape' && this.isDisplayFullscreen(window)) {
+        event.preventDefault();
+        this.update(id, { fullscreen: false });
+      }
+    });
 
     return { ...state };
   }
@@ -123,15 +141,19 @@ export class DisplayRegistry {
       ...update,
     };
 
-    if (update.fullscreen !== undefined && entry.window.isFullScreen() !== update.fullscreen) {
-      entry.window.setFullScreen(update.fullscreen);
+    if (update.fullscreen !== undefined && this.isDisplayFullscreen(entry.window) !== update.fullscreen) {
+      this.setDisplayFullscreen(entry.window, update.fullscreen);
       nextState.fullscreen = update.fullscreen;
     }
 
     if (update.displayId !== undefined) {
       this.moveToDisplay(entry.window, update.displayId);
       nextState.bounds = entry.window.getBounds();
-      nextState.fullscreen = entry.window.isFullScreen();
+      nextState.fullscreen = this.isDisplayFullscreen(entry.window);
+    }
+
+    if (update.label !== undefined) {
+      entry.window.setTitle(`Xtream ${update.label}`);
     }
 
     entry.state = nextState;
@@ -194,7 +216,7 @@ export class DisplayRegistry {
     entry.state = {
       ...entry.state,
       bounds: entry.window.getBounds(),
-      fullscreen: entry.window.isFullScreen(),
+      fullscreen: this.isDisplayFullscreen(entry.window),
     };
     this.onStateChanged({ ...entry.state });
   }
@@ -223,14 +245,27 @@ export class DisplayRegistry {
       return;
     }
 
-    const wasFullscreen = window.isFullScreen();
+    const wasFullscreen = this.isDisplayFullscreen(window);
     if (wasFullscreen) {
-      window.setFullScreen(false);
+      this.setDisplayFullscreen(window, false);
     }
     window.setBounds(targetDisplay.bounds);
     if (wasFullscreen) {
-      window.setFullScreen(true);
+      this.setDisplayFullscreen(window, true);
     }
+  }
+
+  private isDisplayFullscreen(window: BrowserWindow): boolean {
+    return USE_SIMPLE_FULLSCREEN ? window.isSimpleFullScreen() : window.isFullScreen();
+  }
+
+  private setDisplayFullscreen(window: BrowserWindow, fullscreen: boolean): void {
+    if (USE_SIMPLE_FULLSCREEN) {
+      window.setSimpleFullScreen(fullscreen);
+      return;
+    }
+
+    window.setFullScreen(fullscreen);
   }
 
   private loadDisplay(window: BrowserWindow, id: string): void {

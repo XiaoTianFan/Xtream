@@ -34,6 +34,7 @@ import type {
   VisualUpdate,
   VirtualOutputUpdate,
 } from '../shared/types';
+import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 
 const director = new Director();
 
@@ -46,6 +47,7 @@ let isShuttingDown = false;
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
 const rendererRoot = path.join(__dirname, '../../renderer');
+const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
 
 function createControlWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -90,10 +92,7 @@ function sendDirectorState(window: BrowserWindow | undefined, state: DirectorSta
 
 function beginAppShutdown(): void {
   isShuttingDown = true;
-  if (autoSaveTimer) {
-    clearTimeout(autoSaveTimer);
-    autoSaveTimer = undefined;
-  }
+  flushShowConfigAutoSave();
   displayRegistry?.closeAll();
   app.quit();
 }
@@ -115,6 +114,20 @@ function scheduleShowConfigAutoSave(): void {
   }, 250);
 }
 
+function flushShowConfigAutoSave(): void {
+  if (!currentShowConfigPath || !autoSaveTimer) {
+    return;
+  }
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = undefined;
+  try {
+    fs.mkdirSync(path.dirname(currentShowConfigPath), { recursive: true });
+    fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(director.createShowConfig(), null, 2)}\n`, 'utf8');
+  } catch (error: unknown) {
+    console.error('Failed to save show config before shutdown.', error);
+  }
+}
+
 function shouldAutoSaveTransport(command: TransportCommand): boolean {
   return command.type === 'set-rate' || command.type === 'set-loop';
 }
@@ -131,6 +144,18 @@ function createVisualImportItem(filePath: string): VisualImportItem {
     path: filePath,
     url: toRendererFileUrl(filePath),
   };
+}
+
+function createDroppedVisualImportItems(filePaths: string[]): VisualImportItem[] {
+  const items: VisualImportItem[] = [];
+  for (const filePath of filePaths) {
+    const extension = path.extname(filePath).toLowerCase().replace('.', '');
+    if (!VISUAL_IMPORT_EXTENSIONS.has(extension) || !fs.existsSync(filePath)) {
+      continue;
+    }
+    items.push(createVisualImportItem(filePath));
+  }
+  return items;
 }
 
 async function pickVisualFiles(properties: Electron.OpenDialogOptions['properties']): Promise<VisualImportItem[] | undefined> {
@@ -167,6 +192,7 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
   for (const display of config.displays) {
     const state = displayRegistry.create({
       id: display.id,
+      label: display.label,
       layout: display.layout,
       fullscreen: display.fullscreen,
       displayId: display.displayId,
@@ -205,10 +231,22 @@ function registerIpcHandlers(): void {
     return state;
   });
 
+  ipcMain.handle('director:update-global-state', (_event, update) => director.updateGlobalState(update));
+
   ipcMain.handle('visual:add', async () => {
     const items = await pickVisualFiles(['openFile', 'multiSelections']);
     if (!items) {
       return undefined;
+    }
+    const visuals = director.addVisuals(items);
+    scheduleShowConfigAutoSave();
+    return visuals;
+  });
+
+  ipcMain.handle('visual:add-dropped', (_event, filePaths: string[]) => {
+    const items = createDroppedVisualImportItems(filePaths);
+    if (items.length === 0) {
+      return [];
     }
     const visuals = director.addVisuals(items);
     scheduleShowConfigAutoSave();
@@ -371,7 +409,7 @@ function registerIpcHandlers(): void {
     if (result.canceled || !result.filePath) {
       return undefined;
     }
-    await writeJsonFile(result.filePath, createDiagnosticsReport(director.getState(), app.getVersion()));
+    await writeJsonFile(result.filePath, createDiagnosticsReport(director.getState(), app.getVersion(), XTREAM_RUNTIME_VERSION));
     return result.filePath;
   });
 
@@ -468,6 +506,7 @@ app.whenReady().then(() => {
     (state) => {
       if (!isShuttingDown) {
         director.updateDisplay(state);
+        scheduleShowConfigAutoSave();
       }
     },
   );
@@ -494,10 +533,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isShuttingDown = true;
-  if (autoSaveTimer) {
-    clearTimeout(autoSaveTimer);
-    autoSaveTimer = undefined;
-  }
+  flushShowConfigAutoSave();
   displayRegistry?.closeAll();
 });
 

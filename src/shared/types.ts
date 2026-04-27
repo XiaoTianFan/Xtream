@@ -18,6 +18,7 @@ export type DisplayHealth = 'starting' | 'ready' | 'stale' | 'degraded' | 'close
 
 export type DisplayWindowState = {
   id: DisplayWindowId;
+  label?: string;
   bounds?: {
     x: number;
     y: number;
@@ -29,6 +30,7 @@ export type DisplayWindowState = {
   layout: VisualLayoutProfile;
   health: DisplayHealth;
   lastDriftSeconds?: number;
+  lastFrameRateFps?: number;
   degradationReason?: string;
 };
 
@@ -43,6 +45,11 @@ export type VisualState = {
   height?: number;
   hasEmbeddedAudio?: boolean;
   previewUrl?: string;
+  opacity?: number;
+  brightness?: number;
+  contrast?: number;
+  playbackRate?: number;
+  fileSizeBytes?: number;
   ready: boolean;
   error?: string;
 };
@@ -55,6 +62,9 @@ export type AudioSourceState =
       path?: string;
       url?: string;
       durationSeconds?: number;
+      playbackRate?: number;
+      levelDb?: number;
+      fileSizeBytes?: number;
       ready: boolean;
       error?: string;
     }
@@ -64,6 +74,9 @@ export type AudioSourceState =
       type: 'embedded-visual';
       visualId: VisualId;
       durationSeconds?: number;
+      playbackRate?: number;
+      levelDb?: number;
+      fileSizeBytes?: number;
       ready: boolean;
       error?: string;
     };
@@ -119,6 +132,8 @@ export type DirectorState = {
   anchorWallTimeMs: number;
   offsetSeconds: number;
   loop: LoopState;
+  globalAudioMuted: boolean;
+  globalDisplayBlackout: boolean;
   visuals: Record<VisualId, VisualState>;
   audioSources: Record<AudioSourceId, AudioSourceState>;
   outputs: Record<VirtualOutputId, VirtualOutputState>;
@@ -159,7 +174,7 @@ export type CorrectionState = {
 
 export type PersistedVisualConfig = Pick<
   VisualState,
-  'id' | 'label' | 'type' | 'path'
+  'id' | 'label' | 'type' | 'path' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate' | 'fileSizeBytes'
 >;
 
 export type PersistedAudioSourceConfig =
@@ -168,12 +183,18 @@ export type PersistedAudioSourceConfig =
       label: string;
       type: 'external-file';
       path?: string;
+      playbackRate?: number;
+      levelDb?: number;
+      fileSizeBytes?: number;
     }
   | {
       id: AudioSourceId;
       label: string;
       type: 'embedded-visual';
       visualId: VisualId;
+      playbackRate?: number;
+      levelDb?: number;
+      fileSizeBytes?: number;
     };
 
 export type PersistedVirtualOutputConfig = {
@@ -189,6 +210,7 @@ export type PersistedVirtualOutputConfig = {
 
 export type PersistedDisplayConfig = {
   id?: DisplayWindowId;
+  label?: string;
   layout: VisualLayoutProfile;
   fullscreen: boolean;
   displayId?: string;
@@ -206,7 +228,11 @@ export type PersistedShowConfigV3 = {
   displays: PersistedDisplayConfig[];
 };
 
-export type PersistedShowConfig = PersistedShowConfigV3;
+export type PersistedShowConfigV4 = Omit<PersistedShowConfigV3, 'schemaVersion'> & {
+  schemaVersion: 4;
+};
+
+export type PersistedShowConfig = PersistedShowConfigV4;
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -223,6 +249,7 @@ export type ShowConfigOperationResult = {
 export type DiagnosticsReport = {
   generatedAt: string;
   appVersion: string;
+  runtimeVersion: string;
   platform: NodeJS.Platform;
   versions: NodeJS.ProcessVersions;
   state: DirectorState;
@@ -243,18 +270,20 @@ export type DriftReport = {
   observedSeconds: number;
   directorSeconds: number;
   driftSeconds: number;
+  frameRateFps?: number;
   reportedAtWallTimeMs: number;
 };
 
 export type DisplayCreateOptions = {
   id?: DisplayWindowId;
+  label?: string;
   layout?: VisualLayoutProfile;
   fullscreen?: boolean;
   displayId?: string;
   bounds?: DisplayWindowState['bounds'];
 };
 
-export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'layout' | 'fullscreen' | 'displayId'>>;
+export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'label' | 'layout' | 'fullscreen' | 'displayId'>>;
 
 export type DisplayMonitorInfo = {
   id: string;
@@ -291,8 +320,9 @@ export type AudioMetadataReport = {
 };
 
 export type AudioSourceCreateResult = AudioSourceState | undefined;
-export type VisualUpdate = Partial<Pick<VisualState, 'label'>>;
-export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label'>>;
+export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
+export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
+export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout'>>;
 
 export type VirtualOutputUpdate = Partial<
   Pick<
@@ -333,7 +363,9 @@ export type IpcChannels = {
   'director:get-state': () => DirectorState;
   'director:apply-preset': (preset: PresetId) => PresetResult;
   'director:transport': (command: TransportCommand) => DirectorState;
+  'director:update-global-state': (update: GlobalStateUpdate) => DirectorState;
   'visual:add': () => VisualState[] | undefined;
+  'visual:add-dropped': (filePaths: string[]) => VisualState[];
   'visual:update': (visualId: VisualId, update: VisualUpdate) => VisualState;
   'visual:replace': (visualId: VisualId) => VisualState | undefined;
   'visual:clear': (visualId: VisualId) => VisualState;
