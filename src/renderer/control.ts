@@ -141,7 +141,14 @@ const DISPLAY_PREVIEW_MAX_WIDTH = 854;
 const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
 const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 15;
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
+const DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS = 0.05;
 const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
+
+type DisplayPreviewProgressEdge = {
+  visualId: VisualId;
+  durationSeconds: number;
+  playbackRate: number;
+};
 
 type LayoutPrefs = {
   mediaWidthPx?: number;
@@ -1069,7 +1076,7 @@ function createDisplayRenderSignature(state: DirectorState): string {
     .map((display) => {
       const visualParts = getPreviewVisualIds(display.layout).map((visualId) => {
         const visual = state.visuals[visualId];
-        return `${visualId}:${visual?.type ?? 'missing'}:${visual?.url ?? ''}`;
+        return `${visualId}:${visual?.type ?? 'missing'}:${visual?.url ?? ''}:${visual?.durationSeconds ?? ''}:${visual?.playbackRate ?? 1}`;
       });
       return `${display.id}:${display.layout.type}:${JSON.stringify(display.layout)}:${visualParts.join(',')}`;
     });
@@ -1200,7 +1207,54 @@ function createDisplayPreview(display: DisplayWindowState, state: DirectorState 
     }
     preview.append(pane);
   }
+  const progressEdge = state ? getDisplayPreviewProgressEdge(display, state) : undefined;
+  if (progressEdge) {
+    preview.append(createDisplayPreviewProgressEdge(progressEdge));
+  }
   return preview;
+}
+
+function getDisplayPreviewProgressEdge(display: DisplayWindowState, state: DirectorState): DisplayPreviewProgressEdge | undefined {
+  if (state.performanceMode) {
+    return undefined;
+  }
+  if (display.layout.type === 'single') {
+    return getVisualProgressEdge(state.visuals[display.layout.visualId ?? '']);
+  }
+  const [leftVisualId, rightVisualId] = display.layout.visualIds;
+  if (!leftVisualId || !rightVisualId) {
+    return undefined;
+  }
+  const leftEdge = getVisualProgressEdge(state.visuals[leftVisualId]);
+  const rightEdge = getVisualProgressEdge(state.visuals[rightVisualId]);
+  if (!leftEdge || !rightEdge) {
+    return undefined;
+  }
+  if (Math.abs(leftEdge.durationSeconds - rightEdge.durationSeconds) > DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS) {
+    return undefined;
+  }
+  return leftEdge;
+}
+
+function getVisualProgressEdge(visual: VisualState | undefined): DisplayPreviewProgressEdge | undefined {
+  if (visual?.type !== 'video' || !visual.url || !Number.isFinite(visual.durationSeconds) || visual.durationSeconds === undefined || visual.durationSeconds <= 0) {
+    return undefined;
+  }
+  return {
+    visualId: visual.id,
+    durationSeconds: visual.durationSeconds,
+    playbackRate: visual.playbackRate ?? 1,
+  };
+}
+
+function createDisplayPreviewProgressEdge(edge: DisplayPreviewProgressEdge): HTMLDivElement {
+  const progress = document.createElement('div');
+  progress.className = 'display-preview-progress-edge';
+  progress.dataset.progressVisualId = edge.visualId;
+  progress.dataset.progressDurationSeconds = String(edge.durationSeconds);
+  progress.dataset.progressPlaybackRate = String(edge.playbackRate);
+  progress.style.setProperty('--display-preview-progress', '0%');
+  return progress;
 }
 
 function reportPreviewStatus(key: string, visualId: string | undefined, ready: boolean, error?: string, displayId?: string): void {
@@ -2124,6 +2178,7 @@ function tick(): void {
 }
 
 function syncPreviewElements(state: DirectorState): void {
+  syncDisplayPreviewProgressEdges(state);
   if (state.performanceMode) {
     document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]').forEach((video) => video.pause());
     return;
@@ -2147,6 +2202,32 @@ function syncPreviewElements(state: DirectorState): void {
     syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
     drawDisplayPreviewFrame(video);
   }
+}
+
+function syncDisplayPreviewProgressEdges(state: DirectorState): void {
+  const targetSeconds = getDirectorSeconds(state);
+  elements.displayList.querySelectorAll<HTMLElement>('[data-display-preview]').forEach((preview) => {
+    const displayId = preview.dataset.displayPreview;
+    const display = displayId ? state.displays[displayId] : undefined;
+    const edge = display ? getDisplayPreviewProgressEdge(display, state) : undefined;
+    let edgeElement = preview.querySelector<HTMLElement>('.display-preview-progress-edge');
+    if (!edge) {
+      edgeElement?.style.setProperty('--display-preview-progress', '0%');
+      edgeElement?.setAttribute('hidden', '');
+      return;
+    }
+    if (!edgeElement) {
+      edgeElement = createDisplayPreviewProgressEdge(edge);
+      preview.append(edgeElement);
+    }
+    edgeElement.hidden = false;
+    edgeElement.dataset.progressVisualId = edge.visualId;
+    edgeElement.dataset.progressDurationSeconds = String(edge.durationSeconds);
+    edgeElement.dataset.progressPlaybackRate = String(edge.playbackRate);
+    const effectiveTarget = getMediaEffectiveTime(targetSeconds * edge.playbackRate, edge.durationSeconds, state.loop);
+    const progress = Math.min(100, Math.max(0, (effectiveTarget / edge.durationSeconds) * 100));
+    edgeElement.style.setProperty('--display-preview-progress', `${progress}%`);
+  });
 }
 
 async function sendTransport(command: TransportCommand): Promise<void> {

@@ -1201,6 +1201,25 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   letter-spacing: 0.12em;
 }
 
+.display-preview-progress-edge {
+  position: absolute;
+  z-index: 2;
+  inset: auto 0 0 0;
+  height: 2px;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent-teal) 78%, #ffffff) var(--display-preview-progress, 0%),
+      transparent var(--display-preview-progress, 0%)
+    );
+  box-shadow: 0 -1px 6px rgb(92 158 173 / 0.28);
+  pointer-events: none;
+}
+
+.display-preview-progress-edge[hidden] {
+  display: none;
+}
+
 .display-preview-pane {
   position: relative;
   display: grid;
