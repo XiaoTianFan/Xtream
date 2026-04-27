@@ -92,6 +92,7 @@ export class DisplayRegistry {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
       },
     });
     if (bounds) {

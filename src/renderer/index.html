@@ -21,41 +21,46 @@
 
       <div class="app-frame">
         <header class="top-bar">
-          <div class="timecode" id="timecode">00:00.000</div>
-          <div class="transport-cluster" aria-label="Transport controls">
-            <button id="playButton" type="button">Play</button>
-            <button id="pauseButton" type="button">Pause</button>
-            <button id="stopButton" type="button">Stop</button>
-            <div class="loop-control">
-              <button id="loopToggleButton" type="button">Loop</button>
-              <div id="loopPopover" class="loop-popover" hidden>
-                <label>
-                  <input id="loopEnabledInput" type="checkbox" />
-                  Loop enabled
-                </label>
-                <label>
-                  Loop start
-                  <input id="loopStartInput" type="text" value="00:00.000" />
-                </label>
-                <label>
-                  Loop end
-                  <input id="loopEndInput" type="text" />
-                </label>
-                <button id="loopButton" class="secondary" type="button">Apply Loop</button>
+          <div class="top-bar-main">
+            <div class="timecode" id="timecode">00:00.000</div>
+            <div class="transport-cluster" aria-label="Transport controls">
+              <button id="playButton" type="button">Play</button>
+              <button id="pauseButton" type="button">Pause</button>
+              <button id="stopButton" type="button">Stop</button>
+              <div class="loop-control">
+                <button id="loopToggleButton" type="button">Loop</button>
+                <div id="loopPopover" class="loop-popover" hidden>
+                  <label>
+                    <input id="loopEnabledInput" type="checkbox" />
+                    Loop enabled
+                  </label>
+                  <label>
+                    Loop start
+                    <input id="loopStartInput" type="text" value="00:00.000" />
+                  </label>
+                  <label>
+                    Loop end
+                    <input id="loopEndInput" type="text" />
+                  </label>
+                  <button id="loopButton" class="secondary" type="button">Apply Loop</button>
+                </div>
               </div>
+              <button id="rateDisplayButton" type="button">1.0x</button>
             </div>
-            <button id="rateDisplayButton" type="button">1.0x</button>
+            <div class="timeline-meta" aria-live="polite">
+              <div id="timelineSummaryPrimary" class="timeline-summary-primary">No active timeline duration</div>
+              <div id="timelineLoopLimitLine" class="timeline-summary-loop" hidden></div>
+            </div>
+            <div class="utility-cluster" aria-label="Show utilities">
+              <button id="saveShowButton" type="button">Save</button>
+              <button id="saveShowAsButton" type="button">Save As</button>
+              <button id="openShowButton" type="button">Open</button>
+              <button id="exportDiagnosticsButton" type="button">Diagnostics</button>
+              <span id="liveState" class="status-chip" aria-live="polite">Standby</span>
+            </div>
           </div>
           <div class="timeline-control">
             <input id="timelineScrubber" class="mini-slider timeline-slider" type="range" min="0" max="0" step="0.01" value="0" aria-label="Timeline scrubber" />
-            <div id="timelineSummary" class="timeline-summary">No active timeline duration</div>
-          </div>
-          <div class="utility-cluster" aria-label="Show utilities">
-            <button id="saveShowButton" type="button">Save</button>
-            <button id="saveShowAsButton" type="button">Save As</button>
-            <button id="openShowButton" type="button">Open</button>
-            <button id="exportDiagnosticsButton" type="button">Diagnostics</button>
-            <span id="liveState" class="status-chip" aria-live="polite">Standby</span>
           </div>
         </header>
 

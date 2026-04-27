@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         control: resolve(__dirname, 'src/renderer/index.html'),
         display: resolve(__dirname, 'src/renderer/display.html'),
+        audio: resolve(__dirname, 'src/renderer/audio.html'),
       },
     },
   },

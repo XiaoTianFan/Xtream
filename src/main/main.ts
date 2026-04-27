@@ -39,6 +39,7 @@ import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 const director = new Director();
 
 let controlWindow: BrowserWindow | undefined;
+let audioWindow: BrowserWindow | undefined;
 let displayRegistry: DisplayRegistry | undefined;
 let currentShowConfigPath: string | undefined;
 let autoSaveTimer: NodeJS.Timeout | undefined;
@@ -48,6 +49,8 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
 const rendererRoot = path.join(__dirname, '../../renderer');
 const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
+
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 function createControlWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -60,6 +63,7 @@ function createControlWindow(): BrowserWindow {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   if (isDevelopment) {
@@ -76,8 +80,33 @@ function createControlWindow(): BrowserWindow {
   return window;
 }
 
+function createAudioWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 320,
+    height: 120,
+    show: false,
+    title: 'Xtream Audio Engine',
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  if (isDevelopment) {
+    void window.loadURL(`${process.env.VITE_DEV_SERVER_URL!}/audio.html`);
+  } else {
+    void window.loadFile(path.join(rendererRoot, 'audio.html'));
+  }
+  window.on('closed', () => {
+    audioWindow = undefined;
+  });
+  return window;
+}
+
 function broadcastDirectorState(state: DirectorState): void {
   sendDirectorState(controlWindow, state);
+  sendDirectorState(audioWindow, state);
   for (const displayWindow of displayRegistry?.getAllWindows() ?? []) {
     sendDirectorState(displayWindow, state);
   }
@@ -94,6 +123,7 @@ function beginAppShutdown(): void {
   isShuttingDown = true;
   flushShowConfigAutoSave();
   displayRegistry?.closeAll();
+  audioWindow?.close();
   app.quit();
 }
 
@@ -359,7 +389,17 @@ function registerIpcHandlers(): void {
     return output;
   });
 
-  ipcMain.handle('output:meter', (_event, outputId: string, meterDb: number) => director.updateOutputMeter(outputId, meterDb));
+  ipcMain.handle('output:meter', (_event, outputId: string, meterDb: number) => {
+    const output = director.updateOutputMeter(outputId, meterDb);
+    sendDirectorState(controlWindow, director.getState());
+    return output;
+  });
+
+  ipcMain.handle('audio:set-solo-output-ids', (_event, outputIds: string[]) => {
+    if (audioWindow && !audioWindow.isDestroyed() && !audioWindow.webContents.isDestroyed()) {
+      audioWindow.webContents.send('audio:solo-output-ids', outputIds);
+    }
+  });
 
   ipcMain.handle('output:remove', (_event, outputId: string) => {
     director.removeVirtualOutput(outputId);
@@ -515,6 +555,7 @@ app.whenReady().then(() => {
   director.on('state', (state) => broadcastDirectorState(state));
 
   controlWindow = createControlWindow();
+  audioWindow = createAudioWindow();
   currentShowConfigPath = getDefaultShowConfigPath(app.getPath('userData'));
   if (fs.existsSync(currentShowConfigPath)) {
     void readShowConfig(currentShowConfigPath)
@@ -535,6 +576,7 @@ app.on('before-quit', () => {
   isShuttingDown = true;
   flushShowConfigAutoSave();
   displayRegistry?.closeAll();
+  audioWindow?.close();
 });
 
 app.on('window-all-closed', () => {

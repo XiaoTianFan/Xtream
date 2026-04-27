@@ -1,6 +1,6 @@
 import './control.css';
 import { describeLayout } from '../shared/layouts';
-import { formatTimecode, getAudioEffectiveTime, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
+import { formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type {
   AudioSourceState,
@@ -18,14 +18,9 @@ import type {
   VirtualOutputState,
 } from '../shared/types';
 import {
-  getFirstMeteredAudioSource,
   meterWidth,
   playAudioSourcePreview,
   playOutputTestTone,
-  sampleMeters,
-  setSoloOutputIds,
-  syncAudioRuntimeToDirector,
-  syncVirtualAudioGraph,
 } from './control/audioRuntime';
 import {
   assertElement,
@@ -40,7 +35,7 @@ import {
 } from './control/dom';
 import { renderIssues as renderIssueList } from './control/issues';
 import { decorateIconButton } from './control/icons';
-import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/mediaSync';
+import { createPlaybackSyncKey, syncTimedMediaElement } from './control/mediaSync';
 
 const elements = {
   appFrame: assertElement(document.querySelector<HTMLDivElement>('.app-frame'), 'appFrame'),
@@ -74,7 +69,8 @@ const elements = {
   loopToggleButton: assertElement(document.querySelector<HTMLButtonElement>('#loopToggleButton'), 'loopToggleButton'),
   rateDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#rateDisplayButton'), 'rateDisplayButton'),
   timelineScrubber: assertElement(document.querySelector<HTMLInputElement>('#timelineScrubber'), 'timelineScrubber'),
-  timelineSummary: assertElement(document.querySelector<HTMLDivElement>('#timelineSummary'), 'timelineSummary'),
+  timelineSummaryPrimary: assertElement(document.querySelector<HTMLDivElement>('#timelineSummaryPrimary'), 'timelineSummaryPrimary'),
+  timelineLoopLimitLine: assertElement(document.querySelector<HTMLDivElement>('#timelineLoopLimitLine'), 'timelineLoopLimitLine'),
   loopEnabledInput: assertElement(document.querySelector<HTMLInputElement>('#loopEnabledInput'), 'loopEnabledInput'),
   loopStartInput: assertElement(document.querySelector<HTMLInputElement>('#loopStartInput'), 'loopStartInput'),
   loopEndInput: assertElement(document.querySelector<HTMLInputElement>('#loopEndInput'), 'loopEndInput'),
@@ -101,7 +97,6 @@ const elements = {
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
-let driftTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
 let displayMonitors: DisplayMonitorInfo[] = [];
 let currentIssues: MediaValidationIssue[] = [];
@@ -131,6 +126,11 @@ type SelectedEntity =
 type ControlSurface = 'patch' | 'cue' | 'performance' | 'config' | 'logs';
 
 const UI_PREF_KEY = 'xtream.control.layout.v1';
+const DISPLAY_PREVIEW_MAX_WIDTH = 854;
+const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
+const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 30;
+const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
+
 type LayoutPrefs = {
   mediaWidthPx?: number;
   footerHeightPx?: number;
@@ -146,8 +146,6 @@ const transportDraftElements = new Set<HTMLInputElement>([
 
 function renderState(state: DirectorState): void {
   currentState = state;
-  setSoloOutputIds(soloOutputIds);
-  syncVirtualAudioGraph(state);
   syncTransportInputs(state);
   const nextAudioRenderSignature = createAudioRenderSignature(state);
   const nextVisualRenderSignature = `${createVisualRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
@@ -163,6 +161,7 @@ function renderState(state: DirectorState): void {
     audioRenderSignature = nextAudioRenderSignature;
     renderOutputs(state);
   }
+  syncOutputMeters(state);
   const nextDisplayRenderSignature = createDisplayRenderSignature(state);
   if (!isPanelInteractionActive(elements.displayList) && displayRenderSignature !== nextDisplayRenderSignature) {
     displayRenderSignature = nextDisplayRenderSignature;
@@ -260,7 +259,9 @@ function syncTimelineScrubber(state: DirectorState): void {
     elements.timelineScrubber.disabled = true;
     elements.timelineScrubber.max = '0';
     elements.timelineScrubber.value = '0';
-    elements.timelineSummary.textContent = 'No active timeline duration';
+    elements.timelineSummaryPrimary.textContent = 'No active timeline duration';
+    elements.timelineLoopLimitLine.textContent = '';
+    elements.timelineLoopLimitLine.hidden = true;
     elements.timelineScrubber.style.setProperty('--progress', '0%');
     elements.timelineScrubber.style.removeProperty('--loop-start');
     elements.timelineScrubber.style.removeProperty('--loop-end');
@@ -283,9 +284,14 @@ function syncTimelineScrubber(state: DirectorState): void {
     elements.timelineScrubber.style.removeProperty('--loop-end');
   }
   const loopLimit = state.activeTimeline.loopRangeLimit;
-  elements.timelineSummary.textContent = `Timeline ${formatTimecode(Math.min(currentSeconds, duration))} / ${formatTimecode(duration)}${
-    loopLimit ? ` | loop range limit: ${formatTimecode(loopLimit.startSeconds)}-${formatTimecode(loopLimit.endSeconds)}` : ''
-  }`;
+  elements.timelineSummaryPrimary.textContent = `Timeline ${formatTimecode(Math.min(currentSeconds, duration))} / ${formatTimecode(duration)}`;
+  if (loopLimit) {
+    elements.timelineLoopLimitLine.textContent = `loop range limit: ${formatTimecode(loopLimit.startSeconds)}-${formatTimecode(loopLimit.endSeconds)}`;
+    elements.timelineLoopLimitLine.hidden = false;
+  } else {
+    elements.timelineLoopLimitLine.textContent = '';
+    elements.timelineLoopLimitLine.hidden = true;
+  }
 }
 
 function getLiveStateLabel(state: DirectorState): 'LIVE' | 'STANDBY' | 'BLOCKED' | 'DEGRADED' {
@@ -389,6 +395,16 @@ function renderOutputs(state: DirectorState): void {
   elements.outputPanel.replaceChildren(...strips, addStrip);
 }
 
+function syncOutputMeters(state: DirectorState): void {
+  for (const output of Object.values(state.outputs)) {
+    const width = meterWidth(output.meterDb);
+    document.querySelectorAll<HTMLElement>(`[data-meter-fill="${output.id}"]`).forEach((fill) => {
+      fill.style.width = width;
+      fill.style.height = width;
+    });
+  }
+}
+
 function createMixerStrip(output: VirtualOutputState): HTMLElement {
   const strip = document.createElement('article');
   strip.className = `mixer-strip${isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
@@ -433,7 +449,7 @@ function createMixerStrip(output: VirtualOutputState): HTMLElement {
     } else {
       soloOutputIds.add(output.id);
     }
-    setSoloOutputIds(soloOutputIds);
+    void window.xtream.audioRuntime.setSoloOutputIds([...soloOutputIds]);
     renderState(currentState!);
   });
   solo.title = `Solo ${output.label}`;
@@ -767,13 +783,15 @@ function createDisplayPreview(display: DisplayWindowState, state: DirectorState 
       video.src = visual.url;
       video.dataset.visualId = visualId;
       video.dataset.previewVideo = 'true';
+      video.style.display = 'none';
       applyVisualStyle(video, visual);
       video.playbackRate = state.rate * (visual.playbackRate ?? 1);
       video.addEventListener('loadedmetadata', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
       video.addEventListener('error', () =>
         reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} video preview failed to load.`, display.id),
       );
-      pane.append(video);
+      const canvas = createDisplayPreviewCanvas(video);
+      pane.append(video, canvas);
     }
     preview.append(pane);
   }
@@ -789,6 +807,41 @@ function reportPreviewStatus(key: string, visualId: string | undefined, ready: b
     error,
     reportedAtWallTimeMs: Date.now(),
   });
+}
+
+function createDisplayPreviewCanvas(video: HTMLVideoElement): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'display-preview-canvas';
+  canvas.width = DISPLAY_PREVIEW_MAX_WIDTH;
+  canvas.height = DISPLAY_PREVIEW_MAX_HEIGHT;
+  displayPreviewCanvases.set(video, { canvas, lastDrawMs: 0 });
+  video.addEventListener('loadedmetadata', () => resizeDisplayPreviewCanvas(video, canvas));
+  return canvas;
+}
+
+function resizeDisplayPreviewCanvas(video: HTMLVideoElement, canvas: HTMLCanvasElement): void {
+  const sourceWidth = video.videoWidth || DISPLAY_PREVIEW_MAX_WIDTH;
+  const sourceHeight = video.videoHeight || DISPLAY_PREVIEW_MAX_HEIGHT;
+  const scale = Math.min(DISPLAY_PREVIEW_MAX_WIDTH / sourceWidth, DISPLAY_PREVIEW_MAX_HEIGHT / sourceHeight, 1);
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+}
+
+function drawDisplayPreviewFrame(video: HTMLVideoElement): void {
+  const preview = displayPreviewCanvases.get(video);
+  if (!preview || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return;
+  }
+  const now = performance.now();
+  if (now - preview.lastDrawMs < DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS) {
+    return;
+  }
+  preview.lastDrawMs = now;
+  if (video.videoWidth > 0 && video.videoHeight > 0 && (preview.canvas.width === DISPLAY_PREVIEW_MAX_WIDTH || preview.canvas.height === DISPLAY_PREVIEW_MAX_HEIGHT)) {
+    resizeDisplayPreviewCanvas(video, preview.canvas);
+  }
+  const context = preview.canvas.getContext('2d');
+  context?.drawImage(video, 0, 0, preview.canvas.width, preview.canvas.height);
 }
 
 function getPreviewVisualIds(layout: VisualLayoutProfile): VisualId[] {
@@ -1615,9 +1668,7 @@ function tick(): void {
       elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState));
     }
     syncTimelineScrubber(currentState);
-    syncAudioRuntimeToDirector(currentState);
     syncPreviewElements(currentState);
-    sampleMeters(currentState, document.body);
   }
   animationFrame = window.requestAnimationFrame(tick);
 }
@@ -1640,6 +1691,7 @@ function syncPreviewElements(state: DirectorState): void {
       applyVisualStyle(video, visual);
     }
     syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
+    drawDisplayPreviewFrame(video);
   }
 }
 
@@ -2071,7 +2123,7 @@ elements.displayBlackoutButton.addEventListener('click', async () => {
 });
 elements.clearSoloButton.addEventListener('click', () => {
   soloOutputIds.clear();
-  setSoloOutputIds(soloOutputIds);
+  void window.xtream.audioRuntime.setSoloOutputIds([]);
   if (currentState) {
     renderState(currentState);
   }
@@ -2097,43 +2149,9 @@ void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);
 
 animationFrame = window.requestAnimationFrame(tick);
-driftTimer = window.setInterval(() => {
-  if (!currentState) {
-    return;
-  }
-  if (currentState.paused) {
-    return;
-  }
-  const firstSource = getFirstMeteredAudioSource();
-  if (!firstSource) {
-    return;
-  }
-  if (getMediaSyncState(firstSource.element).pendingSeekSeconds !== undefined) {
-    return;
-  }
-  const source = currentState.audioSources[firstSource.audioSourceId];
-  if (!source) {
-    return;
-  }
-  const directorSeconds = getDirectorSeconds(currentState);
-  const target = getAudioEffectiveTime(directorSeconds, source.durationSeconds, currentState.loop);
-  if (!target.audible) {
-    return;
-  }
-  void window.xtream.renderer.reportDrift({
-    kind: 'control',
-    observedSeconds: firstSource.element.currentTime,
-    directorSeconds,
-    driftSeconds: firstSource.element.currentTime - target.seconds,
-    reportedAtWallTimeMs: Date.now(),
-  });
-}, 1000);
 
 window.addEventListener('beforeunload', () => {
   if (animationFrame !== undefined) {
     window.cancelAnimationFrame(animationFrame);
-  }
-  if (driftTimer !== undefined) {
-    window.clearInterval(driftTimer);
   }
 });

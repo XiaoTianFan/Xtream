@@ -76,6 +76,14 @@ const api = {
     reportMeter: (outputId: VirtualOutputId, meterDb: number): Promise<VirtualOutputState> => ipcRenderer.invoke('output:meter', outputId, meterDb),
     remove: (outputId: VirtualOutputId): Promise<boolean> => ipcRenderer.invoke('output:remove', outputId),
   },
+  audioRuntime: {
+    setSoloOutputIds: (outputIds: VirtualOutputId[]): Promise<void> => ipcRenderer.invoke('audio:set-solo-output-ids', outputIds),
+    onSoloOutputIds: (callback: (outputIds: VirtualOutputId[]) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, outputIds: VirtualOutputId[]) => callback(outputIds);
+      ipcRenderer.on('audio:solo-output-ids', listener);
+      return () => ipcRenderer.removeListener('audio:solo-output-ids', listener);
+    },
+  },
   show: {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),

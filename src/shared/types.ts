@@ -381,6 +381,7 @@ export type IpcChannels = {
   'output:create': () => VirtualOutputState;
   'output:update': (outputId: VirtualOutputId, update: VirtualOutputUpdate) => VirtualOutputState;
   'output:meter': (outputId: VirtualOutputId, meterDb: number) => VirtualOutputState;
+  'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;

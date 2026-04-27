@@ -320,8 +320,8 @@ driftTimer = window.setInterval(() => {
       ? videos.reduce((max, video) => {
           const visualId = video.dataset.visualId;
           const state = currentState!;
-          const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
-          const targetSeconds = getMediaEffectiveTime(directorSeconds, visualDuration, state.loop);
+          const visual = visualId ? state.visuals[visualId] : undefined;
+          const targetSeconds = getMediaEffectiveTime(directorSeconds * (visual?.playbackRate ?? 1), visual?.durationSeconds, state.loop);
           const drift = video.currentTime - targetSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)
