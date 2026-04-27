@@ -476,12 +476,27 @@ export async function playOutputTestTone(output: VirtualOutputState): Promise<vo
 }
 
 /**
+ * Visual position u along the -60…0 dB graticule: 0 = top (0 dB), 1 = bottom (floor), linear dB.
+ * Matches {@link meterLevelPercent} in the non-saturation range (fill from bottom = 1 - u in relative terms).
+ */
+export function meterDbToVisualU(db: number): number {
+  const d = Math.max(METER_DISPLAY_FLOOR_DB, Math.min(METER_DISPLAY_CEIL_DB, db));
+  return (METER_DISPLAY_CEIL_DB - d) / METER_SPAN_DB;
+}
+
+/**
+ * Inverse of {@link meterDbToVisualU} on the graticule span; u clamped to [0, 1].
+ */
+export function meterVisualUToDb(u: number): number {
+  const t = Math.min(1, Math.max(0, u));
+  return METER_DISPLAY_CEIL_DB - t * METER_SPAN_DB;
+}
+
+/**
  * dB of each tick on the -60…0 dB graticule: `0` at the top, `-60` at the bottom, linear dB.
  */
 export function meterScaleLabelTopPercent(db: number): string {
-  const d = Math.max(METER_DISPLAY_FLOOR_DB, Math.min(METER_DISPLAY_CEIL_DB, db));
-  const fromTop = ((METER_DISPLAY_CEIL_DB - d) / METER_SPAN_DB) * 100;
-  return `${fromTop}%`;
+  return `${meterDbToVisualU(db) * 100}%`;
 }
 
 /** Same mapping as {@link meterLevelPercent}, for square mini-meters. */

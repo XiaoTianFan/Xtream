@@ -29,6 +29,8 @@
   --on-surface: #e4e2e2;
   --accent-teal: #5c9ead;
   --accent-ochre: #c29958;
+  /* Between nominal green and hot ochre on the -60…0 dB output meter */
+  --meter-zone-approaching: #bdae3a;
   --status-critical: #b34d4d;
   --border-subtle: #454b4e;
   --outline-variant: #43474a;
@@ -910,7 +912,7 @@ input[type="range"].mini-slider:disabled {
   color: #697579;
   font-size: 0.5rem;
   line-height: 1;
-  text-align: left;
+  text-align: right;
 }
 
 /* Longest tick text; establishes column width (abs children do not) */
@@ -930,13 +932,13 @@ input[type="range"].mini-slider:disabled {
 
 .output-meter-scale-tick {
   position: absolute;
-  left: 0;
-  right: auto;
+  right: 0;
+  left: auto;
   box-sizing: border-box;
   max-width: 100%;
-  padding-right: 0.06rem;
+  padding-right: 0.02rem; /* sit close to the VU column */
   white-space: nowrap;
-  text-align: left;
+  text-align: right;
   text-overflow: clip;
   transform: translateY(-50%);
   pointer-events: none;
@@ -983,6 +985,10 @@ input[type="range"].mini-slider:disabled {
   background: #36d05f;
 }
 
+.output-meter-segments span[data-active="true"][data-zone="approaching"] {
+  background: var(--meter-zone-approaching);
+}
+
 .output-meter-segments span[data-active="true"][data-zone="hot"] {
   background: var(--accent-ochre);
 }
@@ -1013,15 +1019,15 @@ input[type="range"].mini-slider:disabled {
 }
 
 .audio-fader {
-  --fader-label-inset: 0.5rem;
+  --fader-label-inset: 0.62rem;
   position: relative;
   display: grid;
   align-self: stretch;
   place-items: center;
-  /* Border box: ~1.65rem drag column + inline-end inset for “0” label vs rail */
+  /* Border box: drag column + inline-end graticule for dB labels */
   box-sizing: border-box;
-  width: 2.15rem;
-  min-width: 2.15rem;
+  width: 2.27rem;
+  min-width: 2.27rem;
   padding-inline-end: var(--fader-label-inset);
   flex: 0 0 auto;
   height: 100%;
@@ -1061,27 +1067,47 @@ input[type="range"].mini-slider:disabled {
   pointer-events: none;
 }
 
-.audio-fader-zero {
+.audio-fader-scale {
   position: absolute;
-  right: 0.06rem;
-  top: var(--fader-zero-top, 16.7%);
-  padding-left: 0.14rem; /* air between rail and label */
-  color: var(--accent-ochre);
-  font-family: var(--font-data);
-  font-size: 0.5rem;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--fader-label-inset);
+  min-width: 0;
   pointer-events: none;
+  color: #697579;
+  font-size: 0.5rem;
+  line-height: 1;
+  text-align: left;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-fader-scale-tick {
+  position: absolute;
+  right: 0;
+  left: 0;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  padding-left: 0.05rem; /* space between rail and first digit */
 }
 
 input[type="range"].mini-slider.audio-fader-input {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
   z-index: 2;
+  width: calc(100% - var(--fader-label-inset));
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
   appearance: none;
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
   opacity: 0;
   cursor: ns-resize;
 }

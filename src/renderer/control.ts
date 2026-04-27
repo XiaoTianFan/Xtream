@@ -22,7 +22,6 @@ import type {
 } from '../shared/types';
 import {
   meterLevelPercent,
-  meterScaleLabelTopPercent,
   METER_DISPLAY_CEIL_DB,
   METER_DISPLAY_FLOOR_DB,
   OUTPUT_BUS_DELAY_MAX_MS,
@@ -31,7 +30,6 @@ import {
 } from './control/audioRuntime';
 import {
   busDbToFaderSliderValue,
-  busDbToNorm,
   faderMaxSteps,
   faderSliderMax,
   faderSliderMin,
@@ -39,6 +37,12 @@ import {
   faderZeroSliderValue,
   quantizeBusFaderDb,
 } from './control/busFaderLaw';
+import {
+  labelCountFromHeight,
+  observeElementHeight,
+  renderAudioFaderGraticule,
+  renderOutputMeterGraticule,
+} from './control/graticuleLayout';
 import {
   assertElement,
   createButton,
@@ -708,22 +712,6 @@ function createOutputMeter(output: VirtualOutputState, state = currentState): HT
 
   const scale = document.createElement('div');
   scale.className = 'output-meter-scale';
-  const meterScaleMarks: { db: number; text: string }[] = [
-    { db: 0, text: '0' },
-    { db: -6, text: '-6' },
-    { db: -12, text: '-12' },
-    { db: -24, text: '-24' },
-    { db: -36, text: '-36' },
-    { db: -60, text: '-60' },
-  ];
-  for (const mark of meterScaleMarks) {
-    const tick = document.createElement('span');
-    tick.className = 'output-meter-scale-tick';
-    tick.textContent = mark.text;
-    tick.style.top = meterScaleLabelTopPercent(mark.db);
-    scale.append(tick);
-  }
-
   const lanes = document.createElement('div');
   lanes.className = 'output-meter-lanes';
   const laneStates = getOutputMeterLanes(output, state);
@@ -739,6 +727,9 @@ function createOutputMeter(output: VirtualOutputState, state = currentState): HT
   registerMeterPeakElement(output.id, peak);
 
   meter.append(scale, lanes, peak);
+  observeElementHeight(lanes, (h) => {
+    renderOutputMeterGraticule(scale, labelCountFromHeight(h));
+  });
   return meter;
 }
 
@@ -776,12 +767,21 @@ function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void 
   const activeCount = Math.round((segments.length * percent) / 100);
   const isClipped = laneElement.dataset.state === 'clip';
   const spanDb = METER_DISPLAY_CEIL_DB - METER_DISPLAY_FLOOR_DB;
+  /* Row dB is linear; if the meter’s level curve becomes nonlinear, derive row boundaries
+   * from the same dB↔visual law as the graticule (`meterLevelPercent` / `meterVisualUToDb`). */
   segments.forEach((segment, index) => {
     const segmentDb =
       METER_DISPLAY_CEIL_DB - (index / Math.max(1, segments.length - 1)) * spanDb;
     /* Row 0 = top = 0 dB; last row = bottom = floor. Light from the bottom up (std. VU). */
     segment.dataset.active = String(index >= segments.length - activeCount);
-    segment.dataset.zone = isClipped || segmentDb >= -3 ? 'danger' : segmentDb >= -12 ? 'hot' : 'nominal';
+    segment.dataset.zone = isClipped
+      || segmentDb >= -3
+      ? 'danger'
+      : segmentDb >= -12
+        ? 'hot'
+        : segmentDb >= -24
+          ? 'approaching'
+          : 'nominal';
   });
 }
 
@@ -831,9 +831,9 @@ function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: num
   rail.className = 'audio-fader-rail';
   const cap = document.createElement('div');
   cap.className = 'audio-fader-cap';
-  const zero = document.createElement('span');
-  zero.className = 'audio-fader-zero';
-  zero.textContent = '0';
+  const faderScale = document.createElement('div');
+  faderScale.className = 'audio-fader-scale';
+  faderScale.setAttribute('aria-hidden', 'true');
   const input = createSlider({
     min: faderSliderMin(),
     max: faderSliderMax(),
@@ -843,10 +843,6 @@ function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: num
     className: 'audio-fader-input vertical-slider',
   });
   input.setAttribute('orient', 'vertical');
-  {
-    const t0 = busDbToNorm(0);
-    wrapper.style.setProperty('--fader-zero-top', `${(1 - t0) * 100}%`);
-  }
   syncAudioFaderPosition(wrapper, input);
   input.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -863,7 +859,10 @@ function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: num
     syncAudioFaderPosition(wrapper, input);
     onChange(quantizeBusFaderDb(faderSliderValueToBusDb(Number(input.value))));
   });
-  wrapper.append(rail, cap, zero, input);
+  wrapper.append(rail, cap, faderScale, input);
+  observeElementHeight(wrapper, (h) => {
+    renderAudioFaderGraticule(faderScale, labelCountFromHeight(h));
+  });
   return wrapper;
 }
 

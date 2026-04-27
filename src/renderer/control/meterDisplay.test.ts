@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   METER_DISPLAY_CEIL_DB,
   METER_DISPLAY_FLOOR_DB,
+  meterDbToVisualU,
   meterLevelPercent,
   meterScaleLabelTopPercent,
+  meterVisualUToDb,
   meterWidth,
 } from './audioRuntime';
 
@@ -34,6 +36,14 @@ describe('meter -60 dB to 0 dB display (option A)', () => {
     expect(meterScaleLabelTopPercent(-24)).toBe('40%');
     expect(meterScaleLabelTopPercent(-36)).toBe('60%');
     expect(meterScaleLabelTopPercent(-60)).toBe('100%');
+  });
+
+  it('meterDbToVisualU and meterVisualUToDb are inverse on the span', () => {
+    expect(meterDbToVisualU(0)).toBe(0);
+    expect(meterDbToVisualU(-60)).toBe(1);
+    expect(meterVisualUToDb(0)).toBe(0);
+    expect(meterVisualUToDb(1)).toBe(-60);
+    expect(meterVisualUToDb(meterDbToVisualU(-18))).toBeCloseTo(-18, 6);
   });
 });
 
