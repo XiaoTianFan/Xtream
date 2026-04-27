@@ -5,10 +5,12 @@ import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWi
 type RegistryEntry = {
   window: BrowserWindow;
   state: DisplayWindowState;
+  isClosing: boolean;
 };
 
 const DEFAULT_LAYOUT = { type: 'single' } as const;
 const USE_SIMPLE_FULLSCREEN = process.platform === 'darwin';
+type DisplayBounds = NonNullable<DisplayWindowState['bounds']>;
 
 export class DisplayRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -75,13 +77,15 @@ export class DisplayRegistry {
       : undefined;
 
     const bounds = options.bounds ?? targetDisplay?.bounds;
+    const shouldFullscreen = options.fullscreen === true;
     const window = new BrowserWindow({
       x: bounds?.x,
       y: bounds?.y,
       width: bounds?.width ?? 960,
       height: bounds?.height ?? 540,
+      useContentSize: false,
       fullscreenable: true,
-      ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: options.fullscreen === true } : { fullscreen: options.fullscreen === true }),
+      ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: false } : { fullscreen: false }),
       autoHideMenuBar: true,
       title: `Xtream ${id}`,
       webPreferences: {
@@ -90,20 +94,33 @@ export class DisplayRegistry {
         nodeIntegration: false,
       },
     });
+    if (bounds) {
+      window.setBounds(bounds);
+    }
+    if (shouldFullscreen) {
+      this.setDisplayFullscreen(window, true);
+    }
 
     const state: DisplayWindowState = {
       id,
       label: options.label,
-      bounds: window.getBounds(),
+      bounds: bounds ? this.cloneBounds(bounds) : this.getWindowedBounds(window),
       displayId: options.displayId,
-      fullscreen: this.isDisplayFullscreen(window),
+      fullscreen: shouldFullscreen || this.isDisplayFullscreen(window),
       layout: options.layout ?? DEFAULT_LAYOUT,
       health: 'starting',
     };
 
-    this.entries.set(id, { window, state });
+    this.entries.set(id, { window, state, isClosing: false });
     this.loadDisplay(window, id);
 
+    window.on('close', () => {
+      this.refreshWindowState(id);
+      const entry = this.entries.get(id);
+      if (entry) {
+        entry.isClosing = true;
+      }
+    });
     window.on('closed', () => {
       this.entries.delete(id);
       this.onClosed(id);
@@ -167,12 +184,16 @@ export class DisplayRegistry {
       return false;
     }
 
+    this.refreshWindowState(id);
+    entry.isClosing = true;
     entry.window.close();
     return true;
   }
 
   closeAll(): void {
     for (const entry of this.entries.values()) {
+      this.refreshWindowState(entry.state.id);
+      entry.isClosing = true;
       entry.window.close();
     }
     this.entries.clear();
@@ -212,10 +233,13 @@ export class DisplayRegistry {
     if (!entry) {
       return;
     }
+    if (entry.isClosing || entry.window.isDestroyed()) {
+      return;
+    }
 
     entry.state = {
       ...entry.state,
-      bounds: entry.window.getBounds(),
+      bounds: this.isDisplayFullscreen(entry.window) ? entry.state.bounds : this.getWindowedBounds(entry.window),
       fullscreen: this.isDisplayFullscreen(entry.window),
     };
     this.onStateChanged({ ...entry.state });
@@ -257,6 +281,19 @@ export class DisplayRegistry {
 
   private isDisplayFullscreen(window: BrowserWindow): boolean {
     return USE_SIMPLE_FULLSCREEN ? window.isSimpleFullScreen() : window.isFullScreen();
+  }
+
+  private getWindowedBounds(window: BrowserWindow): DisplayBounds {
+    return this.cloneBounds(this.isDisplayFullscreen(window) ? window.getNormalBounds() : window.getBounds());
+  }
+
+  private cloneBounds(bounds: DisplayBounds): DisplayBounds {
+    return {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    };
   }
 
   private setDisplayFullscreen(window: BrowserWindow, fullscreen: boolean): void {

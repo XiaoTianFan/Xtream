@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./scrollbar.css";
 
 @theme {
   --color-bg-base: #2a2e30;
@@ -41,6 +42,10 @@
   --media-pool-width: 30vw;
   --mixer-width: 42vw;
   --asset-preview-height: 9rem;
+  --scrollbar-size: 6px;
+  --scrollbar-track: var(--surface-low);
+  --scrollbar-thumb: color-mix(in srgb, var(--accent-teal) 42%, var(--surface-low));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent-teal) 62%, var(--surface-low));
   color: var(--text-primary);
   background: var(--bg-base);
   color-scheme: dark;
