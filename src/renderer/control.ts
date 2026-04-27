@@ -145,6 +145,7 @@ const transportDraftElements = new Set<HTMLInputElement>([elements.loopStartInpu
 
 function renderState(state: DirectorState): void {
   currentState = state;
+  pruneMixerSoloOutputIds(state);
   syncTransportInputs(state);
   const nextAudioRenderSignature = createAudioRenderSignature(state);
   const nextVisualRenderSignature = `${createVisualRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
@@ -213,7 +214,43 @@ function createAudioRenderSignature(state: DirectorState): string {
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((output) => ({ ...output, meterDb: undefined, meterLanes: undefined })),
     devices: audioDevices.map((device) => `${device.deviceId}:${device.label}`).join('|'),
+    solo: createSoloOutputSignature(state),
   });
+}
+
+function createSoloOutputSignature(state = currentState): string {
+  return [...soloOutputIds]
+    .filter((outputId) => state?.outputs[outputId])
+    .sort((left, right) => left.localeCompare(right))
+    .join('|');
+}
+
+function pruneMixerSoloOutputIds(state: DirectorState): void {
+  const pruned = [...soloOutputIds].filter((outputId) => state.outputs[outputId]);
+  if (pruned.length === soloOutputIds.size) {
+    return;
+  }
+  soloOutputIds = new Set(pruned);
+  audioRenderSignature = '';
+  void window.xtream.audioRuntime.setSoloOutputIds(pruned);
+}
+
+function setMixerSoloOutputIds(outputIds: Iterable<VirtualOutputId>): void {
+  const previousSignature = createSoloOutputSignature();
+  const nextIds = [...new Set(outputIds)].filter((outputId) => currentState?.outputs[outputId]);
+  soloOutputIds = new Set(nextIds);
+  const nextSignature = createSoloOutputSignature();
+  if (previousSignature !== nextSignature) {
+    void window.xtream.audioRuntime.setSoloOutputIds(nextIds);
+  }
+  if (!currentState) {
+    audioRenderSignature = '';
+    return;
+  }
+  audioRenderSignature = createAudioRenderSignature(currentState);
+  syncTransportInputs(currentState);
+  renderOutputs(currentState);
+  syncOutputMeters(currentState);
 }
 
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
@@ -246,6 +283,10 @@ function syncTransportInputs(state: DirectorState): void {
   elements.globalAudioMuteButton.classList.toggle('active', state.globalAudioMuted);
   elements.globalAudioMuteButton.textContent = state.globalAudioMuted ? 'Audio Muted' : 'Audio Mute';
   elements.globalAudioMuteButton.setAttribute('aria-pressed', String(state.globalAudioMuted));
+  elements.clearSoloButton.disabled = soloOutputIds.size === 0;
+  elements.clearSoloButton.classList.toggle('active', soloOutputIds.size > 0);
+  elements.clearSoloButton.setAttribute('aria-pressed', String(soloOutputIds.size > 0));
+  elements.clearSoloButton.title = soloOutputIds.size > 0 ? 'Clear all soloed outputs' : 'No soloed outputs';
   elements.displayBlackoutButton.classList.toggle('active', state.globalDisplayBlackout);
   elements.displayBlackoutButton.textContent = state.globalDisplayBlackout ? 'Display Blackout On' : 'Display Blackout';
   elements.displayBlackoutButton.setAttribute('aria-pressed', String(state.globalDisplayBlackout));
@@ -504,21 +545,26 @@ function createMixerStrip(output: VirtualOutputState, state = currentState): HTM
   body.append(meter, fader);
   const toggles = document.createElement('div');
   toggles.className = 'mixer-toggles';
-  const solo = createButton('S', soloOutputIds.has(output.id) ? 'secondary active' : 'secondary', () => {
-    if (soloOutputIds.has(output.id)) {
-      soloOutputIds.delete(output.id);
+  const isSoloed = soloOutputIds.has(output.id);
+  const solo = createButton('S', isSoloed ? 'secondary active' : 'secondary', () => {
+    const nextSoloOutputIds = new Set(soloOutputIds);
+    if (nextSoloOutputIds.has(output.id)) {
+      nextSoloOutputIds.delete(output.id);
     } else {
-      soloOutputIds.add(output.id);
+      nextSoloOutputIds.add(output.id);
     }
-    void window.xtream.audioRuntime.setSoloOutputIds([...soloOutputIds]);
-    renderState(currentState!);
+    setMixerSoloOutputIds(nextSoloOutputIds);
   });
-  solo.title = `Solo ${output.label}`;
+  solo.title = `${isSoloed ? 'Unsolo' : 'Solo'} ${output.label}`;
+  solo.setAttribute('aria-label', solo.title);
+  solo.setAttribute('aria-pressed', String(isSoloed));
   const mute = createButton('M', output.muted ? 'secondary active' : 'secondary', async () => {
     await window.xtream.outputs.update(output.id, { muted: !output.muted });
     renderState(await window.xtream.director.getState());
   });
   mute.title = `${output.muted ? 'Unmute' : 'Mute'} ${output.label}`;
+  mute.setAttribute('aria-label', mute.title);
+  mute.setAttribute('aria-pressed', String(Boolean(output.muted)));
   toggles.append(solo, mute);
   toggles.addEventListener('click', (event) => event.stopPropagation());
   const label = document.createElement('span');
@@ -2381,11 +2427,7 @@ elements.displayBlackoutButton.addEventListener('click', async () => {
   renderState(await window.xtream.director.updateGlobalState({ globalDisplayBlackout: !currentState?.globalDisplayBlackout }));
 });
 elements.clearSoloButton.addEventListener('click', () => {
-  soloOutputIds.clear();
-  void window.xtream.audioRuntime.setSoloOutputIds([]);
-  if (currentState) {
-    renderState(currentState);
-  }
+  setMixerSoloOutputIds([]);
 });
 elements.resetMetersButton.addEventListener('click', () => {
   for (const output of Object.values(currentState?.outputs ?? {})) {

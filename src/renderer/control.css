@@ -765,8 +765,7 @@ input[type="range"].mini-slider:disabled {
   border-color: var(--accent-teal);
 }
 
-.mixer-strip,
-.mixer-add-strip {
+.mixer-strip {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   justify-items: center;
@@ -990,11 +989,6 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .mixer-toggles button.active {
   border-color: var(--accent-ochre);
   color: var(--accent-ochre);
-}
-
-.mixer-add-strip {
-  place-items: center;
-  color: var(--text-secondary);
 }
 
 .asset-meta {

@@ -159,14 +159,13 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
 export function syncAudioRuntimeToDirector(state: DirectorState): void {
   const directorSeconds = getDirectorSeconds(state);
   const syncKey = createPlaybackSyncKey(state);
-  const hasSolo = soloOutputIds.size > 0;
   for (const output of Object.values(state.outputs)) {
     const runtime = outputRuntimes.get(output.id);
     if (!runtime) {
       continue;
     }
     const transportMode = syncTransportEnvelope(runtime, state);
-    runtime.busGain.gain.value = state.globalAudioMuted || output.muted || (hasSolo && !soloOutputIds.has(output.id)) ? 0 : dbToGain(output.busLevelDb);
+    runtime.busGain.gain.value = getEffectiveOutputGain(state.globalAudioMuted, output, soloOutputIds);
     for (const sourceRuntime of runtime.sources) {
       const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
       const source = state.audioSources[sourceRuntime.audioSourceId];
@@ -191,6 +190,18 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       requestMediaPlay(runtime.sinkElement);
     }
   }
+}
+
+export function getEffectiveOutputGain(
+  globalAudioMuted: boolean,
+  output: Pick<VirtualOutputState, 'id' | 'muted' | 'busLevelDb'>,
+  soloIds: ReadonlySet<string>,
+): number {
+  const hasSolo = soloIds.size > 0;
+  if (globalAudioMuted || output.muted || (hasSolo && !soloIds.has(output.id))) {
+    return 0;
+  }
+  return dbToGain(output.busLevelDb);
 }
 
 function syncTransportEnvelope(runtime: OutputRuntime, state: DirectorState): TransportEnvelopeMode {

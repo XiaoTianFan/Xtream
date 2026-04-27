@@ -287,7 +287,7 @@ export type DiagnosticsReport = {
   readiness: ShowReadinessState;
 };
 
-export type RendererKind = 'control' | 'display';
+export type RendererKind = 'control' | 'display' | 'audio';
 
 export type RendererReadyReport = {
   kind: RendererKind;

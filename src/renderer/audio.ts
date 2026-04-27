@@ -36,6 +36,7 @@ function tick(): void {
 
 window.xtream.director.onState(handleState);
 window.xtream.audioRuntime.onSoloOutputIds(handleSoloOutputIds);
+void window.xtream.renderer.ready({ kind: 'audio' });
 void window.xtream.director.getState().then(handleState);
 
 animationFrame = window.requestAnimationFrame(tick);

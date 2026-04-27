@@ -33,6 +33,7 @@ import type {
   VisualMediaType,
   VisualMetadataReport,
   VisualUpdate,
+  VirtualOutputId,
   VirtualOutputUpdate,
 } from '../shared/types';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
@@ -45,6 +46,7 @@ let displayRegistry: DisplayRegistry | undefined;
 let currentShowConfigPath: string | undefined;
 let autoSaveTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
+let soloOutputIds: VirtualOutputId[] = [];
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
@@ -102,6 +104,9 @@ function createAudioWindow(): BrowserWindow {
   window.on('closed', () => {
     audioWindow = undefined;
   });
+  window.webContents.on('did-finish-load', () => {
+    sendSoloOutputIds(window);
+  });
   return window;
 }
 
@@ -118,6 +123,19 @@ function sendDirectorState(window: BrowserWindow | undefined, state: DirectorSta
     return;
   }
   window.webContents.send('director:state', state);
+}
+
+function sendSoloOutputIds(window: BrowserWindow | undefined): void {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+  window.webContents.send('audio:solo-output-ids', soloOutputIds);
+}
+
+function setSoloOutputIds(outputIds: VirtualOutputId[]): void {
+  const outputs = director.getState().outputs;
+  soloOutputIds = [...new Set(outputIds)].filter((outputId) => outputs[outputId]);
+  sendSoloOutputIds(audioWindow);
 }
 
 function beginAppShutdown(): void {
@@ -408,14 +426,13 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('audio:set-solo-output-ids', (_event, outputIds: string[]) => {
-    if (audioWindow && !audioWindow.isDestroyed() && !audioWindow.webContents.isDestroyed()) {
-      audioWindow.webContents.send('audio:solo-output-ids', outputIds);
-    }
+  ipcMain.handle('audio:set-solo-output-ids', (_event, outputIds: VirtualOutputId[]) => {
+    setSoloOutputIds(outputIds);
   });
 
   ipcMain.handle('output:remove', (_event, outputId: string) => {
     director.removeVirtualOutput(outputId);
+    setSoloOutputIds(soloOutputIds);
     scheduleShowConfigAutoSave();
     return true;
   });
@@ -524,6 +541,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('renderer:ready', (_event, report: RendererReadyReport) => {
     if (isShuttingDown) {
+      return;
+    }
+    if (report.kind === 'audio') {
+      sendSoloOutputIds(audioWindow);
       return;
     }
     if (report.kind === 'display' && report.displayId) {
