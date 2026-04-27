@@ -273,7 +273,7 @@ Then complete the manual test matrix above on the actual target hardware, especi
 
 ## Phase 8/9 Operator Console Validation
 
-Complete this pass after `npm run build` and before moving beyond the `v0.0.4` runtime line:
+Complete this pass after `npm run build` and before moving beyond the `v0.0.5` runtime line:
 
 1. Launch with `npm start` and confirm the Patch rail is active by default with Media Pool, Display Windows, Audio Mixer, Details, and Status Footer visible.
 2. Import a video with an embedded audio track and confirm a linked embedded audio source appears in the Audio tab after metadata loads.
