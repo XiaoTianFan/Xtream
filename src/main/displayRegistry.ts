@@ -45,6 +45,7 @@ export class DisplayRegistry {
       label: state.label,
       layout: state.layout,
       fullscreen: state.fullscreen,
+      alwaysOnTop: state.alwaysOnTop ?? false,
       displayId: state.displayId,
       bounds: state.bounds,
     });
@@ -79,6 +80,7 @@ export class DisplayRegistry {
 
     const bounds = options.bounds ?? targetDisplay?.bounds;
     const shouldFullscreen = options.fullscreen === true;
+    const alwaysOnTop = options.alwaysOnTop ?? false;
     const iconPath = getAppIconPath();
     const window = new BrowserWindow({
       x: bounds?.x,
@@ -87,6 +89,7 @@ export class DisplayRegistry {
       height: bounds?.height ?? 540,
       useContentSize: false,
       fullscreenable: true,
+      alwaysOnTop,
       ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: false } : { fullscreen: false }),
       autoHideMenuBar: true,
       title: `Xtream ${id}`,
@@ -111,6 +114,7 @@ export class DisplayRegistry {
       bounds: bounds ? this.cloneBounds(bounds) : this.getWindowedBounds(window),
       displayId: options.displayId,
       fullscreen: shouldFullscreen || this.isDisplayFullscreen(window),
+      alwaysOnTop,
       layout: options.layout ?? DEFAULT_LAYOUT,
       health: 'starting',
     };
@@ -175,6 +179,11 @@ export class DisplayRegistry {
 
     if (update.label !== undefined) {
       entry.window.setTitle(`Xtream ${update.label}`);
+    }
+
+    if (update.alwaysOnTop !== undefined) {
+      entry.window.setAlwaysOnTop(update.alwaysOnTop);
+      nextState.alwaysOnTop = update.alwaysOnTop;
     }
 
     entry.state = nextState;

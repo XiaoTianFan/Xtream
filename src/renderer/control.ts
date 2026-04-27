@@ -1559,6 +1559,7 @@ function stableDisplayForDetailsSignature(display: DisplayWindowState): Record<s
     bounds: display.bounds,
     displayId: display.displayId,
     fullscreen: display.fullscreen,
+    alwaysOnTop: display.alwaysOnTop,
     layout: display.layout,
     health: display.health,
     degradationReason: display.degradationReason,
@@ -1909,19 +1910,34 @@ function renderDisplayDetails(display: DisplayWindowState, state: DirectorState)
   toolbarStart.append(createDetailField('Label', labelInput));
   const toolbarActions = document.createElement('div');
   toolbarActions.className = 'detail-toolbar-actions button-row';
+  const pinOnTop = createButton(display.alwaysOnTop ? 'Normal layer' : 'Always on top', 'secondary', async () => {
+    await window.xtream.displays.update(display.id, { alwaysOnTop: !display.alwaysOnTop });
+    renderState(await window.xtream.director.getState());
+  });
+  pinOnTop.title = 'Keep this display window above other application windows';
   toolbarActions.append(
+    pinOnTop,
     createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', async () => {
       await window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
       renderState(await window.xtream.director.getState());
     }),
-    createButton('Close', 'secondary', async () => {
-      await window.xtream.displays.close(display.id);
-      renderState(await window.xtream.director.getState());
-    }),
-    createButton('Reopen', 'secondary', async () => {
-      await window.xtream.displays.reopen(display.id);
-      renderState(await window.xtream.director.getState());
-    }),
+  );
+  if (display.health === 'closed') {
+    toolbarActions.append(
+      createButton('Reopen', 'secondary', async () => {
+        await window.xtream.displays.reopen(display.id);
+        renderState(await window.xtream.director.getState());
+      }),
+    );
+  } else {
+    toolbarActions.append(
+      createButton('Close', 'secondary', async () => {
+        await window.xtream.displays.close(display.id);
+        renderState(await window.xtream.director.getState());
+      }),
+    );
+  }
+  toolbarActions.append(
     createButton('Remove', 'secondary', async () => {
       if (confirm(`Remove ${display.id}?`)) {
         await window.xtream.displays.remove(display.id);

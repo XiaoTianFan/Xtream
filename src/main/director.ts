@@ -665,6 +665,7 @@ export class Director extends EventEmitter {
         label: display.label,
         layout: structuredClone(display.layout),
         fullscreen: display.fullscreen,
+        alwaysOnTop: display.alwaysOnTop,
         displayId: display.displayId,
         bounds: display.bounds,
       })),

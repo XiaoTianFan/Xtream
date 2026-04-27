@@ -32,6 +32,7 @@ export type DisplayWindowState = {
   };
   displayId?: string;
   fullscreen: boolean;
+  alwaysOnTop?: boolean;
   layout: VisualLayoutProfile;
   health: DisplayHealth;
   lastDriftSeconds?: number;
@@ -269,6 +270,7 @@ export type PersistedDisplayConfig = {
   label?: string;
   layout: VisualLayoutProfile;
   fullscreen: boolean;
+  alwaysOnTop?: boolean;
   displayId?: string;
   bounds?: DisplayWindowState['bounds'];
 };
@@ -347,11 +349,12 @@ export type DisplayCreateOptions = {
   label?: string;
   layout?: VisualLayoutProfile;
   fullscreen?: boolean;
+  alwaysOnTop?: boolean;
   displayId?: string;
   bounds?: DisplayWindowState['bounds'];
 };
 
-export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'label' | 'layout' | 'fullscreen' | 'displayId'>>;
+export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'label' | 'layout' | 'fullscreen' | 'alwaysOnTop' | 'displayId'>>;
 
 export type DisplayMonitorInfo = {
   id: string;

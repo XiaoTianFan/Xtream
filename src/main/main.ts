@@ -267,6 +267,7 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
       label: display.label,
       layout: display.layout,
       fullscreen: display.fullscreen,
+      alwaysOnTop: display.alwaysOnTop,
       displayId: display.displayId,
       bounds: display.bounds,
     });
