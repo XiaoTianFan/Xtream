@@ -133,11 +133,12 @@ The application is structured as a single-page Electron interface with a persist
 
 ### A. Global Shell (Persistent)
 *   **Top Transport Bar:**
-    *   Large Monospace Timecode display.
+    *   Large Monospace Timecode display. The precise seek feature should be refactored to here. The large timecode display should allow doubleclick to edit/input a timecode to manually seek/jump to.
     *   Icon-based Transport Controls: Play, Pause, Stop, Seek (Back and Forth), Loop (Not in the HiFi image but need to be present, transformed from the current loop feature. It should be an icon button while clicked to expand into a tooltip config for loop parameters currently available in the project), Rate (See below).
     *   Global Playback Rate control (e.g., "Rate: 1.0x" Allow drag on number to tweak or double click to precisely input; applies on global level, on top of particular media rate setting).
     *   Utility Actions: Save, Open, Diagnostics (Icon-based).
     *   State Display: Live or Not (Dimmed then)
+    *   Minimalist playback progress bar, effective refactor the current progress slider feature for drag-based manual seek.
 *   **Left Navigation Rail:**
     *   **Patch:** Media asset management and preview. (All current features)
     *   **Cue:** Sequential show control and triggering (QLab-like, Planned for future).
@@ -148,16 +149,24 @@ The application is structured as a single-page Electron interface with a persist
 ### B. Patch View Layout (Transform Current MVP)
 *   **Media Pool (Left Pane):**
     *   Tabbed view for **Visuals** and **Audio** assets, transformed from current separate video and audio pool UI.
-    *   **Asset List:** Compact list of imported media with status indicators.
+    *   **Asset List:** Compact list of imported media with status indicators. Hover to show remove button icon.
+        *   Allow drag media into the pane to add them as well as click add media persistent button.
+        *   For video embedded audio import, whenever a video media is imported, automatically extract its audio track and make available an item in the audio pool.
     *   **Integrated Preview:** Bottom half of the panel features an isolated, minimalist playback area (with minimal controls - play/pause/drag timeline) for the selected asset.
 *   **Display Windows (Right Pane):**
     *   Management and preview of virtual display windows outputs (e.g., Display-0, Display-1).
     *   Status monitoring at the top right corner of each display (Ready, Standby, No Signal).
-    *   Remove display feature at the bottom right corner of each display (Close Icon button)
+    *   Eender the current drift and frame rate of that display window, bottom left corner.
+    *   Remove display at the bottom right corner of each display (Close Icon button)
 *   **Control & Monitoring (Bottom Section):**
-    *   **Audio Mixer:** Persistent vertical faders and meters for virtual outputs. Allow user to add virtual outputs here with a phantom button next to the last virtual outputs now. 
+    *   **Audio Mixer:** Persistent vertical faders and meters for virtual outputs. Allow user to add virtual outputs here with a phantom button next to the last virtual outputs now. Each virtual output should has its digital meter and a fader for level adjustment. Meter should be a digital VU. Below the meter and fader should have S/M toggles for Solo and Mute control of that virtual output.
     *   **Details Config:** Dynamic, contextual configuration panel based on the current selection in Media Pool, Display Windows, or Virtual Audio Outputs. 
-    *   The dynamic details section width should be expanded whenever a new item is selected to take up ~70vw.
+        *   Effectively, this is where the different kinds of config spread out in the current lame UI gets unified:
+            * For visual medias: Display its file name, path, dimension size, file size, duration (for videos). Allow adjust text label, opacity, brightness, contrast, and individual playback rate (for videos)
+            * For audio medias: Display its file name, path, file size, duration. Allow adjust text label, individual playback rate, and individual level (with similar fader as in audio mixer)
+            * For display windows: Allow adjust text label, layout (single visual or split), visual (single select from visual pool when in single visual layout, multi select when in split layout. Should click to open a custom dropdown containing all curent visual pool media with a search box to quickly search), Monitor (refactor current MVP behavior). And attch the current controls buttons—fullscreen, reopen, close window, and remove display.
+            * For virtual audio output: Allow adjust text label, level with fader (linked with the corresponding fader in audio mixer) (display the digital meter next to it too here), and physical output (refactor current MVP). Most significantly, allow multi select audio sources from audio pool to play in this virtual output, each selected audio has its level fader. So that there are 3 levels of audio level control: File/audio source level in the pool, selected audio fader in the virtual output detail, and the main virtual output bus fader. And attch the controls buttons—Solo and Mute toggles, Test Tone play through the selected physical output, and remove.
+        *   The dynamic Details Config section width should be expanded whenever a new item is selected to take up ~70vw.
 *   **Layout Resizability:** Allow the panes widths and heights drag to resize (except for the header). The height of the middle row and the bottom section should be resizable. And within the middle row and bottom section, the proportion of Media Pool-Display windows and Audio Mixer-Details config should be internally adjustible.
 
 ## 4. Technical Requirements

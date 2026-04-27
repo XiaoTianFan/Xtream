@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Xtream Interface</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;900&amp;family=Inter:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#bcc8d0",
+                        "secondary-fixed": "#afeeed",
+                        "text-primary": "#F2F4F5",
+                        "on-background": "#e4e2e2",
+                        "border-subtle": "#454B4E",
+                        "on-tertiary": "#412d00",
+                        "on-primary-container": "#deeaf2",
+                        "on-secondary-container": "#85c3c3",
+                        "surface-container-low": "#1b1c1c",
+                        "secondary": "#93d2d1",
+                        "inverse-surface": "#e4e2e2",
+                        "surface-variant": "#353535",
+                        "on-tertiary-container": "#ffe6bd",
+                        "surface-muted": "#3A4042",
+                        "on-tertiary-fixed-variant": "#5d4200",
+                        "surface-container-high": "#2a2a2a",
+                        "outline-variant": "#43474a",
+                        "on-surface": "#e4e2e2",
+                        "on-primary-fixed": "#111d23",
+                        "on-surface-variant": "#c3c7ca",
+                        "surface-bright": "#393939",
+                        "error": "#ffb4ab",
+                        "status-critical": "#B34D4D",
+                        "primary-fixed": "#d8e4ec",
+                        "primary-fixed-dim": "#bcc8d0",
+                        "bg-base": "#2A2E30",
+                        "tertiary-fixed": "#ffdea6",
+                        "on-secondary": "#003737",
+                        "on-error": "#690005",
+                        "tertiary": "#f7bd48",
+                        "on-error-container": "#ffdad6",
+                        "surface": "#131314",
+                        "primary-container": "#5e6a71",
+                        "inverse-on-surface": "#303031",
+                        "on-secondary-fixed-variant": "#004f50",
+                        "secondary-fixed-dim": "#93d2d1",
+                        "inverse-primary": "#546067",
+                        "surface-container": "#1f2020",
+                        "surface-dim": "#131314",
+                        "on-secondary-fixed": "#002020",
+                        "secondary-container": "#045252",
+                        "surface-container-highest": "#353535",
+                        "text-secondary": "#909DA1",
+                        "primary": "#bcc8d0",
+                        "tertiary-fixed-dim": "#f7bd48",
+                        "accent-ochre": "#C29958",
+                        "error-container": "#93000a",
+                        "surface-active": "#5E6A71",
+                        "on-primary-fixed-variant": "#3d484f",
+                        "surface-container-lowest": "#0e0e0f",
+                        "accent-teal": "#5C9EAD",
+                        "tertiary-container": "#886200",
+                        "on-primary": "#263238",
+                        "background": "#131314",
+                        "on-tertiary-fixed": "#271900",
+                        "outline": "#8d9194"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "0px"
+                    },
+                    "spacing": {
+                        "compact": "2px",
+                        "footer-height": "220px",
+                        "pane-padding": "12px",
+                        "unit": "4px",
+                        "header-height": "64px",
+                        "gutter": "8px"
+                    },
+                    "fontFamily": {
+                        "data-mono": ["Space Grotesk"],
+                        "body-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "timecode": ["Space Grotesk"]
+                    },
+                    "fontSize": {
+                        "data-mono": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.01em", "fontWeight": "500"}],
+                        "body-sm": ["12px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "label-caps": ["10px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                        "timecode": ["48px", {"lineHeight": "1", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        * { border-radius: 0 !important; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1b1c1c; border-left: 1px solid #454B4E; }
+        ::-webkit-scrollbar-thumb { background: #454B4E; }
+        ::-webkit-scrollbar-thumb:hover { background: #5E6A71; }
+    </style>
+</head>
+<body class="bg-bg-base text-text-primary h-screen w-screen overflow-hidden flex font-body-sm text-body-sm select-none">
+<!-- JSON SIDENAVBAR -->
+<nav class="docked h-full left-0 border-r border-[#454B4E] bg-[#2A2E30] flex flex-col w-16 pt-12 z-20 shrink-0">
+<div class="flex flex-col items-center gap-6 w-full">
+<!-- Active Tab: Patch (Renamed from Media) -->
+<button class="w-full h-16 flex flex-col items-center justify-center gap-1 bg-teal-500/10 text-teal-400 border-l-2 border-teal-400 transition-none group cursor-default" title="Patch">
+<span class="material-symbols-outlined text-[24px]">view_comfy</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-medium">Patch</span>
+</button>
+<!-- Inactive Tabs: Cue (Renamed from Mixer) -->
+<button class="w-full h-16 flex flex-col items-center justify-center gap-1 text-[#5E6A71] hover:bg-[#3A4042] hover:text-white transition-none group cursor-pointer" title="Cue">
+<span class="material-symbols-outlined text-[24px]">playlist_play</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-medium group-hover:text-white">Cue</span>
+</button>
+<!-- Inactive Tabs: Performance (Renamed from Routing) -->
+<button class="w-full h-16 flex flex-col items-center justify-center gap-1 text-[#5E6A71] hover:bg-[#3A4042] hover:text-white transition-none group cursor-pointer" title="Performance">
+<span class="material-symbols-outlined text-[24px]">speed</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-medium group-hover:text-white">Performance</span>
+</button>
+<button class="w-full h-16 flex flex-col items-center justify-center gap-1 text-[#5E6A71] hover:bg-[#3A4042] hover:text-white transition-none group cursor-pointer" title="Config">
+<span class="material-symbols-outlined text-[24px]">tune</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-medium group-hover:text-white">Config</span>
+</button>
+<button class="w-full h-16 flex flex-col items-center justify-center gap-1 text-[#5E6A71] hover:bg-[#3A4042] hover:text-white transition-none group cursor-pointer" title="Logs">
+<span class="material-symbols-outlined text-[24px]">terminal</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-medium group-hover:text-white">Logs</span>
+</button>
+</div>
+<div class="mt-auto mb-10 w-full flex flex-col items-center border-t border-border-subtle pt-4">
+<div class="w-8 h-8 bg-surface-muted border border-border-subtle flex items-center justify-center text-accent-teal font-label-caps text-label-caps font-bold">U</div>
+<span class="font-data-mono text-[9px] mt-2 text-text-secondary uppercase">OP-01</span>
+</div>
+</nav>
+<!-- MAIN APP CANVAS -->
+<main class="flex-1 flex flex-col h-full relative z-10 pb-8">
+<!-- TOPAPPBAR -->
+<header class="docked full-width top-0 border-b border-[#454B4E] bg-[#3A4042] flex justify-between items-center w-full h-20 px-0 shrink-0 relative">
+<!-- Left: Timecode -->
+<div class="pl-6 flex items-center gap-4 h-full border-r border-[#454B4E] pr-6">
+<div class="font-timecode text-timecode text-accent-teal tracking-tighter">04:24.370</div>
+</div>
+<!-- Center: Transport Controls -->
+<div class="flex items-center gap-unit h-full">
+<button class="w-12 h-12 flex items-center justify-center bg-surface-container-low border border-border-subtle text-text-secondary hover:bg-surface-muted transition-none">
+<span class="material-symbols-outlined">fast_rewind</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center bg-surface-container-low border border-border-subtle text-text-secondary hover:bg-surface-muted transition-none">
+<span class="material-symbols-outlined">stop</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center bg-accent-teal text-surface-container-low transition-none">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center bg-surface-container-low border border-border-subtle text-text-secondary hover:bg-surface-muted transition-none">
+<span class="material-symbols-outlined">pause</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center bg-surface-container-low border border-border-subtle text-text-secondary hover:bg-surface-muted transition-none">
+<span class="material-symbols-outlined">fast_forward</span>
+</button>
+</div>
+<!-- Right: Actions & Playback Rate -->
+<div class="pr-4 flex items-center gap-4 h-full border-l border-[#454B4E] pl-6">
+<!-- Global Playback Rate Control -->
+<div class="flex items-center gap-2 border border-border-subtle bg-surface-container-low h-10 px-3 hover:bg-surface-muted cursor-pointer group">
+<span class="font-label-caps text-[9px] text-text-secondary uppercase group-hover:text-text-primary">Rate</span>
+<span class="font-data-mono text-data-mono text-accent-teal">1.0x</span>
+</div>
+<div class="flex items-center gap-compact">
+<button class="w-10 h-10 flex items-center justify-center text-[#5E6A71] hover:bg-[#454B4E] hover:text-white transition-colors duration-75">
+<span class="material-symbols-outlined text-[20px]">save</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-[#5E6A71] hover:bg-[#454B4E] hover:text-white transition-colors duration-75">
+<span class="material-symbols-outlined text-[20px]">folder_open</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-[#5E6A71] hover:bg-[#454B4E] hover:text-white transition-colors duration-75">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-[#5E6A71] hover:bg-[#454B4E] hover:text-white transition-colors duration-75">
+<span class="material-symbols-outlined text-[20px]">analytics</span>
+</button>
+<button class="ml-2 px-4 h-10 bg-surface-container-low border border-border-subtle text-status-critical font-data-mono text-data-mono font-bold hover:bg-surface-muted flex items-center gap-2">
+<span class="w-2 h-2 bg-status-critical block"></span> LIVE
+                    </button>
+</div>
+</div>
+<div class="absolute bottom-[-1px] left-0 h-[2px] w-[42%] bg-accent-teal z-10"></div>
+</header>
+<!-- FLEXIBLE WORKSPACE -->
+<div class="flex flex-1 overflow-hidden">
+<!-- LEFT PANE: Patch / Media Pool -->
+<section class="w-1/2 border-r border-border-subtle flex flex-col bg-bg-base">
+<!-- TOP HALF: Assets List -->
+<div class="flex flex-col h-1/2 border-b border-border-subtle">
+<!-- Tabs -->
+<div class="flex h-10 border-b border-border-subtle bg-surface-muted shrink-0">
+<button class="px-6 h-full text-accent-teal border-t-2 border-accent-teal bg-bg-base font-label-caps text-label-caps flex items-center justify-center">
+                            VISUALS
+                        </button>
+<button class="px-6 h-full text-text-secondary border-t-2 border-transparent hover:bg-surface-variant hover:text-text-primary font-label-caps text-label-caps flex items-center justify-center transition-none">
+                            AUDIO
+                        </button>
+</div>
+<!-- Tools/Filter Bar -->
+<div class="h-8 border-b border-border-subtle bg-surface-container-low flex items-center px-2 justify-between shrink-0">
+<div class="flex gap-2 text-text-secondary font-label-caps text-label-caps">
+<span class="hover:text-text-primary cursor-pointer">SORT: NAME</span>
+<span class="text-border-subtle">|</span>
+<span class="hover:text-text-primary cursor-pointer">FILTER: ALL</span>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[16px] hover:text-text-primary cursor-pointer">search</span>
+</div>
+<!-- List -->
+<div class="flex-1 overflow-y-auto p-compact">
+<div class="flex items-center justify-between h-8 border-b border-border-subtle bg-surface-container hover:bg-surface-muted group pr-2">
+<div class="flex items-center gap-2 h-full">
+<div class="w-1 h-full bg-accent-teal"></div>
+<span class="w-2 h-2 bg-accent-teal ml-1"></span>
+<span class="font-data-mono text-data-mono text-accent-teal w-8">01</span>
+<span class="font-body-sm text-text-primary">Left_Main_Cam.mp4</span>
+</div>
+</div>
+<div class="flex items-center justify-between h-8 border-b border-border-subtle hover:bg-surface-muted group pr-2 pl-[3px]">
+<div class="flex items-center gap-2 h-full">
+<span class="w-2 h-2 bg-surface-active ml-1"></span>
+<span class="font-data-mono text-data-mono text-text-secondary w-8">02</span>
+<span class="font-body-sm text-text-secondary group-hover:text-text-primary">Right_Main_Cam.mp4</span>
+</div>
+</div>
+<div class="flex items-center justify-between h-8 border-b border-border-subtle hover:bg-surface-muted group pr-2 pl-[3px]">
+<div class="flex items-center gap-2 h-full">
+<span class="w-2 h-2 bg-surface-active ml-1"></span>
+<span class="font-data-mono text-data-mono text-text-secondary w-8">03</span>
+<span class="font-body-sm text-text-secondary group-hover:text-text-primary">Background_Loop_v2.mov</span>
+</div>
+</div>
+</div>
+</div>
+<!-- BOTTOM HALF: Preview Area -->
+<div class="flex-1 flex flex-col bg-surface-container-lowest">
+<div class="h-8 border-b border-border-subtle bg-surface-muted flex items-center px-4 shrink-0 justify-between">
+<span class="font-label-caps text-label-caps text-text-secondary tracking-widest uppercase">Preview: Left_Main_Cam.mp4</span>
+</div>
+<div class="flex-1 relative flex flex-col p-2 gap-2 overflow-hidden">
+<!-- Video Preview Box -->
+<div class="flex-1 border border-border-subtle bg-black relative group flex items-center justify-center">
+<img class="w-full h-full object-contain opacity-40" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjBicSp4fiSgT2OCfd7xeU6VW5UaD_gIWUX18XqQD3ED8lAZ6YyYhh0U8waVcVo5atL7BQPAI_vmtQLJPY_TwcyPO4yj7ZnrjjLnppoqQMbyp1G7SrMuc2viAkTfm5Y2EvS7mzY_o9rYTQOcrQFcQOjPgO7am5bLIcHK7axzbgiqpkRzT8L0qpkiVuynysd88vywfsWYxIluJA_z1WHPFsWnKn8z35l92TpDFMG5g6AUJ2wB3DQgv_EbSPOrQZ0cbEhcCIN1Z4h7Bo"/>
+<!-- Playback Indicator overlay -->
+<div class="absolute bottom-2 left-2 px-2 py-1 bg-black/80 border border-border-subtle font-data-mono text-[10px] text-accent-teal">
+                                00:00:12:14
+                            </div>
+</div>
+<!-- Mini Transport Controls -->
+<div class="h-10 flex items-center justify-between border border-border-subtle bg-surface-container px-2">
+<div class="flex gap-1 h-full items-center">
+<button class="w-8 h-8 flex items-center justify-center text-text-secondary hover:text-white hover:bg-surface-muted"><span class="material-symbols-outlined text-[18px]">replay_10</span></button>
+<button class="w-8 h-8 flex items-center justify-center text-accent-teal bg-teal-500/10 border border-teal-500/30"><span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span></button>
+<button class="w-8 h-8 flex items-center justify-center text-text-secondary hover:text-white hover:bg-surface-muted"><span class="material-symbols-outlined text-[18px]">forward_10</span></button>
+</div>
+<div class="flex-1 mx-4 h-1 bg-surface-muted relative cursor-pointer">
+<div class="absolute top-0 left-0 h-full w-[35%] bg-accent-teal"></div>
+<div class="absolute top-1/2 left-[35%] -translate-y-1/2 w-2 h-2 bg-text-primary"></div>
+</div>
+<div class="flex gap-1 h-full items-center">
+<button class="w-8 h-8 flex items-center justify-center text-text-secondary hover:text-white hover:bg-surface-muted"><span class="material-symbols-outlined text-[18px]">fullscreen</span></button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- RIGHT PANE: Display Windows -->
+<section class="w-1/2 flex flex-col bg-[#1A1C1D]">
+<div class="h-10 border-b border-border-subtle bg-surface-muted flex items-center px-4 shrink-0 justify-between">
+<span class="font-label-caps text-label-caps text-text-primary tracking-widest uppercase">Display Windows</span>
+<div class="flex gap-1">
+<button class="w-6 h-6 bg-surface-container border border-border-subtle flex items-center justify-center hover:bg-surface-active"><span class="material-symbols-outlined text-[14px]">grid_view</span></button>
+<button class="w-6 h-6 bg-accent-teal text-bg-base flex items-center justify-center"><span class="material-symbols-outlined text-[14px]">splitscreen</span></button>
+</div>
+</div>
+<div class="flex-1 p-pane-padding grid grid-cols-2 gap-gutter h-full">
+<!-- Display 0 -->
+<div class="border border-border-subtle bg-surface-container-lowest flex flex-col relative group">
+<div class="absolute top-0 left-0 w-full h-6 bg-surface-container/80 backdrop-blur-sm border-b border-border-subtle flex items-center justify-between px-2 z-10">
+<span class="font-data-mono text-data-mono text-accent-teal">Display-0</span>
+<span class="font-label-caps text-[9px] text-text-primary bg-accent-teal/20 px-1 border border-accent-teal/50 uppercase">Ready</span>
+</div>
+<div class="flex-1 w-full relative overflow-hidden flex items-center justify-center bg-[#0e0e0f]">
+<img class="w-full h-full object-cover opacity-60 grayscale mix-blend-luminosity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjBicSp4fiSgT2OCfd7xeU6VW5UaD_gIWUX18XqQD3ED8lAZ6YyYhh0U8waVcVo5atL7BQPAI_vmtQLJPY_TwcyPO4yj7ZnrjjLnppoqQMbyp1G7SrMuc2viAkTfm5Y2EvS7mzY_o9rYTQOcrQFcQOjPgO7am5bLIcHK7axzbgiqpkRzT8L0qpkiVuynysd88vywfsWYxIluJA_z1WHPFsWnKn8z35l92TpDFMG5g6AUJ2wB3DQgv_EbSPOrQZ0cbEhcCIN1Z4h7Bo"/>
+</div>
+<div class="h-6 border-t border-border-subtle bg-surface-container flex items-center px-2 shrink-0">
+<span class="font-data-mono text-[10px] text-text-secondary">Drift: <span class="text-text-primary">0.000</span></span>
+</div>
+</div>
+<!-- Display 1 -->
+<div class="border border-border-subtle bg-surface-container-lowest flex flex-col relative group">
+<div class="absolute top-0 left-0 w-full h-6 bg-surface-container/80 backdrop-blur-sm border-b border-border-subtle flex items-center justify-between px-2 z-10">
+<span class="font-data-mono text-data-mono text-text-secondary">Display-1</span>
+<span class="font-label-caps text-[9px] text-text-secondary border border-border-subtle px-1 uppercase">Standby</span>
+</div>
+<div class="flex-1 w-full relative overflow-hidden flex items-center justify-center bg-black">
+<span class="font-data-mono text-border-subtle text-xl">NO SIGNAL</span>
+</div>
+<div class="h-6 border-t border-border-subtle bg-surface-container flex items-center px-2 shrink-0">
+<span class="font-data-mono text-[10px] text-text-secondary">Drift: <span class="text-text-primary">--.---</span></span>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- CONTEXTUAL FOOTER -->
+<section class="h-[260px] border-t border-border-subtle bg-bg-base flex shrink-0 w-full z-10">
+<div class="w-[70%] border-r border-border-subtle flex flex-col">
+<div class="h-8 border-b border-border-subtle bg-surface-container flex items-center px-4 shrink-0 justify-between">
+<span class="font-label-caps text-label-caps text-text-primary tracking-widest uppercase">Audio Mixer</span>
+<button class="text-text-secondary hover:text-text-primary"><span class="material-symbols-outlined text-[16px]">tune</span></button>
+</div>
+<div class="flex-1 flex px-pane-padding py-unit gap-4 overflow-x-auto">
+<div class="w-16 h-full flex flex-col items-center border border-border-subtle bg-surface-container-low pb-2">
+<div class="w-full h-6 border-b border-border-subtle bg-surface-muted flex items-center justify-center mb-2">
+<span class="font-data-mono text-[9px] text-text-secondary">0.0</span>
+</div>
+<div class="flex-1 w-full flex justify-center gap-2 relative px-2">
+<div class="w-[2px] h-full bg-[#111] border-x border-[#333] relative">
+<div class="absolute w-6 h-8 bg-surface-tint border border-black left-1/2 -translate-x-1/2 top-[20%] flex flex-col items-center justify-center gap-[2px] cursor-ns-resize z-10 shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
+<div class="w-4 h-[1px] bg-black/50"></div>
+<div class="w-4 h-[1px] bg-black/50"></div>
+<div class="w-4 h-[1px] bg-black/50"></div>
+</div>
+</div>
+<div class="w-2 h-full bg-[#111] flex flex-col justify-end border border-black p-[1px]">
+<div class="w-full h-[75%] bg-accent-teal border-t border-[#111]"></div>
+</div>
+</div>
+<div class="w-full flex gap-[2px] px-2 mt-3">
+<button class="flex-1 aspect-square bg-surface border border-border-subtle text-text-secondary font-label-caps text-[9px] hover:bg-surface-muted">S</button>
+<button class="flex-1 aspect-square bg-surface border border-border-subtle text-text-secondary font-label-caps text-[9px] hover:bg-surface-muted">M</button>
+</div>
+<span class="font-data-mono text-[9px] text-accent-teal mt-2 text-center uppercase leading-tight truncate w-full px-1">Main Out</span>
+</div>
+</div>
+</div>
+<div class="w-[30%] flex flex-col bg-surface-container-low">
+<div class="h-8 border-b border-border-subtle bg-surface-container flex items-center px-4 shrink-0">
+<span class="font-label-caps text-label-caps text-text-primary tracking-widest uppercase">Dynamic Detail</span>
+</div>
+<div class="flex-1 p-pane-padding flex flex-col gap-4 overflow-y-auto">
+<div class="flex flex-col gap-1">
+<div class="flex justify-between items-end">
+<label class="font-label-caps text-[9px] text-text-secondary uppercase tracking-wider">Opacity</label>
+<span class="font-data-mono text-[10px] text-accent-teal">100%</span>
+</div>
+<div class="w-full h-6 border border-border-subtle bg-bg-base relative flex items-center p-1 group">
+<div class="h-full bg-accent-teal w-full absolute top-0 left-0 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+<input class="w-full h-full opacity-0 absolute top-0 left-0 cursor-ew-resize z-10" max="100" min="0" type="range" value="100"/>
+<div class="w-[2px] h-full bg-accent-teal relative z-0 ml-[98%]"></div>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<div class="flex justify-between items-end">
+<label class="font-label-caps text-[9px] text-text-secondary uppercase tracking-wider">Scale</label>
+<span class="font-data-mono text-[10px] text-text-primary">1.000</span>
+</div>
+<div class="flex gap-1 h-6">
+<input class="w-full bg-bg-base border border-border-subtle font-data-mono text-[11px] px-2 text-text-primary focus:border-accent-teal focus:ring-0 focus:outline-none" type="text" value="1.000"/>
+<button class="w-6 shrink-0 bg-surface border border-border-subtle flex items-center justify-center hover:bg-surface-muted"><span class="material-symbols-outlined text-[14px]">link</span></button>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- FOOTER -->
+<footer class="docked full-width bottom-0 border-t border-[#454B4E] bg-[#2A2E30] fixed bottom-0 w-full h-8 flex justify-between items-center px-4 z-50 shrink-0">
+<div class="font-mono text-[9px] uppercase text-[#5E6A71]">XTREAM ENGINE v4.2.0-STABLE</div>
+<div class="flex items-center gap-6">
+<button class="font-mono text-[9px] uppercase text-[#5E6A71] hover:text-white transition-none">SOLO CLEAR</button>
+<button class="font-mono text-[9px] uppercase text-[#5E6A71] hover:text-white transition-none">MUTE ALL</button>
+<button class="font-mono text-[9px] uppercase text-[#5E6A71] hover:text-white transition-none">RESET METERS</button>
+</div>
+</footer>
+</body></html>
