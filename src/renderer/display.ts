@@ -4,6 +4,7 @@ import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
 import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/mediaSync';
+import { hasEmbeddedAudioTrack } from './mediaMetadata';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
@@ -120,7 +121,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
         durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
         width: video.videoWidth || undefined,
         height: video.videoHeight || undefined,
-        hasEmbeddedAudio: hasAudioTracks(video),
+        hasEmbeddedAudio: hasEmbeddedAudioTrack(video),
         ready: true,
       });
     });
@@ -149,24 +150,6 @@ function createOverlay(visualId: string, detail: string): HTMLElement {
   overlay.className = 'display-output-overlay';
   overlay.append(createTextSpan(`Visual ${visualId}`), createTextSpan(detail));
   return overlay;
-}
-
-function hasAudioTracks(video: HTMLVideoElement): boolean | undefined {
-  const maybeTracks = video as HTMLVideoElement & {
-    audioTracks?: { length: number };
-    mozHasAudio?: boolean;
-    webkitAudioDecodedByteCount?: number;
-  };
-  if (maybeTracks.audioTracks) {
-    return maybeTracks.audioTracks.length > 0;
-  }
-  if (typeof maybeTracks.mozHasAudio === 'boolean') {
-    return maybeTracks.mozHasAudio;
-  }
-  if (typeof maybeTracks.webkitAudioDecodedByteCount === 'number') {
-    return maybeTracks.webkitAudioDecodedByteCount > 0;
-  }
-  return undefined;
 }
 
 function createTextSpan(text: string): HTMLSpanElement {

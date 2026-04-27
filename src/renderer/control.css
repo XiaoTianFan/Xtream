@@ -1394,29 +1394,26 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 }
 
 .output-detail-toolbar,
-.display-detail-toolbar {
+.detail-toolbar {
   display: flex;
   justify-content: space-between;
   gap: var(--gutter);
   flex-wrap: wrap;
 }
 
-.output-detail-toolbar {
+.output-detail-toolbar,
+.detail-toolbar {
   align-items: flex-end;
 }
 
-.display-detail-toolbar {
-  align-items: flex-start;
-}
-
 .output-detail-toolbar-start,
-.display-detail-toolbar-start {
+.detail-toolbar-start {
   flex: 1 1 12rem;
   min-width: 0;
 }
 
 .output-detail-toolbar-actions,
-.display-detail-toolbar-actions {
+.detail-toolbar-actions {
   flex: 0 1 auto;
   justify-content: flex-end;
   margin-left: auto;
@@ -1515,19 +1512,55 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .output-source-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem) minmax(9rem, auto);
+  grid-template-columns: minmax(9rem, 1fr) minmax(16rem, 28rem) auto;
   gap: var(--gutter);
-  align-items: center;
+  align-items: end;
+  border: 1px solid var(--outline-variant);
+  background: color-mix(in srgb, var(--surface-low) 72%, #000);
+  padding: var(--gutter);
 }
 
-.output-source-row > strong {
+.output-source-info {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  align-self: center;
+}
+
+.output-source-info > strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.65rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 700;
   line-height: 1.25;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.output-source-info > small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.output-source-level {
+  min-width: 0;
+}
+
+.output-source-actions {
+  align-self: end;
+  justify-content: flex-end;
+}
+
+.output-source-actions button {
   white-space: nowrap;
 }
 
@@ -1546,6 +1579,20 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .operator-footer .button-row {
   flex-wrap: nowrap;
+}
+
+.operator-footer .output-source-actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1180px) {
+  .output-source-row {
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem);
+  }
+
+  .output-source-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 .db-control {

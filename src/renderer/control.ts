@@ -38,6 +38,7 @@ import {
 import { renderIssues as renderIssueList } from './control/issues';
 import { decorateIconButton } from './control/icons';
 import { createPlaybackSyncKey, syncTimedMediaElement } from './control/mediaSync';
+import { hasEmbeddedAudioTrack } from './mediaMetadata';
 
 const elements = {
   appFrame: assertElement(document.querySelector<HTMLDivElement>('.app-frame'), 'appFrame'),
@@ -922,6 +923,9 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
         '',
         (audioSourceId) => {
           if (audioSourceId) {
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
             void window.xtream.outputs
               .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] })
               .then(async () => renderState(await window.xtream.director.getState()));
@@ -937,8 +941,16 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
     const source = state.audioSources[selection.audioSourceId];
     const row = document.createElement('div');
     row.className = 'output-source-row';
+
+    const sourceInfo = document.createElement('div');
+    sourceInfo.className = 'output-source-info';
     const label = document.createElement('strong');
     label.textContent = source?.label ?? selection.audioSourceId;
+    label.title = source?.label ?? selection.audioSourceId;
+    const meta = document.createElement('small');
+    meta.textContent = source ? `${source.type === 'external-file' ? 'file' : 'embedded'}${formatAudioChannelLabel(source)}` : 'missing source';
+    sourceInfo.append(label, meta);
+
     const levelControl = createDbFader('Level dB', selection.levelDb, (levelDb) => {
       void window.xtream.outputs.update(output.id, {
         sources: output.sources.map((candidate) =>
@@ -946,6 +958,8 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
         ),
       });
     });
+    levelControl.classList.add('output-source-level');
+
     const removeButton = createButton('Remove Source', 'secondary', async () => {
       await window.xtream.outputs.update(output.id, {
         sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
@@ -961,9 +975,9 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
       renderState(await window.xtream.director.getState());
     });
     const actions = document.createElement('div');
-    actions.className = 'button-row compact';
+    actions.className = 'button-row compact output-source-actions';
     actions.append(muteButton, removeButton);
-    row.append(label, levelControl, actions);
+    row.append(sourceInfo, levelControl, actions);
     wrapper.append(row);
   }
   return wrapper;
@@ -1611,24 +1625,14 @@ function renderVisualDetails(visual: VisualState): void {
   const card = document.createElement('div');
   card.className = 'detail-card';
   const label = createLabelInput(visual.label, (nextLabel) => window.xtream.visuals.update(visual.id, { label: nextLabel }));
-  card.append(
-    createDetailField('Label', label),
-    createDetailLine('Type', visual.type),
-    createDetailLine('Path', visual.path ?? '--'),
-    createDetailLine('Duration', formatDuration(visual.durationSeconds)),
-    createDetailLine('Dimensions', visual.width && visual.height ? `${visual.width}x${visual.height}` : '--'),
-    createDetailLine('File Size', formatBytes(visual.fileSizeBytes)),
-    createDetailLine('Embedded Audio', visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'),
-    createNumberDetailControl('Opacity', visual.opacity ?? 1, 0, 1, 0.01, (opacity) => window.xtream.visuals.update(visual.id, { opacity })),
-    createNumberDetailControl('Brightness', visual.brightness ?? 1, 0, 2, 0.01, (brightness) => window.xtream.visuals.update(visual.id, { brightness })),
-    createNumberDetailControl('Contrast', visual.contrast ?? 1, 0, 2, 0.01, (contrast) => window.xtream.visuals.update(visual.id, { contrast })),
-    createNumberDetailControl('Playback Rate', visual.playbackRate ?? 1, 0.1, 4, 0.01, (playbackRate) =>
-      window.xtream.visuals.update(visual.id, { playbackRate }),
-    ),
-  );
-  const actions = document.createElement('div');
-  actions.className = 'button-row';
-  actions.append(
+  const toolbar = document.createElement('div');
+  toolbar.className = 'detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'detail-toolbar-start';
+  toolbarStart.append(createDetailField('Label', label));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'detail-toolbar-actions button-row';
+  toolbarActions.append(
     createButton('Replace', 'secondary', async () => {
       const replaced = await window.xtream.visuals.replace(visual.id);
       if (replaced) {
@@ -1646,8 +1650,23 @@ function renderVisualDetails(visual: VisualState): void {
     renderState(await window.xtream.director.getState());
   });
   removeFromPool.title = `Remove ${visual.label} from the media pool (does not delete the file on disk)`;
-  actions.append(removeFromPool);
-  card.append(actions);
+  toolbarActions.append(removeFromPool);
+  toolbar.append(toolbarStart, toolbarActions);
+  card.append(
+    toolbar,
+    createDetailLine('Type', visual.type),
+    createDetailLine('Path', visual.path ?? '--'),
+    createDetailLine('Duration', formatDuration(visual.durationSeconds)),
+    createDetailLine('Dimensions', visual.width && visual.height ? `${visual.width}x${visual.height}` : '--'),
+    createDetailLine('File Size', formatBytes(visual.fileSizeBytes)),
+    createDetailLine('Embedded Audio', visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'),
+    createNumberDetailControl('Opacity', visual.opacity ?? 1, 0, 1, 0.01, (opacity) => window.xtream.visuals.update(visual.id, { opacity })),
+    createNumberDetailControl('Brightness', visual.brightness ?? 1, 0, 2, 0.01, (brightness) => window.xtream.visuals.update(visual.id, { brightness })),
+    createNumberDetailControl('Contrast', visual.contrast ?? 1, 0, 2, 0.01, (contrast) => window.xtream.visuals.update(visual.id, { contrast })),
+    createNumberDetailControl('Playback Rate', visual.playbackRate ?? 1, 0.1, 4, 0.01, (playbackRate) =>
+      window.xtream.visuals.update(visual.id, { playbackRate }),
+    ),
+  );
   elements.detailsContent.replaceChildren(card);
 }
 
@@ -1655,8 +1674,27 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
   const card = document.createElement('div');
   card.className = 'detail-card';
   const label = createLabelInput(source.label, (nextLabel) => window.xtream.audioSources.update(source.id, { label: nextLabel }));
+  const toolbar = document.createElement('div');
+  toolbar.className = 'detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'detail-toolbar-start';
+  toolbarStart.append(createDetailField('Label', label));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'detail-toolbar-actions button-row';
+  toolbarActions.append(
+    createButton('Preview', 'secondary', () => playAudioSourcePreview(source, state, setShowStatus)),
+    ...(source.type === 'external-file'
+      ? [
+          createButton('Replace', 'secondary', async () => {
+            await window.xtream.audioSources.replaceFile(source.id);
+            renderState(await window.xtream.director.getState());
+          }),
+        ]
+      : []),
+  );
+  toolbar.append(toolbarStart, toolbarActions);
   card.append(
-    createDetailField('Label', label),
+    toolbar,
     createDetailLine('Type', source.type),
     createDetailLine('Path', source.type === 'external-file' ? source.path ?? '--' : state.visuals[source.visualId]?.path ?? source.visualId),
     createDetailLine('Duration', formatDuration(source.durationSeconds)),
@@ -1668,20 +1706,6 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
       window.xtream.audioSources.update(source.id, { playbackRate }),
     ),
   );
-  const actions = document.createElement('div');
-  actions.className = 'button-row';
-  actions.append(
-    createButton('Preview', 'secondary', () => playAudioSourcePreview(source, state, setShowStatus)),
-    ...(source.type === 'external-file'
-      ? [
-          createButton('Replace', 'secondary', async () => {
-            await window.xtream.audioSources.replaceFile(source.id);
-            renderState(await window.xtream.director.getState());
-          }),
-        ]
-      : []),
-  );
-  card.append(actions);
   elements.detailsContent.replaceChildren(card);
 }
 
@@ -1691,12 +1715,12 @@ function renderDisplayDetails(display: DisplayWindowState, state: DirectorState)
   card.className = 'detail-card';
   const labelInput = createLabelInput(display.label ?? display.id, (label) => window.xtream.displays.update(display.id, { label }));
   const toolbar = document.createElement('div');
-  toolbar.className = 'display-detail-toolbar';
+  toolbar.className = 'detail-toolbar';
   const toolbarStart = document.createElement('div');
-  toolbarStart.className = 'display-detail-toolbar-start';
+  toolbarStart.className = 'detail-toolbar-start';
   toolbarStart.append(createDetailField('Label', labelInput));
   const toolbarActions = document.createElement('div');
-  toolbarActions.className = 'display-detail-toolbar-actions button-row';
+  toolbarActions.className = 'detail-toolbar-actions button-row';
   toolbarActions.append(
     createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', async () => {
       await window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
@@ -2004,27 +2028,9 @@ function reportVisualMetadataFromVideo(visualId: VisualId, video: HTMLVideoEleme
     durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
     width: video.videoWidth || undefined,
     height: video.videoHeight || undefined,
-    hasEmbeddedAudio: hasAudioTracks(video),
+    hasEmbeddedAudio: hasEmbeddedAudioTrack(video),
     ready: true,
   });
-}
-
-function hasAudioTracks(video: HTMLVideoElement): boolean | undefined {
-  const maybeTracks = video as HTMLVideoElement & {
-    audioTracks?: { length: number };
-    mozHasAudio?: boolean;
-    webkitAudioDecodedByteCount?: number;
-  };
-  if (maybeTracks.audioTracks) {
-    return maybeTracks.audioTracks.length > 0;
-  }
-  if (typeof maybeTracks.mozHasAudio === 'boolean') {
-    return maybeTracks.mozHasAudio;
-  }
-  if (typeof maybeTracks.webkitAudioDecodedByteCount === 'number') {
-    return maybeTracks.webkitAudioDecodedByteCount > 0;
-  }
-  return undefined;
 }
 
 function renderAudioAssetPreview(source: AudioSourceState, state: DirectorState): void {
