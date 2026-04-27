@@ -5,6 +5,7 @@ export type VirtualOutputId = string;
 export type DisplayWindowId = string;
 
 export type VisualMediaType = 'video' | 'image';
+export type AudioChannelMode = 'stereo' | 'left' | 'right';
 
 export type VisualLayoutProfile =
   | { type: 'single'; visualId?: VisualId }
@@ -64,6 +65,9 @@ export type AudioSourceState =
       durationSeconds?: number;
       playbackRate?: number;
       levelDb?: number;
+      channelCount?: number;
+      channelMode?: AudioChannelMode;
+      derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
       ready: boolean;
       error?: string;
@@ -76,6 +80,9 @@ export type AudioSourceState =
       durationSeconds?: number;
       playbackRate?: number;
       levelDb?: number;
+      channelCount?: number;
+      channelMode?: AudioChannelMode;
+      derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
       ready: boolean;
       error?: string;
@@ -87,6 +94,22 @@ export type VirtualOutputSourceSelection = {
   muted?: boolean;
 };
 
+export type MeterLaneState = {
+  id: string;
+  label: string;
+  audioSourceId: AudioSourceId;
+  channelIndex: number;
+  db: number;
+  clipped: boolean;
+};
+
+export type OutputMeterReport = {
+  outputId: VirtualOutputId;
+  lanes: MeterLaneState[];
+  peakDb: number;
+  reportedAtWallTimeMs: number;
+};
+
 export type VirtualOutputState = {
   id: VirtualOutputId;
   label: string;
@@ -96,6 +119,7 @@ export type VirtualOutputState = {
   busLevelDb: number;
   muted?: boolean;
   meterDb?: number;
+  meterLanes?: MeterLaneState[];
   ready: boolean;
   physicalRoutingAvailable: boolean;
   fallbackAccepted?: boolean;
@@ -185,6 +209,9 @@ export type PersistedAudioSourceConfig =
       path?: string;
       playbackRate?: number;
       levelDb?: number;
+      channelCount?: number;
+      channelMode?: AudioChannelMode;
+      derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
     }
   | {
@@ -194,6 +221,9 @@ export type PersistedAudioSourceConfig =
       visualId: VisualId;
       playbackRate?: number;
       levelDb?: number;
+      channelCount?: number;
+      channelMode?: AudioChannelMode;
+      derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
     };
 
@@ -315,11 +345,13 @@ export type VisualImportItem = {
 export type AudioMetadataReport = {
   audioSourceId: AudioSourceId;
   durationSeconds?: number;
+  channelCount?: number;
   ready: boolean;
   error?: string;
 };
 
 export type AudioSourceCreateResult = AudioSourceState | undefined;
+export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
 export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout'>>;
@@ -377,10 +409,12 @@ export type IpcChannels = {
   'audio-source:clear': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
   'audio-source:update': (audioSourceId: AudioSourceId, update: AudioSourceUpdate) => AudioSourceState;
   'audio-source:remove': (audioSourceId: AudioSourceId) => boolean;
+  'audio-source:split-stereo': (audioSourceId: AudioSourceId) => AudioSourceSplitResult;
   'audio-source:metadata': (report: AudioMetadataReport) => DirectorState;
   'output:create': () => VirtualOutputState;
   'output:update': (outputId: VirtualOutputId, update: VirtualOutputUpdate) => VirtualOutputState;
-  'output:meter': (outputId: VirtualOutputId, meterDb: number) => VirtualOutputState;
+  'output:meter': (report: OutputMeterReport) => VirtualOutputState;
+  'audio:meter-report': (report: OutputMeterReport) => void;
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:save': () => ShowConfigOperationResult;

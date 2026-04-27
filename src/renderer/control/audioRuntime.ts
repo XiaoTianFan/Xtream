@@ -1,5 +1,5 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../shared/timeline';
-import type { AudioSourceState, DirectorState, VirtualOutputState } from '../../shared/types';
+import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputState } from '../../shared/types';
 import { createPlaybackSyncKey, requestMediaPlay, syncTimedMediaElement } from './mediaSync';
 
 type SinkCapableAudioElement = HTMLAudioElement & {
@@ -11,6 +11,16 @@ type OutputSourceRuntime = {
   element: HTMLMediaElement;
   sourceNode: MediaElementAudioSourceNode;
   gainNode: GainNode;
+  meterLanes: SourceMeterLaneRuntime[];
+};
+
+type SourceMeterLaneRuntime = {
+  id: string;
+  label: string;
+  audioSourceId: string;
+  channelIndex: number;
+  analyser: AnalyserNode;
+  data: Float32Array<ArrayBuffer>;
 };
 
 type OutputRuntime = {
@@ -33,6 +43,8 @@ type TransportEnvelopeMode = 'playing' | 'fading-out' | 'paused';
 
 const TRANSPORT_FADE_SECONDS = 0.035;
 const TRANSPORT_FADE_MS = TRANSPORT_FADE_SECONDS * 1000;
+const METER_FLOOR_DB = -60;
+const METER_CLIP_DB = 0;
 
 let audioGraphSignature = '';
 let outputRuntimes = new Map<string, OutputRuntime>();
@@ -52,6 +64,8 @@ export function syncVirtualAudioGraph(state: DirectorState): void {
         sources: output.sources.map((selection) => ({
           id: selection.audioSourceId,
           url: getAudioSourceUrl(selection.audioSourceId, state),
+          channelCount: state.audioSources[selection.audioSourceId]?.channelCount,
+          channelMode: state.audioSources[selection.audioSourceId]?.channelMode,
         })),
       })),
   );
@@ -115,11 +129,15 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
       document.body.append(element);
       const sourceNode = context.createMediaElementSource(element);
       const gainNode = context.createGain();
-      sourceNode.connect(gainNode).connect(busGain);
+      connectAudioSourceToGain(context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
+      gainNode.connect(busGain);
+      const meterLanes = createSourceMeterLanes(context, gainNode, output.id, selection.audioSourceId, state.audioSources[selection.audioSourceId]);
       element.addEventListener('loadedmetadata', () => {
+        const detectedChannelCount = getSourceChannelCount(state.audioSources[selection.audioSourceId], sourceNode);
         void window.xtream.audioSources.reportMetadata({
           audioSourceId: selection.audioSourceId,
           durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
+          channelCount: detectedChannelCount,
           ready: true,
         });
       });
@@ -131,7 +149,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
           error: element.error?.message ?? 'Audio failed to load.',
         });
       });
-      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode });
+      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, meterLanes });
     }
     outputRuntimes.set(output.id, runtime);
     await applyOutputSink(output, runtime);
@@ -233,22 +251,44 @@ function pauseRuntimeAtDirectorTarget(runtime: OutputRuntime, state: DirectorSta
 export function sampleMeters(state: DirectorState, meterRoot?: HTMLElement): void {
   const now = Date.now();
   for (const [outputId, runtime] of outputRuntimes) {
-    runtime.analyser.getByteTimeDomainData(runtime.meterData);
-    let peak = 0;
-    for (const sample of runtime.meterData) {
-      peak = Math.max(peak, Math.abs((sample - 128) / 128));
+    const output = state.outputs[outputId];
+    const lanes: MeterLaneState[] = [];
+    let peakDb = METER_FLOOR_DB;
+    const outputGain = runtime.busGain.gain.value * runtime.envelopeGain.gain.value;
+    for (const sourceRuntime of runtime.sources) {
+      const source = state.audioSources[sourceRuntime.audioSourceId];
+      for (const lane of sourceRuntime.meterLanes) {
+        const db = sampleLaneDb(lane, outputGain);
+        peakDb = Math.max(peakDb, db);
+        lanes.push({
+          id: lane.id,
+          label: lane.label,
+          audioSourceId: lane.audioSourceId,
+          channelIndex: lane.channelIndex,
+          db,
+          clipped: db >= METER_CLIP_DB,
+        });
+      }
+      if (source && sourceRuntime.meterLanes.length !== getExpectedChannelCount(source)) {
+        // A source can expose a different channel count after metadata; rebuild on the next state sync.
+        audioGraphSignature = '';
+      }
     }
-    const meterDb = peak <= 0.00001 ? -60 : Math.max(-60, 20 * Math.log10(peak));
     if (meterRoot) {
       const fills = meterRoot.querySelectorAll<HTMLElement>(`[data-meter-fill="${outputId}"]`);
       for (const fill of fills) {
-        fill.style.width = meterWidth(meterDb);
-        fill.style.height = meterWidth(meterDb);
+        fill.style.width = meterWidth(peakDb);
+        fill.style.height = meterWidth(peakDb);
       }
     }
-    if (now - runtime.lastMeterReportMs > 250 && state.outputs[outputId]) {
+    if (now - runtime.lastMeterReportMs > 50 && output) {
       runtime.lastMeterReportMs = now;
-      void window.xtream.outputs.reportMeter(outputId, meterDb);
+      void window.xtream.audioRuntime.reportMeter({
+        outputId,
+        lanes,
+        peakDb,
+        reportedAtWallTimeMs: now,
+      });
     }
   }
 }
@@ -267,12 +307,20 @@ export function playAudioSourcePreview(source: AudioSourceState, state: Director
   const audio = createHiddenAudioOutput();
   audio.src = url;
   audio.currentTime = 0;
+  const context = source.channelMode === 'left' || source.channelMode === 'right' ? new AudioContext() : undefined;
+  if (context) {
+    const sourceNode = context.createMediaElementSource(audio);
+    const gainNode = context.createGain();
+    connectAudioSourceToGain(context, sourceNode, gainNode, source);
+    gainNode.connect(context.destination);
+  }
   audio.play().catch((error: unknown) => {
     setStatus(`Preview failed: ${error instanceof Error ? error.message : 'Unable to play audio source.'}`);
   });
   window.setTimeout(() => {
     audio.pause();
     audio.remove();
+    void context?.close();
   }, 2500);
 }
 
@@ -303,6 +351,10 @@ export function meterWidth(db: number | undefined): string {
   return `${Math.max(0, Math.min(100, ((db ?? -60) + 60) * (100 / 72)))}%`;
 }
 
+export function meterLevelPercent(db: number | undefined): number {
+  return Math.max(0, Math.min(100, (((db ?? METER_FLOOR_DB) - METER_FLOOR_DB) / Math.abs(METER_FLOOR_DB)) * 100));
+}
+
 function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string {
   const source = state.audioSources[audioSourceId];
   if (!source) {
@@ -312,6 +364,84 @@ function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string 
     return source.url ?? '';
   }
   return state.visuals[source.visualId]?.url ?? '';
+}
+
+function connectAudioSourceToGain(
+  context: AudioContext,
+  sourceNode: MediaElementAudioSourceNode,
+  gainNode: GainNode,
+  source: AudioSourceState | undefined,
+): void {
+  if (source?.channelMode === 'left' || source?.channelMode === 'right') {
+    const splitter = context.createChannelSplitter(2);
+    sourceNode.connect(splitter);
+    splitter.connect(gainNode, source.channelMode === 'left' ? 0 : 1);
+    return;
+  }
+  sourceNode.connect(gainNode);
+}
+
+function createSourceMeterLanes(
+  context: AudioContext,
+  gainNode: GainNode,
+  outputId: string,
+  audioSourceId: string,
+  source: AudioSourceState | undefined,
+): SourceMeterLaneRuntime[] {
+  const channelCount = getExpectedChannelCount(source);
+  const splitter = context.createChannelSplitter(channelCount);
+  gainNode.connect(splitter);
+  const lanes: SourceMeterLaneRuntime[] = [];
+  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    splitter.connect(analyser, channelIndex);
+    lanes.push({
+      id: `${outputId}:${audioSourceId}:ch-${channelIndex + 1}`,
+      label: formatLaneLabel(source, channelIndex, channelCount),
+      audioSourceId,
+      channelIndex,
+      analyser,
+      data: new Float32Array(analyser.fftSize),
+    });
+  }
+  return lanes;
+}
+
+function sampleLaneDb(lane: SourceMeterLaneRuntime, outputGain: number): number {
+  lane.analyser.getFloatTimeDomainData(lane.data);
+  let peak = 0;
+  for (const sample of lane.data) {
+    peak = Math.max(peak, Math.abs(sample) * outputGain);
+  }
+  if (peak <= 0.00001) {
+    return METER_FLOOR_DB;
+  }
+  return Math.max(METER_FLOOR_DB, 20 * Math.log10(peak));
+}
+
+function getSourceChannelCount(source: AudioSourceState | undefined, sourceNode: MediaElementAudioSourceNode): number {
+  return getExpectedChannelCount(source) || Math.max(1, Math.min(8, sourceNode.channelCount || 2));
+}
+
+function getExpectedChannelCount(source: AudioSourceState | undefined): number {
+  if (source?.channelMode === 'left' || source?.channelMode === 'right') {
+    return 1;
+  }
+  return Math.max(1, Math.min(8, source?.channelCount ?? 2));
+}
+
+function formatLaneLabel(source: AudioSourceState | undefined, channelIndex: number, channelCount: number): string {
+  if (source?.channelMode === 'left') {
+    return 'L';
+  }
+  if (source?.channelMode === 'right') {
+    return 'R';
+  }
+  if (channelCount === 2) {
+    return channelIndex === 0 ? 'L' : 'R';
+  }
+  return `C${channelIndex + 1}`;
 }
 
 function createHiddenAudioOutput(): SinkCapableAudioElement {

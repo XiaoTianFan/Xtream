@@ -42,6 +42,20 @@ const config: PersistedShowConfig = {
       path: 'F:\\media\\mix.wav',
       playbackRate: 1.2,
       levelDb: -3,
+      channelCount: 2,
+      channelMode: 'stereo',
+      fileSizeBytes: 5678,
+    },
+    'audio-source-main-left': {
+      id: 'audio-source-main-left',
+      label: 'Audio Source 1 L',
+      type: 'external-file',
+      path: 'F:\\media\\mix.wav',
+      playbackRate: 1.2,
+      levelDb: -3,
+      channelCount: 1,
+      channelMode: 'left',
+      derivedFromAudioSourceId: 'audio-source-main',
       fileSizeBytes: 5678,
     },
   },
@@ -143,6 +157,7 @@ describe('show config persistence helpers', () => {
       },
       audioSources: {
         'audio-source-main': 'file:///F:/media/mix.wav',
+        'audio-source-main-left': 'file:///F:/media/mix.wav',
       },
     });
   });

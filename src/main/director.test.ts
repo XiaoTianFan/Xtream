@@ -90,6 +90,48 @@ describe('Director', () => {
     });
   });
 
+  it('splits a stereo audio source into virtual left and right mono records', () => {
+    const director = new Director(() => 1000);
+    const source = director.addAudioFileSource('F:\\media\\stereo.wav', 'file:///F:/media/stereo.wav');
+    director.updateAudioMetadata({ audioSourceId: source.id, durationSeconds: 12, channelCount: 2, ready: true });
+
+    const [left, right] = director.splitStereoAudioSource(source.id);
+
+    expect(left).toMatchObject({
+      label: 'Audio Source 1 L',
+      type: 'external-file',
+      path: 'F:\\media\\stereo.wav',
+      channelCount: 1,
+      channelMode: 'left',
+      derivedFromAudioSourceId: source.id,
+      durationSeconds: 12,
+      ready: true,
+    });
+    expect(right).toMatchObject({
+      label: 'Audio Source 1 R',
+      channelCount: 1,
+      channelMode: 'right',
+      derivedFromAudioSourceId: source.id,
+    });
+    expect(director.getState().audioSources[source.id]).toMatchObject({ channelCount: 2, channelMode: 'stereo' });
+    expect(director.createShowConfig().audioSources[left.id]).toMatchObject({
+      channelMode: 'left',
+      derivedFromAudioSourceId: source.id,
+    });
+  });
+
+  it('does not split known mono or already-derived audio sources', () => {
+    const director = new Director(() => 1000);
+    const source = director.addAudioFileSource('F:\\media\\mono.wav', 'file:///F:/media/mono.wav');
+    director.updateAudioMetadata({ audioSourceId: source.id, durationSeconds: 12, channelCount: 1, ready: true });
+
+    expect(() => director.splitStereoAudioSource(source.id)).toThrow(/mono/i);
+
+    director.updateAudioMetadata({ audioSourceId: source.id, durationSeconds: 12, channelCount: 2, ready: true });
+    const [left] = director.splitStereoAudioSource(source.id);
+    expect(() => director.splitStereoAudioSource(left.id)).toThrow(/already/i);
+  });
+
   it('auto-creates embedded audio sources when video metadata reports audio tracks', () => {
     const director = new Director(() => 1000);
     director.addVisuals([
@@ -179,9 +221,24 @@ describe('Director', () => {
     director.on('state', () => {
       emitted += 1;
     });
-    director.updateOutputMeter(output.id, -12);
+    director.updateOutputMeter({
+      outputId: output.id,
+      lanes: [
+        {
+          id: `${output.id}:${source.id}:ch-1`,
+          label: 'L',
+          audioSourceId: source.id,
+          channelIndex: 0,
+          db: -12,
+          clipped: false,
+        },
+      ],
+      peakDb: -12,
+      reportedAtWallTimeMs: 1000,
+    });
     expect(emitted).toBe(0);
     expect(director.getState().outputs[output.id].meterDb).toBe(-12);
+    expect(director.getState().outputs[output.id].meterLanes).toHaveLength(1);
     director.updatePreviewStatus({
       key: 'display:display-0:visual-a',
       displayId: 'display-0',

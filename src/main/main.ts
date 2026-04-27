@@ -23,6 +23,7 @@ import type {
   DisplayUpdate,
   DriftReport,
   PreviewStatus,
+  OutputMeterReport,
   PresetId,
   PresetResult,
   RendererReadyReport,
@@ -375,6 +376,12 @@ function registerIpcHandlers(): void {
     return true;
   });
 
+  ipcMain.handle('audio-source:split-stereo', (_event, audioSourceId: string) => {
+    const sources = director.splitStereoAudioSource(audioSourceId);
+    scheduleShowConfigAutoSave();
+    return sources;
+  });
+
   ipcMain.handle('audio-source:metadata', (_event, report: AudioMetadataReport) => director.updateAudioMetadata(report));
 
   ipcMain.handle('output:create', () => {
@@ -389,10 +396,16 @@ function registerIpcHandlers(): void {
     return output;
   });
 
-  ipcMain.handle('output:meter', (_event, outputId: string, meterDb: number) => {
-    const output = director.updateOutputMeter(outputId, meterDb);
-    sendDirectorState(controlWindow, director.getState());
+  ipcMain.handle('output:meter', (_event, report: OutputMeterReport) => {
+    const output = director.updateOutputMeter(report);
     return output;
+  });
+
+  ipcMain.handle('audio:meter-report', (_event, report: OutputMeterReport) => {
+    director.updateOutputMeter(report);
+    if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
+      controlWindow.webContents.send('audio:meter-lanes', report);
+    }
   });
 
   ipcMain.handle('audio:set-solo-output-ids', (_event, outputIds: string[]) => {

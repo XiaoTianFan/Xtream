@@ -10,6 +10,8 @@ import type {
   DisplayMonitorInfo,
   DisplayWindowState,
   MediaValidationIssue,
+  MeterLaneState,
+  OutputMeterReport,
   TransportCommand,
   VisualId,
   VisualLayoutProfile,
@@ -18,7 +20,7 @@ import type {
   VirtualOutputState,
 } from '../shared/types';
 import {
-  meterWidth,
+  meterLevelPercent,
   playAudioSourcePreview,
   playOutputTestTone,
 } from './control/audioRuntime';
@@ -71,10 +73,9 @@ const elements = {
   timelineScrubber: assertElement(document.querySelector<HTMLInputElement>('#timelineScrubber'), 'timelineScrubber'),
   timelineSummaryPrimary: assertElement(document.querySelector<HTMLDivElement>('#timelineSummaryPrimary'), 'timelineSummaryPrimary'),
   timelineLoopLimitLine: assertElement(document.querySelector<HTMLDivElement>('#timelineLoopLimitLine'), 'timelineLoopLimitLine'),
-  loopEnabledInput: assertElement(document.querySelector<HTMLInputElement>('#loopEnabledInput'), 'loopEnabledInput'),
   loopStartInput: assertElement(document.querySelector<HTMLInputElement>('#loopStartInput'), 'loopStartInput'),
   loopEndInput: assertElement(document.querySelector<HTMLInputElement>('#loopEndInput'), 'loopEndInput'),
-  loopButton: assertElement(document.querySelector<HTMLButtonElement>('#loopButton'), 'loopButton'),
+  loopActivateButton: assertElement(document.querySelector<HTMLButtonElement>('#loopActivateButton'), 'loopActivateButton'),
   loopPopover: assertElement(document.querySelector<HTMLDivElement>('#loopPopover'), 'loopPopover'),
   visualTabButton: assertElement(document.querySelector<HTMLButtonElement>('#visualTabButton'), 'visualTabButton'),
   audioTabButton: assertElement(document.querySelector<HTMLButtonElement>('#audioTabButton'), 'audioTabButton'),
@@ -115,6 +116,8 @@ let selectedEntity: SelectedEntity | undefined;
 let localPreviewCleanup: (() => void) | undefined;
 let rateDragStart: { clientX: number; rate: number } | undefined;
 let soloOutputIds = new Set<VirtualOutputId>();
+const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
+let activeAudioSourceMenu: HTMLElement | undefined;
 const activePanels = new WeakSet<HTMLElement>();
 
 type SelectedEntity =
@@ -138,11 +141,7 @@ type LayoutPrefs = {
   assetPreviewHeightPx?: number;
 };
 
-const transportDraftElements = new Set<HTMLInputElement>([
-  elements.loopEnabledInput,
-  elements.loopStartInput,
-  elements.loopEndInput,
-]);
+const transportDraftElements = new Set<HTMLInputElement>([elements.loopStartInput, elements.loopEndInput]);
 
 function renderState(state: DirectorState): void {
   currentState = state;
@@ -212,7 +211,7 @@ function createAudioRenderSignature(state: DirectorState): string {
       .map((source) => source),
     outputs: Object.values(state.outputs)
       .sort((left, right) => left.id.localeCompare(right.id))
-      .map((output) => ({ ...output, meterDb: undefined })),
+      .map((output) => ({ ...output, meterDb: undefined, meterLanes: undefined })),
     devices: audioDevices.map((device) => `${device.deviceId}:${device.label}`).join('|'),
   });
 }
@@ -231,9 +230,10 @@ function syncTransportInputs(state: DirectorState): void {
   elements.liveState.dataset.state = liveState.toLowerCase();
   elements.loopToggleButton.classList.toggle('active', state.loop.enabled);
   elements.loopToggleButton.setAttribute('aria-expanded', String(!elements.loopPopover.hidden));
-  if (!isTransportDraftActive(elements.loopEnabledInput)) {
-    elements.loopEnabledInput.checked = state.loop.enabled;
-  }
+  elements.loopActivateButton.textContent = state.loop.enabled ? 'Deactivate' : 'Activate';
+  elements.loopActivateButton.setAttribute('aria-pressed', String(state.loop.enabled));
+  elements.loopActivateButton.classList.toggle('active', state.loop.enabled);
+  elements.loopActivateButton.title = state.loop.enabled ? 'Turn loop playback off' : 'Turn loop playback on';
   if (!isTransportDraftActive(elements.loopStartInput)) {
     elements.loopStartInput.value = formatTimecode(state.loop.startSeconds);
   }
@@ -347,10 +347,14 @@ function createVisualRow(visual: VisualState): HTMLElement {
   meta.className = 'asset-meta';
   meta.textContent = `${visual.type} | ${formatDuration(visual.durationSeconds)} | ${visual.width && visual.height ? `${visual.width}x${visual.height}` : 'size --'}`;
   const remove = createButton('Remove', 'secondary row-action', async () => {
+    if (!confirmPoolRecordRemoval(visual.label)) {
+      return;
+    }
     await window.xtream.visuals.remove(visual.id);
     clearSelectionIf({ type: 'visual', id: visual.id });
     renderState(await window.xtream.director.getState());
   });
+  decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
   remove.addEventListener('click', (event) => event.stopPropagation());
   row.append(status, label, meta, remove);
   return row;
@@ -361,6 +365,7 @@ function createAudioSourceRow(source: AudioSourceState, state: DirectorState): H
   row.className = `asset-row${isSelected('audio-source', source.id) ? ' selected' : ''}`;
   row.tabIndex = 0;
   row.addEventListener('click', () => selectEntity({ type: 'audio-source', id: source.id }));
+  row.addEventListener('contextmenu', (event) => showAudioSourceContextMenu(event, source));
   row.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -374,15 +379,61 @@ function createAudioSourceRow(source: AudioSourceState, state: DirectorState): H
   const origin = source.type === 'external-file' ? source.path ?? 'External file' : `Embedded from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
   const meta = document.createElement('span');
   meta.className = 'asset-meta';
-  meta.textContent = `${source.type === 'external-file' ? 'file' : 'embedded'} | ${formatDuration(source.durationSeconds)} | ${origin}`;
+  meta.textContent = `${source.type === 'external-file' ? 'file' : 'embedded'}${formatAudioChannelLabel(source)} | ${formatDuration(source.durationSeconds)} | ${origin}`;
   const remove = createButton('Remove', 'secondary row-action', async () => {
+    if (!confirmPoolRecordRemoval(source.label)) {
+      return;
+    }
     await window.xtream.audioSources.remove(source.id);
     clearSelectionIf({ type: 'audio-source', id: source.id });
     renderState(await window.xtream.director.getState());
   });
+  decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
   remove.addEventListener('click', (event) => event.stopPropagation());
   row.append(status, label, meta, remove);
   return row;
+}
+
+function confirmPoolRecordRemoval(label: string): boolean {
+  return window.confirm(
+    `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+  );
+}
+
+function showAudioSourceContextMenu(event: MouseEvent, source: AudioSourceState): void {
+  event.preventDefault();
+  event.stopPropagation();
+  dismissAudioSourceContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu audio-source-menu';
+  menu.setAttribute('role', 'menu');
+  const splitButton = createButton('Split to mono', 'secondary context-menu-item', async () => {
+    dismissAudioSourceContextMenu();
+    try {
+      const [left] = await window.xtream.audioSources.splitStereo(source.id);
+      selectedEntity = { type: 'audio-source', id: left.id };
+      renderState(await window.xtream.director.getState());
+      setShowStatus(`Split ${source.label} into virtual L/R mono sources.`);
+    } catch (error: unknown) {
+      setShowStatus(error instanceof Error ? error.message : 'Unable to split this audio source.');
+    }
+  });
+  splitButton.setAttribute('role', 'menuitem');
+  if (source.derivedFromAudioSourceId || source.channelMode === 'left' || source.channelMode === 'right' || source.channelCount === 1) {
+    splitButton.disabled = true;
+    splitButton.title = source.channelCount === 1 ? 'Mono sources cannot be split.' : 'This source is already a mono channel.';
+  }
+  menu.append(splitButton);
+  document.body.append(menu);
+  const menuBounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - menuBounds.width - 4)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - menuBounds.height - 4)}px`;
+  activeAudioSourceMenu = menu;
+}
+
+function dismissAudioSourceContextMenu(): void {
+  activeAudioSourceMenu?.remove();
+  activeAudioSourceMenu = undefined;
 }
 
 function renderOutputs(state: DirectorState): void {
@@ -395,19 +446,43 @@ function renderOutputs(state: DirectorState): void {
   elements.outputPanel.replaceChildren(...strips, addStrip);
 }
 
+function syncMixerSelection(): void {
+  document.querySelectorAll<HTMLElement>('[data-output-strip]').forEach((strip) => {
+    strip.classList.toggle('selected', selectedEntity?.type === 'output' && selectedEntity.id === strip.dataset.outputStrip);
+  });
+}
+
 function syncOutputMeters(state: DirectorState): void {
   for (const output of Object.values(state.outputs)) {
-    const width = meterWidth(output.meterDb);
-    document.querySelectorAll<HTMLElement>(`[data-meter-fill="${output.id}"]`).forEach((fill) => {
-      fill.style.width = width;
-      fill.style.height = width;
+    applyOutputMeterReport({
+      outputId: output.id,
+      lanes: getOutputMeterLanes(output),
+      peakDb: output.meterDb ?? -60,
+      reportedAtWallTimeMs: Date.now(),
     });
   }
 }
 
-function createMixerStrip(output: VirtualOutputState): HTMLElement {
+function applyOutputMeterReport(report: OutputMeterReport): void {
+  latestMeterReports.set(report.outputId, report);
+  for (const lane of report.lanes) {
+    const percent = meterLevelPercent(lane.db);
+    document.querySelectorAll<HTMLElement>(`[data-meter-lane="${cssEscape(lane.id)}"]`).forEach((laneElement) => {
+      laneElement.style.setProperty('--meter-level', `${percent}%`);
+      laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+      laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
+      syncMeterLaneSegments(laneElement, percent);
+    });
+  }
+  document.querySelectorAll<HTMLElement>(`[data-meter-peak="${report.outputId}"]`).forEach((peak) => {
+    peak.textContent = report.peakDb <= -60 ? '-inf' : `${report.peakDb.toFixed(1)}`;
+  });
+}
+
+function createMixerStrip(output: VirtualOutputState, state = currentState): HTMLElement {
   const strip = document.createElement('article');
   strip.className = `mixer-strip${isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
+  strip.dataset.outputStrip = output.id;
   strip.tabIndex = 0;
   strip.addEventListener('click', () => selectEntity({ type: 'output', id: output.id }));
   strip.addEventListener('keydown', (event) => {
@@ -421,24 +496,10 @@ function createMixerStrip(output: VirtualOutputState): HTMLElement {
   db.textContent = `${output.busLevelDb.toFixed(0)} dB`;
   const body = document.createElement('div');
   body.className = 'mixer-strip-body';
-  const meter = document.createElement('div');
-  meter.className = 'meter vertical-meter';
-  const fill = document.createElement('div');
-  fill.dataset.meterFill = output.id;
-  fill.style.height = meterWidth(output.meterDb);
-  meter.append(fill);
-  const fader = createSlider({
-    min: '-60',
-    max: '12',
-    step: '1',
-    value: String(output.busLevelDb),
-    ariaLabel: `${output.label} bus level`,
-    className: 'vertical-slider',
-  });
-  fader.addEventListener('click', (event) => event.stopPropagation());
-  fader.addEventListener('input', () => {
-    db.textContent = `${Number(fader.value).toFixed(0)} dB`;
-    void window.xtream.outputs.update(output.id, { busLevelDb: Number(fader.value) });
+  const meter = createOutputMeter(output, state);
+  const fader = createAudioFader(output, (busLevelDb) => {
+    db.textContent = `${busLevelDb.toFixed(0)} dB`;
+    void window.xtream.outputs.update(output.id, { busLevelDb });
   });
   body.append(meter, fader);
   const toggles = document.createElement('div');
@@ -467,6 +528,155 @@ function createMixerStrip(output: VirtualOutputState): HTMLElement {
   status.className = `status-dot ${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'standby'}`;
   strip.append(db, body, toggles, label, status);
   return strip;
+}
+
+function createOutputMeter(output: VirtualOutputState, state = currentState): HTMLElement {
+  const meter = document.createElement('div');
+  meter.className = 'output-meter';
+  meter.setAttribute('role', 'meter');
+  meter.setAttribute('aria-label', `${output.label} output meter`);
+
+  const scale = document.createElement('div');
+  scale.className = 'output-meter-scale';
+  for (const label of ['0', '-6', '-12', '-24', '-36', '-60']) {
+    const tick = document.createElement('span');
+    tick.textContent = label;
+    scale.append(tick);
+  }
+
+  const lanes = document.createElement('div');
+  lanes.className = 'output-meter-lanes';
+  const laneStates = getOutputMeterLanes(output, state);
+  lanes.style.setProperty('--meter-lane-count', String(Math.max(1, laneStates.length)));
+  for (const laneState of laneStates) {
+    lanes.append(createOutputMeterLane(laneState));
+  }
+
+  const peak = document.createElement('span');
+  peak.className = 'output-meter-peak';
+  peak.dataset.meterPeak = output.id;
+  peak.textContent = output.meterDb === undefined || output.meterDb <= -60 ? '-inf' : `${output.meterDb.toFixed(1)}`;
+
+  meter.append(scale, lanes, peak);
+  return meter;
+}
+
+function createOutputMeterLane(lane: MeterLaneState): HTMLElement {
+  const laneElement = document.createElement('div');
+  laneElement.className = 'output-meter-lane';
+  laneElement.dataset.meterLane = lane.id;
+  laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+  const percent = meterLevelPercent(lane.db);
+  laneElement.style.setProperty('--meter-level', `${percent}%`);
+  laneElement.setAttribute('role', 'presentation');
+
+  const segments = document.createElement('div');
+  segments.className = 'output-meter-segments';
+  for (let index = 0; index < 20; index += 1) {
+    const segment = document.createElement('span');
+    segment.dataset.segment = String(index);
+    segments.append(segment);
+  }
+
+  const label = document.createElement('span');
+  label.className = 'output-meter-lane-label';
+  label.textContent = lane.label;
+  laneElement.append(segments, label);
+  syncMeterLaneSegments(laneElement, percent);
+  return laneElement;
+}
+
+function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void {
+  const segments = Array.from(laneElement.querySelectorAll<HTMLElement>('.output-meter-segments span'));
+  const activeCount = Math.round((segments.length * percent) / 100);
+  const isClipped = laneElement.dataset.state === 'clip';
+  segments.forEach((segment, index) => {
+    const segmentDb = -((index / Math.max(1, segments.length - 1)) * 60);
+    segment.dataset.active = String(index >= segments.length - activeCount);
+    segment.dataset.zone = isClipped || segmentDb >= -3 ? 'danger' : segmentDb >= -12 ? 'hot' : 'nominal';
+  });
+}
+
+function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: number) => void): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'audio-fader';
+  const rail = document.createElement('div');
+  rail.className = 'audio-fader-rail';
+  const cap = document.createElement('div');
+  cap.className = 'audio-fader-cap';
+  const zero = document.createElement('span');
+  zero.className = 'audio-fader-zero';
+  zero.textContent = '0';
+  const input = createSlider({
+    min: '-60',
+    max: '12',
+    step: '1',
+    value: String(output.busLevelDb),
+    ariaLabel: `${output.label} bus level`,
+    className: 'audio-fader-input vertical-slider',
+  });
+  input.setAttribute('orient', 'vertical');
+  syncAudioFaderPosition(wrapper, input);
+  input.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (event.altKey) {
+      event.preventDefault();
+      input.value = '0';
+      syncSliderProgress(input);
+      syncAudioFaderPosition(wrapper, input);
+      onChange(0);
+    }
+  });
+  input.addEventListener('input', () => {
+    syncAudioFaderPosition(wrapper, input);
+    onChange(Number(input.value));
+  });
+  wrapper.append(rail, cap, zero, input);
+  return wrapper;
+}
+
+function syncAudioFaderPosition(wrapper: HTMLElement, input: HTMLInputElement): void {
+  const min = Number(input.min || -60);
+  const max = Number(input.max || 12);
+  const value = Number(input.value || 0);
+  const percent = max === min ? 0 : ((value - min) / (max - min)) * 100;
+  wrapper.style.setProperty('--fader-position', `${Math.min(100, Math.max(0, percent))}%`);
+}
+
+function getOutputMeterLanes(output: VirtualOutputState, state = currentState): MeterLaneState[] {
+  const reported = latestMeterReports.get(output.id)?.lanes ?? output.meterLanes;
+  if (reported && reported.length > 0) {
+    return reported;
+  }
+  return output.sources.flatMap((selection) => {
+    const source = state?.audioSources[selection.audioSourceId];
+    const channelCount = source?.channelMode === 'left' || source?.channelMode === 'right' ? 1 : Math.max(1, Math.min(8, source?.channelCount ?? 2));
+    return Array.from({ length: channelCount }, (_, channelIndex): MeterLaneState => ({
+      id: `${output.id}:${selection.audioSourceId}:ch-${channelIndex + 1}`,
+      label: formatMeterLaneLabel(source, channelIndex, channelCount),
+      audioSourceId: selection.audioSourceId,
+      channelIndex,
+      db: -60,
+      clipped: false,
+    }));
+  });
+}
+
+function formatMeterLaneLabel(source: AudioSourceState | undefined, channelIndex: number, channelCount: number): string {
+  if (source?.channelMode === 'left') {
+    return 'L';
+  }
+  if (source?.channelMode === 'right') {
+    return 'R';
+  }
+  if (channelCount === 2) {
+    return channelIndex === 0 ? 'L' : 'R';
+  }
+  return `C${channelIndex + 1}`;
+}
+
+function cssEscape(value: string): string {
+  return 'CSS' in window && typeof CSS.escape === 'function' ? CSS.escape(value) : value.replace(/"/g, '\\"');
 }
 
 function getFilteredVisuals(visuals: VisualState[]): VisualState[] {
@@ -517,6 +727,7 @@ function syncPoolTabs(): void {
 function selectEntity(entity: SelectedEntity): void {
   activeSurface = 'patch';
   selectedEntity = entity;
+  syncMixerSelection();
   document.documentElement.style.setProperty('--mixer-width', '30vw');
   if (entity.type === 'visual') {
     activePoolTab = 'visuals';
@@ -551,6 +762,32 @@ function isSelected(type: SelectedEntity['type'], id: string): boolean {
 
 function formatDuration(seconds: number | undefined): string {
   return seconds === undefined ? 'duration --' : formatTimecode(seconds);
+}
+
+function formatAudioChannelLabel(source: AudioSourceState): string {
+  if (source.channelMode === 'left') {
+    return ' | L mono';
+  }
+  if (source.channelMode === 'right') {
+    return ' | R mono';
+  }
+  if (source.channelCount !== undefined) {
+    return ` | ${source.channelCount} ch`;
+  }
+  return '';
+}
+
+function formatAudioChannelDetail(source: AudioSourceState): string {
+  if (source.channelMode === 'left') {
+    return `mono L${source.derivedFromAudioSourceId ? ` from ${source.derivedFromAudioSourceId}` : ''}`;
+  }
+  if (source.channelMode === 'right') {
+    return `mono R${source.derivedFromAudioSourceId ? ` from ${source.derivedFromAudioSourceId}` : ''}`;
+  }
+  if (source.channelCount !== undefined) {
+    return source.channelCount >= 2 ? `${source.channelCount} channels (stereo)` : `${source.channelCount} channel`;
+  }
+  return 'unknown';
 }
 
 function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
@@ -1014,7 +1251,7 @@ function createDetailsSignature(state: DirectorState): unknown {
     visuals: state.visuals,
     audioSources: state.audioSources,
     displays: state.displays,
-    outputs: Object.fromEntries(Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined }])),
+    outputs: Object.fromEntries(Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined, meterLanes: undefined }])),
   };
 }
 
@@ -1258,6 +1495,7 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
     createDetailLine('Type', source.type),
     createDetailLine('Path', source.type === 'external-file' ? source.path ?? '--' : state.visuals[source.visualId]?.path ?? source.visualId),
     createDetailLine('Duration', formatDuration(source.durationSeconds)),
+    createDetailLine('Channels', formatAudioChannelDetail(source)),
     createDetailLine('File Size', formatBytes(source.fileSizeBytes)),
     createDetailLine('Readiness', source.ready ? 'ready' : source.error ?? 'loading'),
     createNumberDetailControl('Source Level dB', source.levelDb ?? 0, -60, 12, 1, (levelDb) => window.xtream.audioSources.update(source.id, { levelDb })),
@@ -1362,12 +1600,20 @@ function renderOutputDetails(output: VirtualOutputState, state: DirectorState): 
   card.append(
     createDetailField('Label', label),
     busControl,
-    createDetailLine('Meter', `${output.meterDb?.toFixed(1) ?? '-inf'} dB`),
+    createDetailLine('Meter', formatOutputMeterDetail(output)),
     sinkField,
     sourceControls,
     actions,
   );
   elements.detailsContent.replaceChildren(card);
+}
+
+function formatOutputMeterDetail(output: VirtualOutputState): string {
+  const report = latestMeterReports.get(output.id);
+  const peakDb = report?.peakDb ?? output.meterDb;
+  const laneCount = report?.lanes.length ?? output.meterLanes?.length ?? getOutputMeterLanes(output).length;
+  const peakLabel = peakDb === undefined || peakDb <= -60 ? '-inf' : `${peakDb.toFixed(1)} dB`;
+  return `${peakLabel} peak | ${laneCount} lane${laneCount === 1 ? '' : 's'}`;
 }
 
 function createDetailTitle(text: string): HTMLHeadingElement {
@@ -1802,11 +2048,12 @@ function finishRateDrag(event: PointerEvent): void {
   }
 }
 
-function readLoopDraft(): DirectorState['loop'] {
+function readLoopDraft(enabledOverride?: boolean): DirectorState['loop'] {
+  const enabled = enabledOverride !== undefined ? enabledOverride : (currentState?.loop.enabled ?? false);
   const start = parseTimecodeInput(elements.loopStartInput.value);
   const end = elements.loopEndInput.value.trim() === '' ? undefined : parseTimecodeInput(elements.loopEndInput.value);
   return {
-    enabled: elements.loopEnabledInput.checked,
+    enabled,
     startSeconds: start.ok ? start.seconds : 0,
     endSeconds: end === undefined ? undefined : end.ok ? end.seconds : undefined,
   };
@@ -1822,9 +2069,9 @@ function clearTransportDrafts(inputs: HTMLInputElement[]): void {
   }
 }
 
-async function commitLoopDraft(): Promise<void> {
-  await sendTransport({ type: 'set-loop', loop: readLoopDraft() });
-  clearTransportDrafts([elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]);
+async function commitLoopDraft(enabledOverride?: boolean): Promise<void> {
+  await sendTransport({ type: 'set-loop', loop: readLoopDraft(enabledOverride) });
+  clearTransportDrafts([elements.loopStartInput, elements.loopEndInput]);
 }
 
 function getAudioSinkOptions(): Array<[string, string]> {
@@ -1976,6 +2223,13 @@ installShellIcons();
 installSplitters();
 
 elements.timecode.tabIndex = 0;
+document.addEventListener('click', dismissAudioSourceContextMenu);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    dismissAudioSourceContextMenu();
+  }
+});
+document.addEventListener('scroll', dismissAudioSourceContextMenu, true);
 elements.patchRailButton.addEventListener('click', () => setActiveSurface('patch'));
 elements.cueRailButton.addEventListener('click', () => setActiveSurface('cue'));
 elements.performanceRailButton.addEventListener('click', () => setActiveSurface('performance'));
@@ -2061,8 +2315,13 @@ elements.timelineScrubber.addEventListener('input', () => syncSliderProgress(ele
 elements.timelineScrubber.addEventListener('change', () => {
   void sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 });
 });
-elements.loopButton.addEventListener('click', () => void commitLoopDraft());
-for (const input of [elements.loopEnabledInput, elements.loopStartInput, elements.loopEndInput]) {
+elements.loopActivateButton.addEventListener('click', () => {
+  if (!currentState) {
+    return;
+  }
+  void commitLoopDraft(!currentState.loop.enabled);
+});
+for (const input of [elements.loopStartInput, elements.loopEndInput]) {
   input.addEventListener('input', () => markTransportDraft(input));
   input.addEventListener('change', () => void commitLoopDraft());
 }
@@ -2129,12 +2388,14 @@ elements.clearSoloButton.addEventListener('click', () => {
   }
 });
 elements.resetMetersButton.addEventListener('click', () => {
-  document.querySelectorAll<HTMLElement>('[data-meter-fill]').forEach((fill) => {
-    fill.style.width = '0%';
-    fill.style.height = '0%';
-  });
-  for (const outputId of Object.keys(currentState?.outputs ?? {})) {
-    void window.xtream.outputs.reportMeter(outputId, -60);
+  for (const output of Object.values(currentState?.outputs ?? {})) {
+    const lanes = getOutputMeterLanes(output).map((lane) => ({ ...lane, db: -60, clipped: false }));
+    applyOutputMeterReport({
+      outputId: output.id,
+      lanes,
+      peakDb: -60,
+      reportedAtWallTimeMs: Date.now(),
+    });
   }
 });
 elements.createDisplayButton.addEventListener('click', async () => {
@@ -2143,6 +2404,16 @@ elements.createDisplayButton.addEventListener('click', async () => {
   renderState(await window.xtream.director.getState());
 });
 window.xtream.director.onState(renderState);
+window.xtream.audioRuntime.onMeterLanes((report) => {
+  if (currentState?.outputs[report.outputId]) {
+    currentState.outputs[report.outputId] = {
+      ...currentState.outputs[report.outputId],
+      meterDb: report.peakDb,
+      meterLanes: report.lanes,
+    };
+  }
+  applyOutputMeterReport(report);
+});
 void window.xtream.renderer.ready({ kind: 'control' });
 void loadAudioDevices();
 void loadDisplayMonitors();

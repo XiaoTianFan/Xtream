@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AudioMetadataReport,
   AudioSourceId,
+  AudioSourceSplitResult,
   AudioSourceState,
   AudioSourceUpdate,
   DirectorEventName,
@@ -13,6 +14,7 @@ import type {
   DriftReport,
   GlobalStateUpdate,
   PreviewStatus,
+  OutputMeterReport,
   PresetId,
   PresetResult,
   RendererReadyReport,
@@ -67,17 +69,24 @@ const api = {
     update: (audioSourceId: AudioSourceId, update: AudioSourceUpdate): Promise<AudioSourceState> =>
       ipcRenderer.invoke('audio-source:update', audioSourceId, update),
     remove: (audioSourceId: AudioSourceId): Promise<boolean> => ipcRenderer.invoke('audio-source:remove', audioSourceId),
+    splitStereo: (audioSourceId: AudioSourceId): Promise<AudioSourceSplitResult> => ipcRenderer.invoke('audio-source:split-stereo', audioSourceId),
     reportMetadata: (report: AudioMetadataReport): Promise<DirectorState> => ipcRenderer.invoke('audio-source:metadata', report),
   },
   outputs: {
     create: (): Promise<VirtualOutputState> => ipcRenderer.invoke('output:create'),
     update: (outputId: VirtualOutputId, update: VirtualOutputUpdate): Promise<VirtualOutputState> =>
       ipcRenderer.invoke('output:update', outputId, update),
-    reportMeter: (outputId: VirtualOutputId, meterDb: number): Promise<VirtualOutputState> => ipcRenderer.invoke('output:meter', outputId, meterDb),
+    reportMeter: (report: OutputMeterReport): Promise<VirtualOutputState> => ipcRenderer.invoke('output:meter', report),
     remove: (outputId: VirtualOutputId): Promise<boolean> => ipcRenderer.invoke('output:remove', outputId),
   },
   audioRuntime: {
     setSoloOutputIds: (outputIds: VirtualOutputId[]): Promise<void> => ipcRenderer.invoke('audio:set-solo-output-ids', outputIds),
+    reportMeter: (report: OutputMeterReport): Promise<void> => ipcRenderer.invoke('audio:meter-report', report),
+    onMeterLanes: (callback: (report: OutputMeterReport) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, report: OutputMeterReport) => callback(report);
+      ipcRenderer.on('audio:meter-lanes', listener);
+      return () => ipcRenderer.removeListener('audio:meter-lanes', listener);
+    },
     onSoloOutputIds: (callback: (outputIds: VirtualOutputId[]) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, outputIds: VirtualOutputId[]) => callback(outputIds);
       ipcRenderer.on('audio:solo-output-ids', listener);

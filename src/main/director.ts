@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import type {
   AudioMetadataReport,
+  AudioSourceSplitResult,
   AudioSourceState,
   DirectorState,
   DisplayWindowState,
@@ -9,6 +10,7 @@ import type {
   GlobalStateUpdate,
   PersistedShowConfig,
   PreviewStatus,
+  OutputMeterReport,
   PresetId,
   PresetResult,
   RailCorrection,
@@ -328,12 +330,39 @@ export class Director extends EventEmitter {
     return this.getState();
   }
 
+  splitStereoAudioSource(audioSourceId: string): AudioSourceSplitResult {
+    const source = this.state.audioSources[audioSourceId];
+    if (!source) {
+      throw new Error(`Unknown audio source: ${audioSourceId}`);
+    }
+    if (source.derivedFromAudioSourceId || source.channelMode === 'left' || source.channelMode === 'right') {
+      throw new Error(`${source.label} is already a mono channel source.`);
+    }
+    if (source.channelCount === 1) {
+      throw new Error(`${source.label} is mono and cannot be split.`);
+    }
+
+    const left = this.createMonoAudioSource(source, 'left');
+    const right = this.createMonoAudioSource(source, 'right');
+    this.state.audioSources[left.id] = left;
+    this.state.audioSources[right.id] = right;
+    this.recalculateTimeline();
+    this.emitState();
+    return [structuredClone(left), structuredClone(right)];
+  }
+
   updateAudioMetadata(report: AudioMetadataReport): DirectorState {
     const source = this.state.audioSources[report.audioSourceId];
     if (source) {
+      const isDerivedMono = source.channelMode === 'left' || source.channelMode === 'right';
+      const channelCount = isDerivedMono ? 1 : report.channelCount ?? source.channelCount;
+      const channelMode =
+        source.channelMode === 'left' || source.channelMode === 'right' ? source.channelMode : channelCount && channelCount >= 2 ? 'stereo' : undefined;
       this.state.audioSources[report.audioSourceId] = {
         ...source,
         durationSeconds: report.durationSeconds,
+        channelCount,
+        channelMode,
         fileSizeBytes: source.type === 'external-file' ? this.getFileSizeBytes(source.path) : source.fileSizeBytes,
         ready: report.ready,
         error: report.error,
@@ -372,12 +401,13 @@ export class Director extends EventEmitter {
     return structuredClone(this.state.outputs[outputId]);
   }
 
-  updateOutputMeter(outputId: string, meterDb: number): VirtualOutputState {
+  updateOutputMeter(report: OutputMeterReport): VirtualOutputState {
+    const { outputId, lanes, peakDb } = report;
     const output = this.state.outputs[outputId];
     if (!output) {
       throw new Error(`Unknown virtual output: ${outputId}`);
     }
-    this.state.outputs[outputId] = { ...output, meterDb };
+    this.state.outputs[outputId] = { ...output, meterDb: peakDb, meterLanes: lanes };
     return structuredClone(this.state.outputs[outputId]);
   }
 
@@ -445,6 +475,9 @@ export class Director extends EventEmitter {
                 path: source.path,
                 playbackRate: source.playbackRate ?? 1,
                 levelDb: source.levelDb ?? 0,
+                channelCount: source.channelCount,
+                channelMode: source.channelMode,
+                derivedFromAudioSourceId: source.derivedFromAudioSourceId,
                 fileSizeBytes: source.fileSizeBytes,
               }
             : {
@@ -454,6 +487,9 @@ export class Director extends EventEmitter {
                 visualId: source.visualId,
                 playbackRate: source.playbackRate ?? 1,
                 levelDb: source.levelDb ?? 0,
+                channelCount: source.channelCount,
+                channelMode: source.channelMode,
+                derivedFromAudioSourceId: source.derivedFromAudioSourceId,
                 fileSizeBytes: source.fileSizeBytes,
               },
         ]),
@@ -522,6 +558,9 @@ export class Director extends EventEmitter {
               url: urls.audioSources[source.id],
               playbackRate: source.playbackRate ?? 1,
               levelDb: source.levelDb ?? 0,
+              channelCount: source.channelCount,
+              channelMode: source.channelMode,
+              derivedFromAudioSourceId: source.derivedFromAudioSourceId,
               fileSizeBytes: source.fileSizeBytes,
               ready: false,
             }
@@ -532,6 +571,9 @@ export class Director extends EventEmitter {
               visualId: source.visualId,
               playbackRate: source.playbackRate ?? 1,
               levelDb: source.levelDb ?? 0,
+              channelCount: source.channelCount,
+              channelMode: source.channelMode,
+              derivedFromAudioSourceId: source.derivedFromAudioSourceId,
               fileSizeBytes: source.fileSizeBytes,
               ready: false,
             },
@@ -866,6 +908,46 @@ export class Director extends EventEmitter {
       id = `audio-source-${this.audioSourceSequence}`;
     } while (this.state.audioSources[id]);
     return id;
+  }
+
+  private createDerivedAudioSourceId(sourceId: string, mode: 'left' | 'right'): string {
+    const suffix = mode === 'left' ? 'left' : 'right';
+    let id = `${sourceId}-${suffix}`;
+    let index = 1;
+    while (this.state.audioSources[id]) {
+      index += 1;
+      id = `${sourceId}-${suffix}-${index}`;
+    }
+    return id;
+  }
+
+  private createMonoAudioSource(source: AudioSourceState, mode: 'left' | 'right'): AudioSourceState {
+    const id = this.createDerivedAudioSourceId(source.id, mode);
+    const shared = {
+      id,
+      label: `${source.label} ${mode === 'left' ? 'L' : 'R'}`,
+      durationSeconds: source.durationSeconds,
+      playbackRate: source.playbackRate ?? 1,
+      levelDb: source.levelDb ?? 0,
+      channelCount: 1,
+      channelMode: mode,
+      derivedFromAudioSourceId: source.id,
+      fileSizeBytes: source.fileSizeBytes,
+      ready: source.ready,
+      error: source.error,
+    } as const;
+    return source.type === 'external-file'
+      ? {
+          ...shared,
+          type: 'external-file',
+          path: source.path,
+          url: source.url,
+        }
+      : {
+          ...shared,
+          type: 'embedded-visual',
+          visualId: source.visualId,
+        };
   }
 
   private ensureEmbeddedAudioSource(visualId: string): AudioSourceState | undefined {

@@ -29,20 +29,20 @@
               <button id="stopButton" type="button">Stop</button>
               <div class="loop-control">
                 <button id="loopToggleButton" type="button">Loop</button>
-                <div id="loopPopover" class="loop-popover" hidden>
-                  <label>
-                    <input id="loopEnabledInput" type="checkbox" />
-                    Loop enabled
-                  </label>
-                  <label>
-                    Loop start
-                    <input id="loopStartInput" type="text" value="00:00.000" />
-                  </label>
-                  <label>
-                    Loop end
-                    <input id="loopEndInput" type="text" />
-                  </label>
-                  <button id="loopButton" class="secondary" type="button">Apply Loop</button>
+                <div id="loopPopover" class="loop-popover" hidden role="dialog" aria-label="Loop range">
+                  <div class="loop-popover-row">
+                    <label class="loop-field">
+                      <span class="loop-field-label">Loop start</span>
+                      <input id="loopStartInput" class="loop-time-input" type="text" value="00:00.000" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <label class="loop-field">
+                      <span class="loop-field-label">Loop end</span>
+                      <input id="loopEndInput" class="loop-time-input" type="text" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <button id="loopActivateButton" class="loop-activate-toggle" type="button" aria-pressed="false">
+                      Activate
+                    </button>
+                  </div>
                 </div>
               </div>
               <button id="rateDisplayButton" type="button">1.0x</button>
