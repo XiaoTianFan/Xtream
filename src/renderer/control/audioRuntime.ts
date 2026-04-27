@@ -23,15 +23,20 @@ type SourceMeterLaneRuntime = {
   data: Float32Array<ArrayBuffer>;
 };
 
+type OutputSinkRouting = 'contextSink' | 'mediaElementSink';
+
 type OutputRuntime = {
   outputId: string;
   context: AudioContext;
   sources: OutputSourceRuntime[];
   busGain: GainNode;
   envelopeGain: GainNode;
+  /** Per-bus output delay; meters tap sources before this node. */
+  delayNode: DelayNode;
   analyser: AnalyserNode;
-  destination: MediaStreamAudioDestinationNode;
-  sinkElement: SinkCapableAudioElement;
+  routing: OutputSinkRouting;
+  destination?: MediaStreamAudioDestinationNode;
+  sinkElement?: SinkCapableAudioElement;
   meterData: Uint8Array<ArrayBuffer>;
   lastMeterReportMs: number;
   transportPlaying: boolean;
@@ -41,6 +46,9 @@ type OutputRuntime = {
 
 type TransportEnvelopeMode = 'playing' | 'fading-out' | 'paused';
 
+export const OUTPUT_BUS_DELAY_MAX_MS = 3000;
+const OUTPUT_DELAY_MAX_SECONDS = OUTPUT_BUS_DELAY_MAX_MS / 1000;
+const DELAY_SMOOTH_SECONDS = 0.02;
 const TRANSPORT_FADE_SECONDS = 0.035;
 const TRANSPORT_FADE_MS = TRANSPORT_FADE_SECONDS * 1000;
 const METER_FLOOR_DB = -60;
@@ -81,8 +89,10 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
     if (runtime.fadePauseTimer !== undefined) {
       window.clearTimeout(runtime.fadePauseTimer);
     }
-    runtime.sinkElement.pause();
-    runtime.sinkElement.remove();
+    if (runtime.sinkElement) {
+      runtime.sinkElement.pause();
+      runtime.sinkElement.remove();
+    }
     for (const source of runtime.sources) {
       source.element.pause();
       source.element.remove();
@@ -96,22 +106,21 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
     const busGain = context.createGain();
     const envelopeGain = context.createGain();
     envelopeGain.gain.value = state.paused ? 0 : 1;
+    const delayNode = context.createDelay(OUTPUT_DELAY_MAX_SECONDS);
+    const d0 = getClampedOutputDelaySeconds(output);
+    delayNode.delayTime.value = d0;
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
-    const destination = context.createMediaStreamDestination();
-    const sinkElement = createHiddenAudioOutput();
-    sinkElement.srcObject = destination.stream;
-    busGain.connect(envelopeGain).connect(analyser);
-    analyser.connect(destination);
+    busGain.connect(envelopeGain).connect(delayNode).connect(analyser);
     const runtime: OutputRuntime = {
       outputId: output.id,
       context,
       sources: [],
       busGain,
       envelopeGain,
+      delayNode,
       analyser,
-      destination,
-      sinkElement,
+      routing: 'mediaElementSink',
       meterData: new Uint8Array(analyser.fftSize),
       lastMeterReportMs: 0,
       transportPlaying: !state.paused,
@@ -152,7 +161,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
       runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, meterLanes });
     }
     outputRuntimes.set(output.id, runtime);
-    await applyOutputSink(output, runtime);
+    await configureOutputRouting(output, context, analyser, runtime);
   }
 }
 
@@ -164,6 +173,9 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
     if (!runtime) {
       continue;
     }
+    const targetDelay = getClampedOutputDelaySeconds(output);
+    const t = runtime.context.currentTime;
+    runtime.delayNode.delayTime.setTargetAtTime(targetDelay, t, DELAY_SMOOTH_SECONDS);
     const transportMode = syncTransportEnvelope(runtime, state);
     runtime.busGain.gain.value = getEffectiveOutputGain(state.globalAudioMuted, output, soloOutputIds);
     const hasSoloedSource = output.sources.some((selection) => selection.solo);
@@ -187,9 +199,9 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       });
     }
     if (transportMode === 'paused') {
-      runtime.sinkElement.pause();
+      pauseOutputTransport(runtime);
     } else {
-      requestMediaPlay(runtime.sinkElement);
+      playOutputTransport(runtime);
     }
   }
 }
@@ -204,6 +216,26 @@ export function getEffectiveOutputGain(
     return 0;
   }
   return dbToGain(output.busLevelDb);
+}
+
+function getClampedOutputDelaySeconds(output: VirtualOutputState): number {
+  return Math.min(OUTPUT_DELAY_MAX_SECONDS, Math.max(0, output.outputDelaySeconds ?? 0));
+}
+
+function playOutputTransport(runtime: OutputRuntime): void {
+  if (runtime.routing === 'contextSink') {
+    void runtime.context.resume();
+  } else if (runtime.sinkElement) {
+    requestMediaPlay(runtime.sinkElement);
+  }
+}
+
+function pauseOutputTransport(runtime: OutputRuntime): void {
+  if (runtime.routing === 'contextSink') {
+    void runtime.context.suspend();
+  } else if (runtime.sinkElement) {
+    runtime.sinkElement.pause();
+  }
 }
 
 function syncTransportEnvelope(runtime: OutputRuntime, state: DirectorState): TransportEnvelopeMode {
@@ -229,7 +261,7 @@ function syncTransportEnvelope(runtime: OutputRuntime, state: DirectorState): Tr
     runtime.fadePauseTimer = window.setTimeout(() => {
       runtime.fadePauseTimer = undefined;
       pauseRuntimeAtDirectorTarget(runtime, state);
-      runtime.sinkElement.pause();
+      pauseOutputTransport(runtime);
     }, TRANSPORT_FADE_MS);
     runtime.transportPlaying = false;
     return 'fading-out';
@@ -344,25 +376,49 @@ export function playAudioSourcePreview(source: AudioSourceState, state: Director
 
 export async function playOutputTestTone(output: VirtualOutputState): Promise<void> {
   const context = new AudioContext();
+  const maxDelay = OUTPUT_DELAY_MAX_SECONDS;
+  const delayNode = context.createDelay(maxDelay);
+  const d = getClampedOutputDelaySeconds(output);
+  delayNode.delayTime.value = d;
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  const destination = context.createMediaStreamDestination();
-  const toneOutput = createHiddenAudioOutput();
-  oscillator.frequency.value = 660;
   gain.gain.value = dbToGain(output.busLevelDb) * 0.18;
-  oscillator.connect(gain).connect(destination);
+  oscillator.frequency.value = 660;
+  oscillator.connect(gain).connect(delayNode);
+
+  const endPlayback = (toneOutput: SinkCapableAudioElement | undefined) => {
+    window.setTimeout(() => {
+      oscillator.stop();
+      toneOutput?.pause();
+      toneOutput?.remove();
+      void context.close();
+    }, 850);
+  };
+
+  if (context.setSinkId) {
+    delayNode.connect(context.destination);
+    try {
+      await context.setSinkId(output.sinkId ?? '');
+      oscillator.start();
+      void context.resume();
+      endPlayback(undefined);
+      return;
+    } catch {
+      delayNode.disconnect(context.destination);
+    }
+  }
+
+  const destination = context.createMediaStreamDestination();
+  delayNode.connect(destination);
+  const toneOutput = createHiddenAudioOutput();
   toneOutput.srcObject = destination.stream;
   if (toneOutput.setSinkId) {
     await toneOutput.setSinkId(output.sinkId ?? '');
   }
   oscillator.start();
+  void context.resume();
   await toneOutput.play();
-  window.setTimeout(() => {
-    oscillator.stop();
-    toneOutput.pause();
-    toneOutput.remove();
-    void context.close();
-  }, 850);
+  endPlayback(toneOutput);
 }
 
 export function meterWidth(db: number | undefined): string {
@@ -473,8 +529,36 @@ function createHiddenAudioOutput(): SinkCapableAudioElement {
   return output;
 }
 
-async function applyOutputSink(output: VirtualOutputState, runtime: OutputRuntime): Promise<void> {
-  if (!runtime.sinkElement.setSinkId) {
+async function configureOutputRouting(
+  output: VirtualOutputState,
+  context: AudioContext,
+  analyser: AnalyserNode,
+  runtime: OutputRuntime,
+): Promise<void> {
+  if (typeof context.setSinkId === 'function') {
+    analyser.connect(context.destination);
+    try {
+      await context.setSinkId(output.sinkId ?? '');
+      runtime.routing = 'contextSink';
+      await window.xtream.outputs.update(output.id, {
+        physicalRoutingAvailable: true,
+        fallbackReason: 'none',
+        error: undefined,
+      });
+      return;
+    } catch {
+      analyser.disconnect(context.destination);
+    }
+  }
+
+  const destination = context.createMediaStreamDestination();
+  analyser.connect(destination);
+  const sinkElement = createHiddenAudioOutput();
+  sinkElement.srcObject = destination.stream;
+  runtime.destination = destination;
+  runtime.sinkElement = sinkElement;
+  runtime.routing = 'mediaElementSink';
+  if (!sinkElement.setSinkId) {
     await window.xtream.outputs.update(output.id, {
       physicalRoutingAvailable: false,
       fallbackReason: 'setSinkId unavailable',
@@ -482,7 +566,7 @@ async function applyOutputSink(output: VirtualOutputState, runtime: OutputRuntim
     return;
   }
   try {
-    await runtime.sinkElement.setSinkId(output.sinkId ?? '');
+    await sinkElement.setSinkId(output.sinkId ?? '');
     await window.xtream.outputs.update(output.id, {
       physicalRoutingAvailable: true,
       fallbackReason: 'none',

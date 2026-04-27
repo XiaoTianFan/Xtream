@@ -954,7 +954,7 @@ input[type="range"].mini-slider:disabled {
 .audio-fader-zero {
   position: absolute;
   right: -0.35rem;
-  top: 16.7%;
+  top: var(--fader-zero-top, 16.7%);
   color: var(--accent-ochre);
   font-family: var(--font-data);
   font-size: 0.5rem;
@@ -1513,6 +1513,55 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   align-content: stretch;
   min-width: 0;
   min-height: 0;
+}
+
+/* Row 1: two headings; row 2: select | delay slider + number (aligned with mapping-field labels). */
+.output-detail-routing-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0.25rem var(--gutter);
+  align-items: center;
+  min-width: 0;
+}
+
+.output-detail-routing-label {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  min-width: 0;
+}
+
+.output-detail-routing-select-wrap {
+  min-width: 0;
+}
+
+.output-detail-routing-select-wrap select {
+  width: 100%;
+  min-width: 0;
+  min-height: 1.5rem;
+  padding: 0.18rem 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.output-detail-delay-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem;
+  gap: var(--gutter);
+  align-items: center;
+  min-width: 0;
+}
+
+.output-detail-delay-inputs input[type="number"] {
+  box-sizing: border-box;
+  min-height: 1.5rem;
+  height: 1.5rem;
+  padding: 0.15rem 0.4rem;
+  line-height: 1.2;
+  font-size: 0.72rem;
 }
 
 .output-detail-strip {

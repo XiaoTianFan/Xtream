@@ -22,9 +22,20 @@ import type {
 } from '../shared/types';
 import {
   meterLevelPercent,
+  OUTPUT_BUS_DELAY_MAX_MS,
   playAudioSourcePreview,
   playOutputTestTone,
 } from './control/audioRuntime';
+import {
+  busDbToFaderSliderValue,
+  busDbToNorm,
+  faderMaxSteps,
+  faderSliderMax,
+  faderSliderMin,
+  faderSliderValueToBusDb,
+  faderZeroSliderValue,
+  quantizeBusFaderDb,
+} from './control/busFaderLaw';
 import {
   assertElement,
   createButton,
@@ -613,12 +624,12 @@ function mountMixerStripContents(container: HTMLElement, output: VirtualOutputSt
   container.replaceChildren();
   const db = document.createElement('strong');
   db.className = 'mixer-db';
-  db.textContent = `${output.busLevelDb.toFixed(0)} dB`;
+  db.textContent = `${quantizeBusFaderDb(output.busLevelDb).toFixed(1)} dB`;
   const body = document.createElement('div');
   body.className = 'mixer-strip-body';
   const meter = createOutputMeter(output, state);
   const fader = createAudioFader(output, (busLevelDb) => {
-    db.textContent = `${busLevelDb.toFixed(0)} dB`;
+    db.textContent = `${busLevelDb.toFixed(1)} dB`;
     void window.xtream.outputs.update(output.id, { busLevelDb });
   });
   body.append(meter, fader);
@@ -805,36 +816,41 @@ function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: num
   zero.className = 'audio-fader-zero';
   zero.textContent = '0';
   const input = createSlider({
-    min: '-60',
-    max: '12',
+    min: faderSliderMin(),
+    max: faderSliderMax(),
     step: '1',
-    value: String(output.busLevelDb),
+    value: String(busDbToFaderSliderValue(quantizeBusFaderDb(output.busLevelDb))),
     ariaLabel: `${output.label} bus level`,
     className: 'audio-fader-input vertical-slider',
   });
   input.setAttribute('orient', 'vertical');
+  {
+    const t0 = busDbToNorm(0);
+    wrapper.style.setProperty('--fader-zero-top', `${(1 - t0) * 100}%`);
+  }
   syncAudioFaderPosition(wrapper, input);
   input.addEventListener('click', (event) => {
     event.stopPropagation();
     if (event.altKey) {
       event.preventDefault();
-      input.value = '0';
+      const z = faderZeroSliderValue();
+      input.value = String(z);
       syncSliderProgress(input);
       syncAudioFaderPosition(wrapper, input);
-      onChange(0);
+      onChange(quantizeBusFaderDb(faderSliderValueToBusDb(z)));
     }
   });
   input.addEventListener('input', () => {
     syncAudioFaderPosition(wrapper, input);
-    onChange(Number(input.value));
+    onChange(quantizeBusFaderDb(faderSliderValueToBusDb(Number(input.value))));
   });
   wrapper.append(rail, cap, zero, input);
   return wrapper;
 }
 
 function syncAudioFaderPosition(wrapper: HTMLElement, input: HTMLInputElement): void {
-  const min = Number(input.min || -60);
-  const max = Number(input.max || 12);
+  const min = Number(input.min || 0);
+  const max = Number(input.max || faderMaxSteps());
   const value = Number(input.value || 0);
   const percent = max === min ? 0 : ((value - min) / (max - min)) * 100;
   wrapper.style.setProperty('--fader-position', `${Math.min(100, Math.max(0, percent))}%`);
@@ -1957,14 +1973,45 @@ function renderOutputDetails(output: VirtualOutputState, state: DirectorState): 
     }),
   );
   toolbar.append(toolbarStart, toolbarActions);
-  const sinkField = createSelect('Physical output', getAudioSinkOptions(), output.sinkId ?? '', (sinkId) => {
+  const routingRow = document.createElement('div');
+  routingRow.className = 'output-detail-routing-row';
+  const physicalLabel = document.createElement('span');
+  physicalLabel.className = 'output-detail-routing-label';
+  physicalLabel.textContent = 'Physical output';
+  const delayLabel = document.createElement('span');
+  delayLabel.className = 'output-detail-routing-label';
+  delayLabel.textContent = 'Delay Offset (ms)';
+  const select = document.createElement('select');
+  for (const [optionValue, optionLabel] of getAudioSinkOptions()) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    select.append(option);
+  }
+  select.value = output.sinkId ?? '';
+  select.addEventListener('change', () => {
+    const sinkId = select.value;
     const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
     void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel });
   });
+  const selectWrap = document.createElement('div');
+  selectWrap.className = 'output-detail-routing-select-wrap';
+  selectWrap.append(select);
+  const delayMs = Math.round((output.outputDelaySeconds ?? 0) * 1000);
+  const delayControls = createDelayMsControlsOnly(
+    delayMs,
+    0,
+    OUTPUT_BUS_DELAY_MAX_MS,
+    1,
+    async (nextMs) => {
+      await window.xtream.outputs.update(output.id, { outputDelaySeconds: nextMs / 1000 });
+    },
+  );
+  routingRow.append(physicalLabel, delayLabel, selectWrap, delayControls);
   const sourceControls = createOutputSourceControls(output, state);
   const mainColumn = document.createElement('div');
   mainColumn.className = 'output-detail-main';
-  mainColumn.append(sinkField, sourceControls);
+  mainColumn.append(routingRow, sourceControls);
   const stripWrap = document.createElement('div');
   stripWrap.className = 'output-detail-strip';
   stripWrap.append(createOutputDetailMixerStrip(output, state));
@@ -2042,6 +2089,48 @@ function createNumberDetailControl(
   range.addEventListener('change', () => commit(range.value));
   number.addEventListener('change', () => commit(number.value));
   wrapper.append(title, range, number);
+  return wrapper;
+}
+
+/** Range + number only, for the output routing 2×2 layout (headings on the row above). */
+function createDelayMsControlsOnly(
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  onCommit: (value: number) => Promise<unknown>,
+): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'output-detail-delay-inputs';
+  const range = createSlider({
+    min: String(min),
+    max: String(max),
+    step: String(step),
+    value: String(value),
+    ariaLabel: 'Delay Offset (ms)',
+  });
+  const number = document.createElement('input');
+  number.type = 'number';
+  number.min = String(min);
+  number.max = String(max);
+  number.step = String(step);
+  number.value = String(value);
+  const commit = (rawValue: string) => {
+    const nextValue = Math.min(max, Math.max(min, Number(rawValue)));
+    if (!Number.isFinite(nextValue)) {
+      return;
+    }
+    range.value = String(nextValue);
+    number.value = String(nextValue);
+    syncSliderProgress(range);
+    void onCommit(nextValue).then(async () => renderState(await window.xtream.director.getState()));
+  };
+  range.addEventListener('input', () => {
+    number.value = range.value;
+  });
+  range.addEventListener('change', () => commit(range.value));
+  number.addEventListener('change', () => commit(number.value));
+  wrapper.append(range, number);
   return wrapper;
 }
 

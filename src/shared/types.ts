@@ -139,6 +139,8 @@ export type VirtualOutputState = {
   meterLanes?: MeterLaneState[];
   ready: boolean;
   physicalRoutingAvailable: boolean;
+  /** Delays the mixed bus to this physical output (higher = heard later). */
+  outputDelaySeconds?: number;
   fallbackAccepted?: boolean;
   fallbackReason?: string;
   error?: string;
@@ -258,6 +260,7 @@ export type PersistedVirtualOutputConfig = {
   sinkLabel?: string;
   busLevelDb: number;
   muted?: boolean;
+  outputDelaySeconds?: number;
   fallbackAccepted?: boolean;
 };
 
@@ -395,7 +398,17 @@ export type ShowSettingsUpdate = Partial<Pick<DirectorState, 'audioExtractionFor
 export type VirtualOutputUpdate = Partial<
   Pick<
     VirtualOutputState,
-    'label' | 'sources' | 'sinkId' | 'sinkLabel' | 'busLevelDb' | 'muted' | 'fallbackAccepted' | 'physicalRoutingAvailable' | 'fallbackReason' | 'error'
+    | 'label'
+    | 'sources'
+    | 'sinkId'
+    | 'sinkLabel'
+    | 'busLevelDb'
+    | 'muted'
+    | 'outputDelaySeconds'
+    | 'fallbackAccepted'
+    | 'physicalRoutingAvailable'
+    | 'fallbackReason'
+    | 'error'
   >
 >;
 

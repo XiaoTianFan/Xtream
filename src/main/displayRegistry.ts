@@ -1,5 +1,6 @@
 import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
+import { getAppIconPath } from './appIcon';
 import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWindowState } from '../shared/types';
 
 type RegistryEntry = {
@@ -78,6 +79,7 @@ export class DisplayRegistry {
 
     const bounds = options.bounds ?? targetDisplay?.bounds;
     const shouldFullscreen = options.fullscreen === true;
+    const iconPath = getAppIconPath();
     const window = new BrowserWindow({
       x: bounds?.x,
       y: bounds?.y,
@@ -88,6 +90,7 @@ export class DisplayRegistry {
       ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: false } : { fullscreen: false }),
       autoHideMenuBar: true,
       title: `Xtream ${id}`,
+      ...(iconPath ? { icon: iconPath } : {}),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,

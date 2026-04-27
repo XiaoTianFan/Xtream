@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
+import { getAppIconPath } from './appIcon';
 import { Director } from './director';
 import { DisplayRegistry } from './displayRegistry';
 import { toRendererFileUrl } from './fileUrls';
@@ -66,12 +67,14 @@ const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'p
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 function createControlWindow(): BrowserWindow {
+  const iconPath = getAppIconPath();
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 980,
     minHeight: 680,
     title: 'Xtream Control',
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -94,11 +97,13 @@ function createControlWindow(): BrowserWindow {
 }
 
 function createAudioWindow(): BrowserWindow {
+  const iconPath = getAppIconPath();
   const window = new BrowserWindow({
     width: 320,
     height: 120,
     show: false,
     title: 'Xtream Audio Engine',
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
