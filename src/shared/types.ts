@@ -170,6 +170,9 @@ export type LoopState = {
   endSeconds?: number;
 };
 
+/** Default fade duration (seconds) for global audio mute and display blackout when a show file omits these fields. */
+export const SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS = 1;
+
 export type DirectorState = {
   paused: boolean;
   rate: number;
@@ -179,6 +182,10 @@ export type DirectorState = {
   loop: LoopState;
   globalAudioMuted: boolean;
   globalDisplayBlackout: boolean;
+  /** Seconds to ramp output bus gain when toggling global audio mute (0 = instant). */
+  globalAudioMuteFadeOutSeconds: number;
+  /** Seconds for display / preview blackout opacity transition (0 = instant). */
+  globalDisplayBlackoutFadeOutSeconds: number;
   performanceMode: boolean;
   visuals: Record<VisualId, VisualState>;
   audioSources: Record<AudioSourceId, AudioSourceState>;
@@ -293,6 +300,8 @@ export type PersistedShowConfigV4 = Omit<PersistedShowConfigV3, 'schemaVersion'>
 export type PersistedShowConfigV5 = Omit<PersistedShowConfigV4, 'schemaVersion'> & {
   schemaVersion: 5;
   audioExtractionFormat: AudioExtractionFormat;
+  globalAudioMuteFadeOutSeconds?: number;
+  globalDisplayBlackoutFadeOutSeconds?: number;
 };
 
 export type PersistedShowConfig = PersistedShowConfigV5;
@@ -396,7 +405,11 @@ export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
 export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
-export type ShowSettingsUpdate = Partial<Pick<DirectorState, 'audioExtractionFormat'>>;
+/** Fields persisted in the show project file (`.xtream-show.json`), not application-wide preferences. */
+export type ShowProjectFileSettingsUpdate = Partial<
+  Pick<DirectorState, 'audioExtractionFormat' | 'globalAudioMuteFadeOutSeconds' | 'globalDisplayBlackoutFadeOutSeconds'>
+>;
+export type ShowSettingsUpdate = ShowProjectFileSettingsUpdate;
 
 export type VirtualOutputUpdate = Partial<
   Pick<

@@ -22,6 +22,9 @@ import type {
 } from '../shared/types';
 import {
   meterLevelPercent,
+  meterScaleLabelTopPercent,
+  METER_DISPLAY_CEIL_DB,
+  METER_DISPLAY_FLOOR_DB,
   OUTPUT_BUS_DELAY_MAX_MS,
   playAudioSourcePreview,
   playOutputTestTone,
@@ -627,12 +630,15 @@ function mountMixerStripContents(container: HTMLElement, output: VirtualOutputSt
   db.textContent = `${quantizeBusFaderDb(output.busLevelDb).toFixed(1)} dB`;
   const body = document.createElement('div');
   body.className = 'mixer-strip-body';
+  const track = document.createElement('div');
+  track.className = 'mixer-strip-track';
   const meter = createOutputMeter(output, state);
   const fader = createAudioFader(output, (busLevelDb) => {
     db.textContent = `${busLevelDb.toFixed(1)} dB`;
     void window.xtream.outputs.update(output.id, { busLevelDb });
   });
-  body.append(meter, fader);
+  track.append(meter, fader);
+  body.append(track);
   const toggles = document.createElement('div');
   toggles.className = 'mixer-toggles';
   const isSoloed = soloOutputIds.has(output.id);
@@ -702,9 +708,19 @@ function createOutputMeter(output: VirtualOutputState, state = currentState): HT
 
   const scale = document.createElement('div');
   scale.className = 'output-meter-scale';
-  for (const label of ['0', '-6', '-12', '-24', '-36', '-60']) {
+  const meterScaleMarks: { db: number; text: string }[] = [
+    { db: 0, text: '0' },
+    { db: -6, text: '-6' },
+    { db: -12, text: '-12' },
+    { db: -24, text: '-24' },
+    { db: -36, text: '-36' },
+    { db: -60, text: '-60' },
+  ];
+  for (const mark of meterScaleMarks) {
     const tick = document.createElement('span');
-    tick.textContent = label;
+    tick.className = 'output-meter-scale-tick';
+    tick.textContent = mark.text;
+    tick.style.top = meterScaleLabelTopPercent(mark.db);
     scale.append(tick);
   }
 
@@ -759,8 +775,11 @@ function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void 
   const segments = meterLaneSegmentsCache.get(laneElement) ?? Array.from(laneElement.querySelectorAll<HTMLElement>('.output-meter-segments span'));
   const activeCount = Math.round((segments.length * percent) / 100);
   const isClipped = laneElement.dataset.state === 'clip';
+  const spanDb = METER_DISPLAY_CEIL_DB - METER_DISPLAY_FLOOR_DB;
   segments.forEach((segment, index) => {
-    const segmentDb = -((index / Math.max(1, segments.length - 1)) * 60);
+    const segmentDb =
+      METER_DISPLAY_CEIL_DB - (index / Math.max(1, segments.length - 1)) * spanDb;
+    /* Row 0 = top = 0 dB; last row = bottom = floor. Light from the bottom up (std. VU). */
     segment.dataset.active = String(index >= segments.length - activeCount);
     segment.dataset.zone = isClipped || segmentDb >= -3 ? 'danger' : segmentDb >= -12 ? 'hot' : 'nominal';
   });
@@ -1186,6 +1205,9 @@ function syncDisplayCardSummaries(displays: DisplayWindowState[]): void {
     }
     const preview = elements.displayList.querySelector<HTMLElement>(`[data-display-preview="${display.id}"]`);
     if (preview) {
+      if (currentState) {
+        applyDisplayBlackoutFadeStyle(preview, currentState.globalDisplayBlackoutFadeOutSeconds);
+      }
       preview.classList.toggle('blacked-out', Boolean(currentState?.globalDisplayBlackout));
       for (const visualId of getPreviewVisualIds(display.layout)) {
         const visual = currentState?.visuals[visualId];
@@ -1238,10 +1260,17 @@ function formatMilliseconds(seconds: number | undefined): string {
   return seconds === undefined ? '--' : `${Math.round(seconds * 1000)}ms`;
 }
 
+function applyDisplayBlackoutFadeStyle(element: HTMLElement, fadeOutSeconds: number): void {
+  element.style.setProperty('--display-blackout-fade', `${Math.max(0, fadeOutSeconds)}s`);
+}
+
 function createDisplayPreview(display: DisplayWindowState, state: DirectorState | undefined): HTMLElement {
   const preview = document.createElement('div');
   preview.className = `display-preview ${display.layout.type}`;
   preview.classList.toggle('blacked-out', Boolean(state?.globalDisplayBlackout));
+  if (state) {
+    applyDisplayBlackoutFadeStyle(preview, state.globalDisplayBlackoutFadeOutSeconds);
+  }
   if (!state) {
     preview.textContent = 'Preview unavailable';
     return preview;
@@ -1619,6 +1648,8 @@ function renderActiveSurface(state: DirectorState): void {
     globals: {
       globalAudioMuted: state.globalAudioMuted,
       globalDisplayBlackout: state.globalDisplayBlackout,
+      globalAudioMuteFadeOutSeconds: state.globalAudioMuteFadeOutSeconds,
+      globalDisplayBlackoutFadeOutSeconds: state.globalDisplayBlackoutFadeOutSeconds,
       performanceMode: state.performanceMode,
       audioExtractionFormat: state.audioExtractionFormat,
     },
@@ -1685,6 +1716,15 @@ function renderPlaceholderSurface(title: string, detail: string): void {
 
 function renderConfigSurface(state: DirectorState): void {
   const summary = createSurfaceCard('Runtime');
+  summary.append(
+    createDetailLine('Runtime Version', XTREAM_RUNTIME_VERSION),
+    createDetailLine('Readiness', getLiveStateLabel(state)),
+    createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
+    createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
+    createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
+  );
+
+  const showProject = createSurfaceCard('Show project');
   const formatSelect = createSelect(
     'Extracted Audio Format',
     [
@@ -1696,13 +1736,26 @@ function renderConfigSurface(state: DirectorState): void {
       void window.xtream.show.updateSettings({ audioExtractionFormat: audioExtractionFormat as AudioExtractionFormat }).then(renderState);
     },
   );
-  summary.append(
-    createDetailLine('Runtime Version', XTREAM_RUNTIME_VERSION),
-    createDetailLine('Readiness', getLiveStateLabel(state)),
-    createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
-    createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
-    createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
+  showProject.append(
+    createHint('These options are stored in your show project file (Save Show). They are not global application preferences.'),
     formatSelect,
+    createHint('Fade durations apply when toggling audio mute or display blackout from the operator footer (0 = instant).'),
+    createNumberDetailControl(
+      'Audio mute fade (s)',
+      state.globalAudioMuteFadeOutSeconds,
+      0,
+      10,
+      0.05,
+      (globalAudioMuteFadeOutSeconds) => window.xtream.show.updateSettings({ globalAudioMuteFadeOutSeconds }),
+    ),
+    createNumberDetailControl(
+      'Display blackout fade (s)',
+      state.globalDisplayBlackoutFadeOutSeconds,
+      0,
+      10,
+      0.05,
+      (globalDisplayBlackoutFadeOutSeconds) => window.xtream.show.updateSettings({ globalDisplayBlackoutFadeOutSeconds }),
+    ),
   );
 
   const actions = createSurfaceCard('System Actions');
@@ -1735,7 +1788,7 @@ function renderConfigSurface(state: DirectorState): void {
   pre.textContent = JSON.stringify(state, null, 2);
   rawState.append(pre);
 
-  elements.surfacePanel.replaceChildren(wrapSurfaceGrid(summary, actions, topology, rawState));
+  elements.surfacePanel.replaceChildren(wrapSurfaceGrid(summary, showProject, actions, topology, rawState));
 }
 
 function renderLogsSurface(state: DirectorState): void {

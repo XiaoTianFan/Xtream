@@ -26,6 +26,7 @@ import type {
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
+import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds } from '../shared/timeline';
 
@@ -62,6 +63,8 @@ export class Director extends EventEmitter {
       loop: { enabled: false, startSeconds: 0 },
       globalAudioMuted: false,
       globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
       performanceMode: false,
       visuals: {},
       audioSources: {},
@@ -360,9 +363,20 @@ export class Director extends EventEmitter {
   }
 
   updateShowSettings(update: ShowSettingsUpdate): DirectorState {
+    const clampFade = (value: number | undefined, previous: number): number => {
+      if (value === undefined) {
+        return previous;
+      }
+      return Math.min(60, Math.max(0, value));
+    };
     this.state = {
       ...this.state,
       audioExtractionFormat: update.audioExtractionFormat ?? this.state.audioExtractionFormat,
+      globalAudioMuteFadeOutSeconds: clampFade(update.globalAudioMuteFadeOutSeconds, this.state.globalAudioMuteFadeOutSeconds),
+      globalDisplayBlackoutFadeOutSeconds: clampFade(
+        update.globalDisplayBlackoutFadeOutSeconds,
+        this.state.globalDisplayBlackoutFadeOutSeconds,
+      ),
     };
     this.emitState();
     return this.getState();
@@ -384,6 +398,8 @@ export class Director extends EventEmitter {
       loop: { enabled: false, startSeconds: 0 },
       globalAudioMuted: false,
       globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
       performanceMode: false,
       visuals: {},
       audioSources: {},
@@ -593,6 +609,8 @@ export class Director extends EventEmitter {
       savedAt,
       rate: this.state.rate,
       audioExtractionFormat: this.state.audioExtractionFormat,
+      globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,
+      globalDisplayBlackoutFadeOutSeconds: this.state.globalDisplayBlackoutFadeOutSeconds,
       loop: structuredClone(this.state.loop),
       visuals: Object.fromEntries(
         Object.values(this.state.visuals).map((visual) => [
@@ -679,6 +697,14 @@ export class Director extends EventEmitter {
     this.state.performanceMode = false;
     this.state.rate = config.rate ?? 1;
     this.state.audioExtractionFormat = config.audioExtractionFormat ?? 'm4a';
+    this.state.globalAudioMuteFadeOutSeconds = Math.min(
+      60,
+      Math.max(0, config.globalAudioMuteFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
+    );
+    this.state.globalDisplayBlackoutFadeOutSeconds = Math.min(
+      60,
+      Math.max(0, config.globalDisplayBlackoutFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
+    );
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
     this.state.loop = structuredClone(config.loop);

@@ -67,6 +67,7 @@ function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId,
 function handleState(state: DirectorState): void {
   currentState = state;
   currentDirectorSeconds = getDirectorSeconds(state);
+  displayRoot.style.setProperty('--display-blackout-fade', `${Math.max(0, state.globalDisplayBlackoutFadeOutSeconds)}s`);
   displayRoot.classList.toggle('blacked-out', state.globalDisplayBlackout);
   const display = state.displays[displayId];
   if (!display) {

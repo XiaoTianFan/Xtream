@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PersistedShowConfig } from '../shared/types';
 import { Director } from './director';
 
 function addReadyVideo(director: Director, id: string, durationSeconds: number): void {
@@ -21,6 +22,8 @@ describe('Director', () => {
     expect(state.visuals).toEqual({});
     expect(state.displays).toEqual({});
     expect(state.outputs['output-main']).toMatchObject({ label: 'Main Output', sources: [] });
+    expect(state.globalAudioMuteFadeOutSeconds).toBe(1);
+    expect(state.globalDisplayBlackoutFadeOutSeconds).toBe(1);
   });
 
   it('advances playback time from the shared anchor while playing', () => {
@@ -256,6 +259,39 @@ describe('Director', () => {
     expect(state).toMatchObject({ globalAudioMuted: true, globalDisplayBlackout: true });
     expect(director.createShowConfig()).not.toHaveProperty('globalAudioMuted');
     expect(director.createShowConfig()).not.toHaveProperty('globalDisplayBlackout');
+  });
+
+  it('persists global mute and blackout fade durations in show config', () => {
+    const director = new Director(() => 1000);
+    director.updateShowSettings({ globalAudioMuteFadeOutSeconds: 0.5, globalDisplayBlackoutFadeOutSeconds: 0.25 });
+    expect(director.createShowConfig()).toMatchObject({
+      globalAudioMuteFadeOutSeconds: 0.5,
+      globalDisplayBlackoutFadeOutSeconds: 0.25,
+    });
+  });
+
+  it('defaults fade durations to one second when a show file omits them', () => {
+    const director = new Director(() => 1000);
+    const minimal: PersistedShowConfig = {
+      schemaVersion: 5,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      audioExtractionFormat: 'm4a',
+      loop: { enabled: false, startSeconds: 0 },
+      visuals: {},
+      audioSources: {},
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [],
+          busLevelDb: 0,
+        },
+      },
+      displays: [],
+    };
+    director.restoreShowConfig(minimal, { visuals: {}, audioSources: {} });
+    expect(director.getState().globalAudioMuteFadeOutSeconds).toBe(1);
+    expect(director.getState().globalDisplayBlackoutFadeOutSeconds).toBe(1);
   });
 
   it('allows loop and seek across the longest active timeline span', () => {

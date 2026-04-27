@@ -18,12 +18,15 @@ import {
 import { toRendererFileUrl } from './fileUrls';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type { DirectorState, PersistedShowConfig } from '../shared/types';
+import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 
 const config: PersistedShowConfig = {
   schemaVersion: 5,
   savedAt: '2026-04-26T00:00:00.000Z',
   rate: 1,
   audioExtractionFormat: 'm4a',
+  globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+  globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
   loop: { enabled: true, startSeconds: 0, endSeconds: 10 },
   visuals: {
     'visual-a': {
@@ -92,6 +95,8 @@ function createRuntimeState(): DirectorState {
     loop: { enabled: false, startSeconds: 0 },
     globalAudioMuted: false,
     globalDisplayBlackout: false,
+    globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+    globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
     performanceMode: false,
     visuals: {},
     audioSources: {},

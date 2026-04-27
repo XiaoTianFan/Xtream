@@ -30,14 +30,21 @@ body {
 }
 
 .display-root {
+  --display-blackout-fade: 0s;
   display: grid;
   width: 100vw;
   height: 100vh;
   background: #000;
 }
 
+.display-root > * {
+  opacity: 1;
+  transition: opacity var(--display-blackout-fade, 0s) ease;
+}
+
 .display-root.blacked-out > * {
-  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .display-output {

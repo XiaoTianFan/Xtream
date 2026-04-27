@@ -30,6 +30,7 @@ type OutputRuntime = {
   context: AudioContext;
   sources: OutputSourceRuntime[];
   busGain: GainNode;
+  globalMuteGain: GainNode;
   envelopeGain: GainNode;
   /** Per-bus output delay; meters tap sources before this node. */
   delayNode: DelayNode;
@@ -49,14 +50,22 @@ type TransportEnvelopeMode = 'playing' | 'fading-out' | 'paused';
 export const OUTPUT_BUS_DELAY_MAX_MS = 3000;
 const OUTPUT_DELAY_MAX_SECONDS = OUTPUT_BUS_DELAY_MAX_MS / 1000;
 const DELAY_SMOOTH_SECONDS = 0.02;
-const TRANSPORT_FADE_SECONDS = 0.035;
-const TRANSPORT_FADE_MS = TRANSPORT_FADE_SECONDS * 1000;
-const METER_FLOOR_DB = -60;
-const METER_CLIP_DB = 0;
+/** Pause/stop (and resume) envelope ramp; set to 1000ms to verify audibility. */
+const TRANSPORT_FADE_MS = 85;
+const TRANSPORT_FADE_SECONDS = TRANSPORT_FADE_MS / 1000;
+/** On-screen level meter: bottom of scale (silence / noise floor). */
+export const METER_DISPLAY_FLOOR_DB = -60;
+/** Top of graticule: 0 dB ≈ full scale; levels above read as 100% (clip). */
+export const METER_DISPLAY_CEIL_DB = 0;
+const METER_SPAN_DB = METER_DISPLAY_CEIL_DB - METER_DISPLAY_FLOOR_DB;
+
+const METER_FLOOR_DB = METER_DISPLAY_FLOOR_DB;
+const METER_CLIP_DB = METER_DISPLAY_CEIL_DB;
 
 let audioGraphSignature = '';
 let outputRuntimes = new Map<string, OutputRuntime>();
 let soloOutputIds = new Set<string>();
+let lastGlobalAudioMuted: boolean | undefined;
 
 export function setSoloOutputIds(outputIds: Iterable<string>): void {
   soloOutputIds = new Set(outputIds);
@@ -85,6 +94,7 @@ export function syncVirtualAudioGraph(state: DirectorState): void {
 }
 
 export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
+  lastGlobalAudioMuted = undefined;
   for (const runtime of outputRuntimes.values()) {
     if (runtime.fadePauseTimer !== undefined) {
       window.clearTimeout(runtime.fadePauseTimer);
@@ -104,6 +114,8 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
   for (const output of Object.values(state.outputs)) {
     const context = new AudioContextCtor();
     const busGain = context.createGain();
+    const globalMuteGain = context.createGain();
+    globalMuteGain.gain.value = state.globalAudioMuted ? 0 : 1;
     const envelopeGain = context.createGain();
     envelopeGain.gain.value = state.paused ? 0 : 1;
     const delayNode = context.createDelay(OUTPUT_DELAY_MAX_SECONDS);
@@ -111,12 +123,13 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
     delayNode.delayTime.value = d0;
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
-    busGain.connect(envelopeGain).connect(delayNode).connect(analyser);
+    busGain.connect(globalMuteGain).connect(envelopeGain).connect(delayNode).connect(analyser);
     const runtime: OutputRuntime = {
       outputId: output.id,
       context,
       sources: [],
       busGain,
+      globalMuteGain,
       envelopeGain,
       delayNode,
       analyser,
@@ -168,6 +181,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
 export function syncAudioRuntimeToDirector(state: DirectorState): void {
   const directorSeconds = getDirectorSeconds(state);
   const syncKey = createPlaybackSyncKey(state);
+  syncGlobalMuteGains(state);
   for (const output of Object.values(state.outputs)) {
     const runtime = outputRuntimes.get(output.id);
     if (!runtime) {
@@ -177,7 +191,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
     const t = runtime.context.currentTime;
     runtime.delayNode.delayTime.setTargetAtTime(targetDelay, t, DELAY_SMOOTH_SECONDS);
     const transportMode = syncTransportEnvelope(runtime, state);
-    runtime.busGain.gain.value = getEffectiveOutputGain(state.globalAudioMuted, output, soloOutputIds);
+    runtime.busGain.gain.value = getProgramOutputGain(output, soloOutputIds);
     const hasSoloedSource = output.sources.some((selection) => selection.solo);
     for (const sourceRuntime of runtime.sources) {
       const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
@@ -211,11 +225,51 @@ export function getEffectiveOutputGain(
   output: Pick<VirtualOutputState, 'id' | 'muted' | 'busLevelDb'>,
   soloIds: ReadonlySet<string>,
 ): number {
+  if (globalAudioMuted) {
+    return 0;
+  }
+  return getProgramOutputGain(output, soloIds);
+}
+
+function getProgramOutputGain(
+  output: Pick<VirtualOutputState, 'id' | 'muted' | 'busLevelDb'>,
+  soloIds: ReadonlySet<string>,
+): number {
   const hasSolo = soloIds.size > 0;
-  if (globalAudioMuted || output.muted || (hasSolo && !soloIds.has(output.id))) {
+  if (output.muted || (hasSolo && !soloIds.has(output.id))) {
     return 0;
   }
   return dbToGain(output.busLevelDb);
+}
+
+function syncGlobalMuteGains(state: DirectorState): void {
+  if (outputRuntimes.size === 0) {
+    return;
+  }
+  if (lastGlobalAudioMuted === undefined) {
+    lastGlobalAudioMuted = state.globalAudioMuted;
+    for (const runtime of outputRuntimes.values()) {
+      runtime.globalMuteGain.gain.value = state.globalAudioMuted ? 0 : 1;
+    }
+    return;
+  }
+  if (state.globalAudioMuted === lastGlobalAudioMuted) {
+    return;
+  }
+  lastGlobalAudioMuted = state.globalAudioMuted;
+  const target = state.globalAudioMuted ? 0 : 1;
+  const dur = Math.max(0, state.globalAudioMuteFadeOutSeconds ?? 0);
+  for (const runtime of outputRuntimes.values()) {
+    const g = runtime.globalMuteGain.gain;
+    const t0 = runtime.context.currentTime;
+    g.cancelScheduledValues(t0);
+    if (dur === 0) {
+      g.setValueAtTime(target, t0);
+    } else {
+      g.setValueAtTime(g.value, t0);
+      g.linearRampToValueAtTime(target, t0 + dur);
+    }
+  }
 }
 
 function getClampedOutputDelaySeconds(output: VirtualOutputState): number {
@@ -299,7 +353,7 @@ export function sampleMeters(state: DirectorState, meterRoot?: HTMLElement): voi
     const output = state.outputs[outputId];
     const lanes: MeterLaneState[] = [];
     let peakDb = METER_FLOOR_DB;
-    const outputGain = runtime.busGain.gain.value * runtime.envelopeGain.gain.value;
+    const outputGain = runtime.busGain.gain.value * runtime.globalMuteGain.gain.value * runtime.envelopeGain.gain.value;
     for (const sourceRuntime of runtime.sources) {
       const source = state.audioSources[sourceRuntime.audioSourceId];
       for (const lane of sourceRuntime.meterLanes) {
@@ -421,12 +475,33 @@ export async function playOutputTestTone(output: VirtualOutputState): Promise<vo
   endPlayback(toneOutput);
 }
 
-export function meterWidth(db: number | undefined): string {
-  return `${Math.max(0, Math.min(100, ((db ?? -60) + 60) * (100 / 72)))}%`;
+/**
+ * dB of each tick on the -60…0 dB graticule: `0` at the top, `-60` at the bottom, linear dB.
+ */
+export function meterScaleLabelTopPercent(db: number): string {
+  const d = Math.max(METER_DISPLAY_FLOOR_DB, Math.min(METER_DISPLAY_CEIL_DB, db));
+  const fromTop = ((METER_DISPLAY_CEIL_DB - d) / METER_SPAN_DB) * 100;
+  return `${fromTop}%`;
 }
 
+/** Same mapping as {@link meterLevelPercent}, for square mini-meters. */
+export function meterWidth(db: number | undefined): string {
+  return `${meterLevelPercent(db)}%`;
+}
+
+/**
+ * Fill height 0…100%: {@link METER_DISPLAY_FLOOR_DB} → 0%, {@link METER_DISPLAY_CEIL_DB} → 100%.
+ * Above 0 dB the bar stays full (clip / over).
+ */
 export function meterLevelPercent(db: number | undefined): number {
-  return Math.max(0, Math.min(100, (((db ?? METER_FLOOR_DB) - METER_FLOOR_DB) / Math.abs(METER_FLOOR_DB)) * 100));
+  const d = db ?? METER_DISPLAY_FLOOR_DB;
+  if (d >= METER_DISPLAY_CEIL_DB) {
+    return 100;
+  }
+  if (d <= METER_DISPLAY_FLOOR_DB) {
+    return 0;
+  }
+  return ((d - METER_DISPLAY_FLOOR_DB) / METER_SPAN_DB) * 100;
 }
 
 function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string {
