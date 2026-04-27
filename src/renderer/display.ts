@@ -15,7 +15,15 @@ let driftTimer: number | undefined;
 let syncTimer: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
 const videoElements = new Map<VisualId, HTMLVideoElement>();
+const mediaSyncStates = new WeakMap<HTMLMediaElement, MediaSyncState>();
 const SEEK_THRESHOLD_SECONDS = 0.12;
+
+type MediaSyncState = {
+  pendingSeekSeconds?: number;
+  playAfterSeek?: boolean;
+  lastPlayAttemptMs?: number;
+  lastSyncKey?: string;
+};
 
 if (!root) {
   throw new Error('Missing display root.');
@@ -151,6 +159,7 @@ function createRenderSignature(layout: VisualLayoutProfile, visualsById: Record<
 function syncVideoElements(display: DisplayWindowState, state: DirectorState): void {
   const targetSeconds = getDirectorSeconds(state);
   currentDirectorSeconds = targetSeconds;
+  const syncKey = createPlaybackSyncKey(state);
   for (const video of videoElements.values()) {
     if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
       continue;
@@ -163,22 +172,96 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visualId = video.dataset.visualId;
     const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
     const effectiveTarget = getMediaEffectiveTime(shouldApplyCorrection ? correction.targetSeconds! : targetSeconds, visualDuration, state.loop);
-    if (Math.abs(video.currentTime - effectiveTarget) > SEEK_THRESHOLD_SECONDS) {
-      video.currentTime = clampVideoTime(effectiveTarget, video);
-    }
+    syncTimedMediaElement(video, effectiveTarget, !state.paused, shouldApplyCorrection ? `${syncKey}:correction:${correction.revision}` : syncKey, 0.75, clampVideoTime);
     if (correction?.revision !== undefined && shouldApplyCorrection) {
       appliedCorrectionRevisions.add(correction.revision);
     }
     video.playbackRate = state.rate;
-    if (state.paused) {
-      video.pause();
-    } else if (video.paused) {
-      void video.play().catch(() => undefined);
-    }
   }
 }
 
-function clampVideoTime(seconds: number, video: HTMLVideoElement): number {
+function syncTimedMediaElement(
+  element: HTMLMediaElement,
+  targetSeconds: number,
+  shouldPlay: boolean,
+  syncKey: string,
+  driftSeekThresholdSeconds: number,
+  clamp: (seconds: number, element: HTMLMediaElement) => number,
+): void {
+  const state = getMediaSyncState(element);
+  const clampedTarget = clamp(targetSeconds, element);
+  const hasPendingSeek = state.pendingSeekSeconds !== undefined;
+  if (hasPendingSeek) {
+    state.playAfterSeek = shouldPlay;
+    if (!shouldPlay) {
+      element.pause();
+    }
+    return;
+  }
+
+  const syncKeyChanged = state.lastSyncKey !== syncKey;
+  state.lastSyncKey = syncKey;
+  const driftSeconds = Math.abs(element.currentTime - clampedTarget);
+  const shouldSeek = syncKeyChanged ? driftSeconds > 0.05 : driftSeconds > driftSeekThresholdSeconds;
+  if (shouldSeek) {
+    state.pendingSeekSeconds = clampedTarget;
+    state.playAfterSeek = shouldPlay;
+    const completeSeek = () => {
+      element.removeEventListener('seeked', completeSeek);
+      state.pendingSeekSeconds = undefined;
+      if (state.playAfterSeek) {
+        requestMediaPlay(element, state, true);
+      }
+    };
+    element.addEventListener('seeked', completeSeek, { once: true });
+    element.currentTime = clampedTarget;
+    window.setTimeout(() => {
+      if (state.pendingSeekSeconds === clampedTarget) {
+        completeSeek();
+      }
+    }, 250);
+    if (!shouldPlay) {
+      element.pause();
+    }
+    return;
+  }
+
+  if (!shouldPlay) {
+    element.pause();
+    return;
+  }
+  requestMediaPlay(element, state);
+}
+
+function createPlaybackSyncKey(state: DirectorState): string {
+  return JSON.stringify({
+    paused: state.paused,
+    anchorWallTimeMs: state.anchorWallTimeMs,
+    offsetSeconds: state.offsetSeconds,
+    rate: state.rate,
+    loop: state.loop,
+  });
+}
+
+function getMediaSyncState(element: HTMLMediaElement): MediaSyncState {
+  let state = mediaSyncStates.get(element);
+  if (!state) {
+    state = {};
+    mediaSyncStates.set(element, state);
+  }
+  return state;
+}
+
+function requestMediaPlay(element: HTMLMediaElement, state = getMediaSyncState(element), immediate = false): void {
+  const now = Date.now();
+  if (!immediate && state.lastPlayAttemptMs !== undefined && now - state.lastPlayAttemptMs < 500) {
+    return;
+  }
+  state.lastPlayAttemptMs = now;
+  void element.play().catch(() => undefined);
+}
+
+function clampVideoTime(seconds: number, video: HTMLMediaElement): number {
   const safeSeconds = Math.max(0, seconds);
   if (!Number.isFinite(video.duration)) {
     return safeSeconds;
@@ -191,13 +274,23 @@ void window.xtream.renderer.ready({ kind: 'display', displayId });
 void window.xtream.director.getState().then(handleState);
 
 driftTimer = window.setInterval(() => {
+  if (currentState?.paused) {
+    return;
+  }
   const videos = Array.from(videoElements.values()).filter((video) => video.readyState >= HTMLMediaElement.HAVE_METADATA);
   const directorSeconds = currentState ? getDirectorSeconds(currentState) : currentDirectorSeconds;
   currentDirectorSeconds = directorSeconds;
+  if (videos.some((video) => getMediaSyncState(video).pendingSeekSeconds !== undefined)) {
+    return;
+  }
   const driftSeconds =
-    videos.length > 0
+    videos.length > 0 && currentState
       ? videos.reduce((max, video) => {
-          const drift = video.currentTime - directorSeconds;
+          const visualId = video.dataset.visualId;
+          const state = currentState!;
+          const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
+          const targetSeconds = getMediaEffectiveTime(directorSeconds, visualDuration, state.loop);
+          const drift = video.currentTime - targetSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)
       : 0;

@@ -160,6 +160,44 @@ describe('Director', () => {
     expect(director.getState().readiness.issues).toContainEqual(expect.objectContaining({ severity: 'warning', target: 'preview:display:display-0:visual-a' }));
   });
 
+  it('does not degrade displays for modest repeated drift and recovers drift-only degradation', () => {
+    const director = new Director(() => 1000);
+    addReadyVideo(director, 'visual-a', 10);
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single', visualId: 'visual-a' }, health: 'ready' });
+    for (let index = 0; index < 20; index += 1) {
+      director.ingestDrift({
+        kind: 'display',
+        displayId: 'display-0',
+        observedSeconds: 1.25,
+        directorSeconds: 1,
+        driftSeconds: 0.25,
+        reportedAtWallTimeMs: 1000 + index,
+      });
+    }
+    expect(director.getState().displays['display-0']).toMatchObject({ health: 'ready', lastDriftSeconds: 0.25 });
+
+    for (let index = 0; index < 12; index += 1) {
+      director.ingestDrift({
+        kind: 'display',
+        displayId: 'display-0',
+        observedSeconds: 4,
+        directorSeconds: 1,
+        driftSeconds: 3,
+        reportedAtWallTimeMs: 2000 + index,
+      });
+    }
+    expect(director.getState().displays['display-0'].health).toBe('degraded');
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 1,
+      directorSeconds: 1,
+      driftSeconds: 0,
+      reportedAtWallTimeMs: 3000,
+    });
+    expect(director.getState().displays['display-0'].health).toBe('ready');
+  });
+
   it('blocks output readiness on missing sources and routing fallback', () => {
     const director = new Director(() => 1000);
     const output = director.createVirtualOutput();

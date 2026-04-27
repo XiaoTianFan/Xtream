@@ -81,6 +81,14 @@ let displayRenderSignature = '';
 let audioGraphSignature = '';
 let outputRuntimes = new Map<string, OutputRuntime>();
 const activePanels = new WeakSet<HTMLElement>();
+const mediaSyncStates = new WeakMap<HTMLMediaElement, MediaSyncState>();
+
+type MediaSyncState = {
+  pendingSeekSeconds?: number;
+  playAfterSeek?: boolean;
+  lastPlayAttemptMs?: number;
+  lastSyncKey?: string;
+};
 
 const transportDraftElements = new Set<HTMLInputElement>([
   elements.rateInput,
@@ -123,7 +131,7 @@ function renderState(state: DirectorState): void {
 
 function isPanelInteractionActive(panel: HTMLElement): boolean {
   const activeElement = document.activeElement;
-  return activePanels.has(panel) || (activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('button, select, input, textarea'));
+  return activePanels.has(panel) || (activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('select, input, textarea'));
 }
 
 function renderIssues(issues: MediaValidationIssue[]): void {
@@ -604,6 +612,7 @@ async function applyOutputSink(output: VirtualOutputState, runtime: OutputRuntim
 
 function syncAudioRuntimeToDirector(state: DirectorState): void {
   const directorSeconds = getDirectorSeconds(state);
+  const syncKey = createPlaybackSyncKey(state);
   for (const output of Object.values(state.outputs)) {
     const runtime = outputRuntimes.get(output.id);
     if (!runtime) {
@@ -618,20 +627,15 @@ function syncAudioRuntimeToDirector(state: DirectorState): void {
       }
       const target = getAudioEffectiveTime(directorSeconds, source.durationSeconds, state.loop);
       sourceRuntime.gainNode.gain.value = selection.muted || !target.audible ? 0 : dbToGain(selection.levelDb);
-      if (sourceRuntime.element.readyState >= HTMLMediaElement.HAVE_METADATA && Math.abs(sourceRuntime.element.currentTime - target.seconds) > 0.08) {
-        sourceRuntime.element.currentTime = target.seconds;
-      }
       sourceRuntime.element.playbackRate = state.rate;
-      if (state.paused || !target.audible) {
-        sourceRuntime.element.pause();
-      } else if (sourceRuntime.element.paused) {
-        void runtime.context.resume().then(() => sourceRuntime.element.play()).catch(() => undefined);
-      }
+      syncTimedMediaElement(sourceRuntime.element, target.seconds, !state.paused && target.audible, syncKey, 0.75, () => {
+        void runtime.context.resume();
+      });
     }
     if (state.paused) {
       runtime.sinkElement.pause();
-    } else if (runtime.sinkElement.paused) {
-      void runtime.sinkElement.play().catch(() => undefined);
+    } else {
+      requestMediaPlay(runtime.sinkElement);
     }
   }
 }
@@ -1025,6 +1029,7 @@ function tick(): void {
 
 function syncPreviewElements(state: DirectorState): void {
   const targetSeconds = getDirectorSeconds(state);
+  const syncKey = createPlaybackSyncKey(state);
   const videos = document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]');
   for (const video of videos) {
     if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
@@ -1033,16 +1038,102 @@ function syncPreviewElements(state: DirectorState): void {
     const visualId = video.dataset.visualId;
     const visualDuration = visualId ? state.visuals[visualId]?.durationSeconds : undefined;
     const effectiveTarget = getMediaEffectiveTime(targetSeconds, visualDuration ?? video.duration, state.loop);
-    if (Math.abs(video.currentTime - effectiveTarget) > 0.12) {
-      video.currentTime = effectiveTarget;
-    }
     video.playbackRate = state.rate;
-    if (state.paused) {
-      video.pause();
-    } else if (video.paused) {
-      void video.play().catch(() => undefined);
-    }
+    syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
   }
+}
+
+function syncTimedMediaElement(
+  element: HTMLMediaElement,
+  targetSeconds: number,
+  shouldPlay: boolean,
+  syncKey: string,
+  driftSeekThresholdSeconds: number,
+  beforePlay?: () => void,
+): void {
+  if (element.readyState < HTMLMediaElement.HAVE_METADATA) {
+    return;
+  }
+  const state = getMediaSyncState(element);
+  const safeTarget = clampMediaTime(targetSeconds, element);
+  if (state.pendingSeekSeconds !== undefined) {
+    state.playAfterSeek = shouldPlay;
+    if (!shouldPlay) {
+      element.pause();
+    }
+    return;
+  }
+
+  const syncKeyChanged = state.lastSyncKey !== syncKey;
+  state.lastSyncKey = syncKey;
+  const driftSeconds = Math.abs(element.currentTime - safeTarget);
+  const shouldSeek = syncKeyChanged ? driftSeconds > 0.05 : driftSeconds > driftSeekThresholdSeconds;
+  if (shouldSeek) {
+    state.pendingSeekSeconds = safeTarget;
+    state.playAfterSeek = shouldPlay;
+    const completeSeek = () => {
+      element.removeEventListener('seeked', completeSeek);
+      state.pendingSeekSeconds = undefined;
+      if (state.playAfterSeek) {
+        beforePlay?.();
+        requestMediaPlay(element, state, true);
+      }
+    };
+    element.addEventListener('seeked', completeSeek, { once: true });
+    element.currentTime = safeTarget;
+    window.setTimeout(() => {
+      if (state.pendingSeekSeconds === safeTarget) {
+        completeSeek();
+      }
+    }, 250);
+    if (!shouldPlay) {
+      element.pause();
+    }
+    return;
+  }
+
+  if (!shouldPlay) {
+    element.pause();
+    return;
+  }
+  beforePlay?.();
+  requestMediaPlay(element, state);
+}
+
+function createPlaybackSyncKey(state: DirectorState): string {
+  return JSON.stringify({
+    paused: state.paused,
+    anchorWallTimeMs: state.anchorWallTimeMs,
+    offsetSeconds: state.offsetSeconds,
+    rate: state.rate,
+    loop: state.loop,
+  });
+}
+
+function getMediaSyncState(element: HTMLMediaElement): MediaSyncState {
+  let state = mediaSyncStates.get(element);
+  if (!state) {
+    state = {};
+    mediaSyncStates.set(element, state);
+  }
+  return state;
+}
+
+function requestMediaPlay(element: HTMLMediaElement, state = getMediaSyncState(element), immediate = false): void {
+  const now = Date.now();
+  if (!immediate && state.lastPlayAttemptMs !== undefined && now - state.lastPlayAttemptMs < 500) {
+    return;
+  }
+  state.lastPlayAttemptMs = now;
+  void element.play().catch(() => undefined);
+}
+
+function clampMediaTime(seconds: number, element: HTMLMediaElement): number {
+  const safeSeconds = Math.max(0, seconds);
+  if (!Number.isFinite(element.duration)) {
+    return safeSeconds;
+  }
+  return Math.min(safeSeconds, Math.max(0, element.duration - 0.001));
 }
 
 async function sendTransport(command: TransportCommand): Promise<void> {
@@ -1220,17 +1311,31 @@ driftTimer = window.setInterval(() => {
   if (!currentState) {
     return;
   }
+  if (currentState.paused) {
+    return;
+  }
   const firstRuntime = outputRuntimes.values().next().value as OutputRuntime | undefined;
   const firstSource = firstRuntime?.sources.find((source) => source.element.readyState >= HTMLMediaElement.HAVE_METADATA);
   if (!firstSource) {
     return;
   }
+  if (getMediaSyncState(firstSource.element).pendingSeekSeconds !== undefined) {
+    return;
+  }
+  const source = currentState.audioSources[firstSource.audioSourceId];
+  if (!source) {
+    return;
+  }
   const directorSeconds = getDirectorSeconds(currentState);
+  const target = getAudioEffectiveTime(directorSeconds, source.durationSeconds, currentState.loop);
+  if (!target.audible) {
+    return;
+  }
   void window.xtream.renderer.reportDrift({
     kind: 'control',
     observedSeconds: firstSource.element.currentTime,
     directorSeconds,
-    driftSeconds: firstSource.element.currentTime - directorSeconds,
+    driftSeconds: firstSource.element.currentTime - target.seconds,
     reportedAtWallTimeMs: Date.now(),
   });
 }, 1000);

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { toRendererFileUrl } from './fileUrls';
 import type {
   DiagnosticsReport,
   DirectorState,
@@ -61,13 +61,13 @@ export function buildMediaUrls(config: PersistedShowConfig): {
     visuals: Object.fromEntries(
       Object.values(config.visuals).map((visual) => [
         visual.id,
-        visual.path ? pathToFileURL(visual.path).toString() : undefined,
+        visual.path ? toRendererFileUrl(visual.path) : undefined,
       ]),
     ),
     audioSources: Object.fromEntries(
       Object.values(config.audioSources).map((source) => [
         source.id,
-        source.type === 'external-file' && source.path ? pathToFileURL(source.path).toString() : undefined,
+        source.type === 'external-file' && source.path ? toRendererFileUrl(source.path) : undefined,
       ]),
     ),
   };

@@ -11,6 +11,7 @@ import {
   validateRuntimeState,
   writeShowConfig,
 } from './showConfig';
+import { toRendererFileUrl } from './fileUrls';
 import type { DirectorState, PersistedShowConfig } from '../shared/types';
 
 const config: PersistedShowConfig = {
@@ -92,6 +93,12 @@ describe('show config persistence helpers', () => {
         'audio-source-main': 'file:///F:/media/mix.wav',
       },
     });
+  });
+
+  it('keeps Windows absolute paths absolute when building file URLs on any host OS', () => {
+    expect(toRendererFileUrl('F:\\media\\folder with spaces\\a.mp4')).toBe('file:///F:/media/folder%20with%20spaces/a.mp4');
+    expect(toRendererFileUrl('F:/media/a.mp4')).toBe('file:///F:/media/a.mp4');
+    expect(toRendererFileUrl('\\\\media-server\\share\\show mix.wav')).toBe('file://media-server/share/show%20mix.wav');
   });
 
   it('uses the userData path for the default show config', () => {

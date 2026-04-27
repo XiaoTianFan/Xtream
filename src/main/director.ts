@@ -24,7 +24,9 @@ import { getDirectorSeconds } from '../shared/timeline';
 
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
 const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.1;
-const MAX_CORRECTION_ATTEMPTS = 3;
+const DRIFT_DEGRADE_THRESHOLD_SECONDS = 2;
+const MAX_CORRECTION_ATTEMPTS = 10;
+const DRIFT_DEGRADATION_REASON_PREFIX = 'Rail drift stayed above';
 
 export class Director extends EventEmitter {
   private state: DirectorState;
@@ -560,11 +562,12 @@ export class Director extends EventEmitter {
     if (report.kind === 'display' && report.displayId) {
       const display = this.state.displays[report.displayId];
       if (display) {
+        const hasNonDriftDegradation = display.health === 'degraded' && !display.degradationReason?.startsWith(DRIFT_DEGRADATION_REASON_PREFIX);
         this.state.displays[report.displayId] = {
           ...display,
-          health: correction.action === 'degraded' ? 'degraded' : display.health === 'degraded' ? 'degraded' : 'ready',
+          health: correction.action === 'degraded' || hasNonDriftDegradation ? 'degraded' : 'ready',
           lastDriftSeconds: report.driftSeconds,
-          degradationReason: correction.action === 'degraded' ? correction.reason : display.degradationReason,
+          degradationReason: correction.action === 'degraded' || hasNonDriftDegradation ? correction.reason ?? display.degradationReason : undefined,
         };
       }
       this.state.corrections.displays[report.displayId] = correction;
@@ -818,13 +821,13 @@ export class Director extends EventEmitter {
     }
     const attempts = (this.correctionCounts.get(railKey) ?? 0) + 1;
     this.correctionCounts.set(railKey, attempts);
-    if (attempts > MAX_CORRECTION_ATTEMPTS) {
+    if (attempts > MAX_CORRECTION_ATTEMPTS && absoluteDrift >= DRIFT_DEGRADE_THRESHOLD_SECONDS) {
       return {
         action: 'degraded',
         targetSeconds: this.getPlaybackTimeSeconds(),
         driftSeconds,
         issuedAtWallTimeMs: this.now(),
-        reason: `Rail drift stayed above ${(DRIFT_CORRECTION_THRESHOLD_SECONDS * 1000).toFixed(0)}ms after repeated corrections.`,
+        reason: `${DRIFT_DEGRADATION_REASON_PREFIX} ${(DRIFT_DEGRADE_THRESHOLD_SECONDS * 1000).toFixed(0)}ms after repeated corrections.`,
         revision: ++this.correctionRevision,
       };
     }

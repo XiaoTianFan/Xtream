@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { Director } from './director';
 import { DisplayRegistry } from './displayRegistry';
+import { toRendererFileUrl } from './fileUrls';
 import {
   buildMediaUrls,
   createDiagnosticsReport,
@@ -129,7 +129,7 @@ function createVisualImportItem(filePath: string): VisualImportItem {
     label: path.basename(filePath),
     type: getVisualMediaType(filePath),
     path: filePath,
-    url: pathToFileURL(filePath).toString(),
+    url: toRendererFileUrl(filePath),
   };
 }
 
@@ -259,7 +259,7 @@ function registerIpcHandlers(): void {
       return undefined;
     }
     const audioPath = result.filePaths[0];
-    const source = director.addAudioFileSource(audioPath, pathToFileURL(audioPath).toString());
+    const source = director.addAudioFileSource(audioPath, toRendererFileUrl(audioPath));
     scheduleShowConfigAutoSave();
     return source;
   });
@@ -278,7 +278,7 @@ function registerIpcHandlers(): void {
       return undefined;
     }
     const audioPath = result.filePaths[0];
-    const source = director.replaceAudioFileSource(audioSourceId, audioPath, pathToFileURL(audioPath).toString());
+    const source = director.replaceAudioFileSource(audioSourceId, audioPath, toRendererFileUrl(audioPath));
     scheduleShowConfigAutoSave();
     return source;
   });
