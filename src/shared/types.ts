@@ -469,6 +469,7 @@ export type IpcChannels = {
   'visual:remove': (visualId: VisualId) => boolean;
   'visual:metadata': (report: VisualMetadataReport) => DirectorState;
   'audio-source:add-file': () => AudioSourceCreateResult;
+  'audio-source:add-dropped': (filePaths: string[]) => AudioSourceState[];
   'audio-source:add-embedded': (visualId: VisualId, mode?: EmbeddedAudioExtractionMode) => AudioSourceState;
   'audio-source:extract-embedded': (visualId: VisualId, format?: AudioExtractionFormat) => Promise<AudioSourceState>;
   'audio-source:replace-file': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;

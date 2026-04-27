@@ -67,7 +67,7 @@
         <section id="surfacePanel" class="surface-panel" aria-live="polite" hidden></section>
 
         <section class="workspace" aria-label="Patch workspace">
-          <section class="panel media-pool" aria-labelledby="mediaPoolHeading">
+          <section id="mediaPoolPanel" class="panel media-pool" aria-labelledby="mediaPoolHeading">
             <div class="panel-header">
               <h2 id="mediaPoolHeading">Media Pool</h2>
               <button id="addVisualsButton" type="button">Add Media</button>
@@ -88,7 +88,7 @@
                   <option value="status">Status</option>
                 </select>
               </div>
-              <div class="media-list-region">
+              <div id="mediaListRegion" class="media-list-region drop-target">
                 <div id="visualList" class="visual-list"></div>
                 <div id="audioPanel" class="audio-panel"></div>
               </div>

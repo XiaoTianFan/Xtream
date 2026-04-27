@@ -65,6 +65,7 @@ const api = {
   },
   audioSources: {
     addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),
+    addDropped: (filePaths: string[]): Promise<AudioSourceState[]> => ipcRenderer.invoke('audio-source:add-dropped', filePaths),
     addEmbedded: (visualId: VisualId, mode?: 'representation' | 'file'): Promise<AudioSourceState> =>
       ipcRenderer.invoke('audio-source:add-embedded', visualId, mode),
     extractEmbedded: (visualId: VisualId, format?: AudioExtractionFormat): Promise<AudioSourceState> =>

@@ -24,6 +24,7 @@ import { getActiveDisplays } from '../shared/layouts';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
+  AudioSourceState,
   AudioSourceUpdate,
   DirectorState,
   DisplayCreateOptions,
@@ -63,6 +64,8 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
 const rendererRoot = path.join(__dirname, '../../renderer');
 const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
+/** Matches add-file dialog: Audio + Video/Audio groups (excludes * catch-all) */
+const AUDIO_FILE_IMPORT_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'm4v', 'webm']);
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -228,6 +231,18 @@ function createDroppedVisualImportItems(filePaths: string[]): VisualImportItem[]
     items.push(createVisualImportItem(filePath));
   }
   return items;
+}
+
+function createDroppedAudioFilePaths(filePaths: string[]): string[] {
+  const paths: string[] = [];
+  for (const filePath of filePaths) {
+    const extension = path.extname(filePath).toLowerCase().replace('.', '');
+    if (!AUDIO_FILE_IMPORT_EXTENSIONS.has(extension) || !fs.existsSync(filePath)) {
+      continue;
+    }
+    paths.push(filePath);
+  }
+  return paths;
 }
 
 async function pickVisualFiles(properties: Electron.OpenDialogOptions['properties']): Promise<VisualImportItem[] | undefined> {
@@ -496,6 +511,19 @@ function registerIpcHandlers(): void {
     const source = director.addAudioFileSource(audioPath, toRendererFileUrl(audioPath));
     scheduleShowConfigAutoSave();
     return source;
+  });
+
+  ipcMain.handle('audio-source:add-dropped', (_event, filePaths: string[]) => {
+    const paths = createDroppedAudioFilePaths(filePaths);
+    if (paths.length === 0) {
+      return [];
+    }
+    const sources: AudioSourceState[] = [];
+    for (const filePath of paths) {
+      sources.push(director.addAudioFileSource(filePath, toRendererFileUrl(filePath)));
+    }
+    scheduleShowConfigAutoSave();
+    return sources;
   });
 
   ipcMain.handle('audio-source:replace-file', async (_event, audioSourceId: string) => {

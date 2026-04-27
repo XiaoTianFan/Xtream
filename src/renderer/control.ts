@@ -72,6 +72,7 @@ const elements = {
   timecode: assertElement(document.querySelector<HTMLDivElement>('#timecode'), 'timecode'),
   showStatus: assertElement(document.querySelector<HTMLDivElement>('#showStatus'), 'showStatus'),
   issueList: assertElement(document.querySelector<HTMLDivElement>('#issueList'), 'issueList'),
+  mediaPoolPanel: assertElement(document.querySelector<HTMLElement>('#mediaPoolPanel'), 'mediaPoolPanel'),
   visualList: assertElement(document.querySelector<HTMLDivElement>('#visualList'), 'visualList'),
   audioPanel: assertElement(document.querySelector<HTMLDivElement>('#audioPanel'), 'audioPanel'),
   displayList: assertElement(document.querySelector<HTMLDivElement>('#displayList'), 'displayList'),
@@ -420,7 +421,6 @@ function renderMediaPool(state: DirectorState): void {
     activePoolTab === 'visuals'
       ? getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual))
       : getFilteredAudioSources(Object.values(state.audioSources), state).map((source) => createAudioSourceRow(source, state));
-  elements.visualList.classList.toggle('drop-target', activePoolTab === 'visuals');
   if (activePoolTab === 'audio') {
     elements.visualList.hidden = true;
     elements.audioPanel.hidden = false;
@@ -672,7 +672,10 @@ function mountMixerStripContents(container: HTMLElement, output: VirtualOutputSt
   label.textContent = output.label;
   const status = document.createElement('span');
   status.className = `status-dot ${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'standby'}`;
-  container.append(db, body, toggles, label, status);
+  const labelRow = document.createElement('div');
+  labelRow.className = 'mixer-label-row';
+  labelRow.append(status, label);
+  container.append(db, body, toggles, labelRow);
 }
 
 function attachMixerStripSelectionHandlers(strip: HTMLElement, outputId: VirtualOutputId): void {
@@ -2925,19 +2928,29 @@ elements.poolSortSelect.addEventListener('change', () => {
     renderState(currentState);
   }
 });
-elements.visualList.addEventListener('dragover', (event) => {
-  if (activePoolTab === 'visuals') {
-    event.preventDefault();
-    elements.visualList.classList.add('drag-over');
-  }
-});
-elements.visualList.addEventListener('dragleave', () => elements.visualList.classList.remove('drag-over'));
-elements.visualList.addEventListener('drop', async (event) => {
-  event.preventDefault();
-  elements.visualList.classList.remove('drag-over');
-  if (activePoolTab !== 'visuals') {
+function isFileDragEvent(event: DragEvent): boolean {
+  return Boolean(event.dataTransfer?.types?.includes('Files'));
+}
+
+function clearMediaPoolDragOver(event: DragEvent): void {
+  const next = event.relatedTarget;
+  if (next instanceof Node && elements.mediaPoolPanel.contains(next)) {
     return;
   }
+  elements.mediaPoolPanel.classList.remove('drag-over');
+}
+
+elements.mediaPoolPanel.addEventListener('dragover', (event) => {
+  if (!isFileDragEvent(event)) {
+    return;
+  }
+  event.preventDefault();
+  elements.mediaPoolPanel.classList.add('drag-over');
+});
+elements.mediaPoolPanel.addEventListener('dragleave', clearMediaPoolDragOver);
+elements.mediaPoolPanel.addEventListener('drop', async (event) => {
+  event.preventDefault();
+  elements.mediaPoolPanel.classList.remove('drag-over');
   const paths = Array.from(event.dataTransfer?.files ?? [])
     .map((file) => (file as File & { path?: string }).path)
     .filter((path): path is string => Boolean(path));
@@ -2945,11 +2958,18 @@ elements.visualList.addEventListener('drop', async (event) => {
     setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
     return;
   }
-  const visuals = await window.xtream.visuals.addDropped(paths);
-  queueEmbeddedAudioImportPrompt(visuals);
-  visuals.forEach(probeVisualMetadata);
-  if (visuals[0]) {
-    selectedEntity = { type: 'visual', id: visuals[0].id };
+  if (activePoolTab === 'visuals') {
+    const visuals = await window.xtream.visuals.addDropped(paths);
+    queueEmbeddedAudioImportPrompt(visuals);
+    visuals.forEach(probeVisualMetadata);
+    if (visuals[0]) {
+      selectedEntity = { type: 'visual', id: visuals[0].id };
+    }
+  } else {
+    const sources = await window.xtream.audioSources.addDropped(paths);
+    if (sources[0]) {
+      selectedEntity = { type: 'audio-source', id: sources[0].id };
+    }
   }
   renderState(await window.xtream.director.getState());
 });
