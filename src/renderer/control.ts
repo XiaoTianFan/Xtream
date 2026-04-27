@@ -182,8 +182,15 @@ function renderState(state: DirectorState): void {
 }
 
 function isPanelInteractionActive(panel: HTMLElement): boolean {
+  if (activePanels.has(panel)) {
+    return true;
+  }
   const activeElement = document.activeElement;
-  return activePanels.has(panel) || (activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('select, input, textarea'));
+  return (
+    activeElement instanceof HTMLElement &&
+    panel.contains(activeElement) &&
+    activeElement.matches('select, input, textarea')
+  );
 }
 
 function createVisualRenderSignature(state: DirectorState): string {
@@ -490,8 +497,7 @@ function dismissAudioSourceContextMenu(): void {
 }
 
 function renderOutputs(state: DirectorState): void {
-  clearMeterElementCaches();
-  const strips = Object.values(state.outputs).map((output) => createMixerStrip(output));
+  const strips = Object.values(state.outputs).map((output) => createMixerStrip(output, state));
   elements.outputPanel.replaceChildren(...strips);
 }
 
@@ -528,18 +534,8 @@ function applyOutputMeterReport(report: OutputMeterReport): void {
   }
 }
 
-function createMixerStrip(output: VirtualOutputState, state = currentState): HTMLElement {
-  const strip = document.createElement('article');
-  strip.className = `mixer-strip${isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
-  strip.dataset.outputStrip = output.id;
-  strip.tabIndex = 0;
-  strip.addEventListener('click', () => selectEntity({ type: 'output', id: output.id }));
-  strip.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      selectEntity({ type: 'output', id: output.id });
-    }
-  });
+function mountMixerStripContents(container: HTMLElement, output: VirtualOutputState, state: DirectorState): void {
+  container.replaceChildren();
   const db = document.createElement('strong');
   db.className = 'mixer-db';
   db.textContent = `${output.busLevelDb.toFixed(0)} dB`;
@@ -580,7 +576,35 @@ function createMixerStrip(output: VirtualOutputState, state = currentState): HTM
   label.textContent = output.label;
   const status = document.createElement('span');
   status.className = `status-dot ${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'standby'}`;
-  strip.append(db, body, toggles, label, status);
+  container.append(db, body, toggles, label, status);
+}
+
+function attachMixerStripSelectionHandlers(strip: HTMLElement, outputId: VirtualOutputId): void {
+  strip.tabIndex = 0;
+  strip.addEventListener('click', () => selectEntity({ type: 'output', id: outputId }));
+  strip.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectEntity({ type: 'output', id: outputId });
+    }
+  });
+}
+
+function createMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
+  const strip = document.createElement('article');
+  strip.className = `mixer-strip${isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
+  strip.dataset.outputStrip = output.id;
+  attachMixerStripSelectionHandlers(strip, output.id);
+  mountMixerStripContents(strip, output, state);
+  return strip;
+}
+
+function createOutputDetailMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
+  const strip = document.createElement('article');
+  strip.className = `mixer-strip mixer-strip--detail${isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
+  strip.dataset.outputStrip = output.id;
+  attachMixerStripSelectionHandlers(strip, output.id);
+  mountMixerStripContents(strip, output, state);
   return strip;
 }
 
@@ -654,11 +678,6 @@ function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void 
     segment.dataset.active = String(index >= segments.length - activeCount);
     segment.dataset.zone = isClipped || segmentDb >= -3 ? 'danger' : segmentDb >= -12 ? 'hot' : 'nominal';
   });
-}
-
-function clearMeterElementCaches(): void {
-  meterLaneElementCache.clear();
-  meterPeakElementCache.clear();
 }
 
 function registerMeterLaneElement(laneId: string, element: HTMLElement): void {
@@ -892,6 +911,28 @@ function formatAudioChannelDetail(source: AudioSourceState): string {
 function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'output-source-list';
+  const availableSources = Object.values(state.audioSources).filter(
+    (source) => !output.sources.some((selection) => selection.audioSourceId === source.id),
+  );
+  if (availableSources.length > 0) {
+    wrapper.append(
+      createSelect(
+        'Add source',
+        [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
+        '',
+        (audioSourceId) => {
+          if (audioSourceId) {
+            void window.xtream.outputs
+              .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] })
+              .then(async () => renderState(await window.xtream.director.getState()));
+          }
+        },
+      ),
+    );
+  }
+  if (output.sources.length === 0) {
+    wrapper.append(createHint('No sources selected.'));
+  }
   for (const selection of output.sources) {
     const source = state.audioSources[selection.audioSourceId];
     const row = document.createElement('div');
@@ -924,28 +965,6 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
     actions.append(muteButton, removeButton);
     row.append(label, levelControl, actions);
     wrapper.append(row);
-  }
-  const availableSources = Object.values(state.audioSources).filter(
-    (source) => !output.sources.some((selection) => selection.audioSourceId === source.id),
-  );
-  if (availableSources.length > 0) {
-    wrapper.append(
-      createSelect(
-        'Add source',
-        [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
-        '',
-        (audioSourceId) => {
-          if (audioSourceId) {
-            void window.xtream.outputs
-              .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] })
-              .then(async () => renderState(await window.xtream.director.getState()));
-          }
-        },
-      ),
-    );
-  }
-  if (output.sources.length === 0) {
-    wrapper.append(createHint('No sources selected.'));
   }
   return wrapper;
 }
@@ -1304,7 +1323,10 @@ async function updateDisplayLayout(displayId: string, layout: VisualLayoutProfil
 
 function renderDetails(state: DirectorState): void {
   const signature = JSON.stringify({ selectedEntity, state: createDetailsSignature(state), devices: displayMonitors, audioDevices: audioDevices.length });
-  if (detailsRenderSignature === signature && isPanelInteractionActive(elements.detailsContent)) {
+  if (detailsRenderSignature === signature) {
+    return;
+  }
+  if (isPanelInteractionActive(elements.detailsContent)) {
     return;
   }
   detailsRenderSignature = signature;
@@ -1362,17 +1384,36 @@ function updateDetailsHeading(): void {
   elements.detailsHeading.textContent = selectedEntity ? headingByType[selectedEntity.type] : 'Patch Summary';
 }
 
-function createDetailsSignature(state: DirectorState): unknown {
+function stableDisplayForDetailsSignature(display: DisplayWindowState): Record<string, unknown> {
   return {
-    visuals: state.visuals,
-    audioSources: state.audioSources,
-    displays: state.displays,
-    outputs: Object.fromEntries(Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined, meterLanes: undefined }])),
+    id: display.id,
+    label: display.label,
+    bounds: display.bounds,
+    displayId: display.displayId,
+    fullscreen: display.fullscreen,
+    layout: display.layout,
+    health: display.health,
+    degradationReason: display.degradationReason,
   };
 }
 
+function createDetailsSignature(state: DirectorState): unknown {
+  const stableDisplays = Object.fromEntries(
+    Object.entries(state.displays).map(([id, display]) => [id, stableDisplayForDetailsSignature(display)]),
+  );
+  const base = {
+    visuals: state.visuals,
+    audioSources: state.audioSources,
+    displays: stableDisplays,
+    outputs: Object.fromEntries(Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined, meterLanes: undefined }])),
+  };
+  if (selectedEntity?.type === 'display') {
+    return { ...base, selectedDisplayLive: state.displays[selectedEntity.id] };
+  }
+  return base;
+}
+
 function renderDefaultDetails(state: DirectorState): void {
-  updateDetailsHeading();
   const summary = document.createElement('div');
   summary.className = 'detail-card';
   summary.append(
@@ -1595,11 +1636,17 @@ function renderVisualDetails(visual: VisualState): void {
       }
       renderState(await window.xtream.director.getState());
     }),
-    createButton('Clear', 'secondary', async () => {
-      await window.xtream.visuals.clear(visual.id);
-      renderState(await window.xtream.director.getState());
-    }),
   );
+  const removeFromPool = createButton('Remove', 'secondary', async () => {
+    if (!confirmPoolRecordRemoval(visual.label)) {
+      return;
+    }
+    await window.xtream.visuals.remove(visual.id);
+    clearSelectionIf({ type: 'visual', id: visual.id });
+    renderState(await window.xtream.director.getState());
+  });
+  removeFromPool.title = `Remove ${visual.label} from the media pool (does not delete the file on disk)`;
+  actions.append(removeFromPool);
   card.append(actions);
   elements.detailsContent.replaceChildren(card);
 }
@@ -1643,18 +1690,14 @@ function renderDisplayDetails(display: DisplayWindowState, state: DirectorState)
   const card = document.createElement('div');
   card.className = 'detail-card';
   const labelInput = createLabelInput(display.label ?? display.id, (label) => window.xtream.displays.update(display.id, { label }));
-  const mapping = createMappingControls(display, visualIds, display.health !== 'closed');
-  const monitorSelect = createSelect(
-    'Monitor',
-    [['', 'Current/default'], ...displayMonitors.map((monitor): [string, string] => [monitor.id, monitor.label])],
-    display.displayId ?? '',
-    (displayId) => {
-      void window.xtream.displays.update(display.id, { displayId: displayId || undefined });
-    },
-  );
-  const actions = document.createElement('div');
-  actions.className = 'button-row';
-  actions.append(
+  const toolbar = document.createElement('div');
+  toolbar.className = 'display-detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'display-detail-toolbar-start';
+  toolbarStart.append(createDetailField('Label', labelInput));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'display-detail-toolbar-actions button-row';
+  toolbarActions.append(
     createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', async () => {
       await window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
       renderState(await window.xtream.director.getState());
@@ -1675,33 +1718,39 @@ function renderDisplayDetails(display: DisplayWindowState, state: DirectorState)
       }
     }),
   );
+  toolbar.append(toolbarStart, toolbarActions);
+  const mapping = createMappingControls(display, visualIds, display.health !== 'closed');
+  const monitorSelect = createSelect(
+    'Monitor',
+    [['', 'Current/default'], ...displayMonitors.map((monitor): [string, string] => [monitor.id, monitor.label])],
+    display.displayId ?? '',
+    (displayId) => {
+      void window.xtream.displays.update(display.id, { displayId: displayId || undefined });
+    },
+  );
   card.append(
-    createDetailField('Label', labelInput),
+    toolbar,
     createDetailLine('Display', display.id),
     createDetailLine('Status', getDisplayStatusLabel(display)),
     createDetailLine('Telemetry', getDisplayTelemetry(display)),
     mapping,
     monitorSelect,
-    actions,
   );
   elements.detailsContent.replaceChildren(card);
 }
 
 function renderOutputDetails(output: VirtualOutputState, state: DirectorState): void {
   const card = document.createElement('div');
-  card.className = 'detail-card';
+  card.className = 'detail-card detail-card--output';
   const label = createLabelInput(output.label, (nextLabel) => window.xtream.outputs.update(output.id, { label: nextLabel }));
-  const busControl = createDbFader('Bus level dB', output.busLevelDb, (busLevelDb) => {
-    void window.xtream.outputs.update(output.id, { busLevelDb });
-  });
-  const sinkField = createSelect('Physical output', getAudioSinkOptions(), output.sinkId ?? '', (sinkId) => {
-    const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
-    void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel });
-  });
-  const sourceControls = createOutputSourceControls(output, state);
-  const actions = document.createElement('div');
-  actions.className = 'button-row';
-  actions.append(
+  const toolbar = document.createElement('div');
+  toolbar.className = 'output-detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'output-detail-toolbar-start';
+  toolbarStart.append(createDetailField('Label', label));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'output-detail-toolbar-actions button-row';
+  toolbarActions.append(
     createButton(output.muted ? 'Unmute' : 'Mute', 'secondary', async () => {
       await window.xtream.outputs.update(output.id, { muted: !output.muted });
       renderState(await window.xtream.director.getState());
@@ -1715,23 +1764,23 @@ function renderOutputDetails(output: VirtualOutputState, state: DirectorState): 
       }
     }),
   );
-  card.append(
-    createDetailField('Label', label),
-    busControl,
-    createDetailLine('Meter', formatOutputMeterDetail(output)),
-    sinkField,
-    sourceControls,
-    actions,
-  );
+  toolbar.append(toolbarStart, toolbarActions);
+  const sinkField = createSelect('Physical output', getAudioSinkOptions(), output.sinkId ?? '', (sinkId) => {
+    const sinkLabel = audioDevices.find((device) => device.deviceId === sinkId)?.label;
+    void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel });
+  });
+  const sourceControls = createOutputSourceControls(output, state);
+  const mainColumn = document.createElement('div');
+  mainColumn.className = 'output-detail-main';
+  mainColumn.append(sinkField, sourceControls);
+  const stripWrap = document.createElement('div');
+  stripWrap.className = 'output-detail-strip';
+  stripWrap.append(createOutputDetailMixerStrip(output, state));
+  const body = document.createElement('div');
+  body.className = 'output-detail-body';
+  body.append(mainColumn, stripWrap);
+  card.append(toolbar, body);
   elements.detailsContent.replaceChildren(card);
-}
-
-function formatOutputMeterDetail(output: VirtualOutputState): string {
-  const report = latestMeterReports.get(output.id);
-  const peakDb = report?.peakDb ?? output.meterDb;
-  const laneCount = report?.lanes.length ?? output.meterLanes?.length ?? getOutputMeterLanes(output).length;
-  const peakLabel = peakDb === undefined || peakDb <= -60 ? '-inf' : `${peakDb.toFixed(1)} dB`;
-  return `${peakLabel} peak | ${laneCount} lane${laneCount === 1 ? '' : 's'}`;
 }
 
 function createDetailTitle(text: string): HTMLHeadingElement {
@@ -2231,7 +2280,6 @@ function installInteractionLock(panel: HTMLElement): void {
   };
   panel.addEventListener('pointerup', release);
   panel.addEventListener('pointercancel', release);
-  panel.addEventListener('click', release);
 }
 
 function installShellIcons(): void {
