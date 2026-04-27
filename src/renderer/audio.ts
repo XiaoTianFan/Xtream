@@ -13,6 +13,8 @@ import { getMediaSyncState } from './control/mediaSync';
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
 let driftTimer: number | undefined;
+let lastMeterSampleMs = 0;
+const METER_SAMPLE_INTERVAL_MS = 50;
 
 function handleState(state: DirectorState): void {
   currentState = state;
@@ -28,8 +30,12 @@ function handleSoloOutputIds(outputIds: VirtualOutputId[]): void {
 
 function tick(): void {
   if (currentState) {
+    const now = performance.now();
     syncAudioRuntimeToDirector(currentState);
-    sampleMeters(currentState);
+    if (!currentState.performanceMode && now - lastMeterSampleMs >= METER_SAMPLE_INTERVAL_MS) {
+      lastMeterSampleMs = now;
+      sampleMeters(currentState);
+    }
   }
   animationFrame = window.requestAnimationFrame(tick);
 }

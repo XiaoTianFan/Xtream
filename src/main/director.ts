@@ -27,8 +27,9 @@ import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds } from '../shared/timeline';
 
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
-const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.1;
+const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.5;
 const DRIFT_DEGRADE_THRESHOLD_SECONDS = 2;
+const DRIFT_CORRECTION_COOLDOWN_MS = 3000;
 const MAX_CORRECTION_ATTEMPTS = 10;
 const DRIFT_DEGRADATION_REASON_PREFIX = 'Rail drift stayed above';
 
@@ -36,6 +37,7 @@ export class Director extends EventEmitter {
   private state: DirectorState;
   private readonly now: () => number;
   private readonly correctionCounts = new Map<string, number>();
+  private readonly lastCorrectionWallTimeMs = new Map<string, number>();
   private correctionRevision = 0;
   private visualSequence = 0;
   private audioSourceSequence = 0;
@@ -52,6 +54,7 @@ export class Director extends EventEmitter {
       loop: { enabled: false, startSeconds: 0 },
       globalAudioMuted: false,
       globalDisplayBlackout: false,
+      performanceMode: false,
       visuals: {},
       audioSources: {},
       outputs: {
@@ -524,6 +527,7 @@ export class Director extends EventEmitter {
     this.state.paused = true;
     this.state.globalAudioMuted = false;
     this.state.globalDisplayBlackout = false;
+    this.state.performanceMode = false;
     this.state.rate = config.rate ?? 1;
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
@@ -604,6 +608,7 @@ export class Director extends EventEmitter {
     this.state.corrections = { displays: {} };
     this.state.previews = {};
     this.correctionCounts.clear();
+    this.lastCorrectionWallTimeMs.clear();
     this.updateOutputReadiness();
     this.recalculateTimeline();
     this.emitState();
@@ -676,6 +681,7 @@ export class Director extends EventEmitter {
     delete this.state.displays[id];
     delete this.state.corrections.displays[id];
     this.correctionCounts.delete(`display:${id}`);
+    this.lastCorrectionWallTimeMs.delete(`display:${id}`);
     this.recalculateTimeline();
     this.emitState();
     return this.getState();
@@ -692,6 +698,13 @@ export class Director extends EventEmitter {
           health: correction.action === 'degraded' || hasNonDriftDegradation ? 'degraded' : 'ready',
           lastDriftSeconds: report.driftSeconds,
           lastFrameRateFps: report.frameRateFps ?? display.lastFrameRateFps,
+          lastPresentedFrameRateFps: report.presentedFrameRateFps ?? display.lastPresentedFrameRateFps,
+          lastDroppedVideoFrames: report.droppedVideoFrames ?? display.lastDroppedVideoFrames,
+          lastTotalVideoFrames: report.totalVideoFrames ?? display.lastTotalVideoFrames,
+          lastMaxVideoFrameGapMs: report.maxVideoFrameGapMs ?? display.lastMaxVideoFrameGapMs,
+          lastMediaSeekCount: report.mediaSeekCount ?? display.lastMediaSeekCount,
+          lastMediaSeekFallbackCount: report.mediaSeekFallbackCount ?? display.lastMediaSeekFallbackCount,
+          lastMediaSeekDurationMs: report.mediaSeekDurationMs ?? display.lastMediaSeekDurationMs,
           degradationReason: correction.action === 'degraded' || hasNonDriftDegradation ? correction.reason ?? display.degradationReason : undefined,
         };
       }
@@ -1016,19 +1029,33 @@ export class Director extends EventEmitter {
 
   private createCorrection(railKey: string, driftSeconds: number): RailCorrection {
     const absoluteDrift = Math.abs(driftSeconds);
+    const issuedAtWallTimeMs = this.now();
     if (absoluteDrift <= DRIFT_WARN_THRESHOLD_SECONDS) {
       this.correctionCounts.set(railKey, 0);
-      return { action: 'none', driftSeconds, issuedAtWallTimeMs: this.now(), revision: ++this.correctionRevision };
+      this.lastCorrectionWallTimeMs.delete(railKey);
+      return { action: 'none', driftSeconds, issuedAtWallTimeMs, revision: ++this.correctionRevision };
     }
     if (absoluteDrift <= DRIFT_CORRECTION_THRESHOLD_SECONDS) {
       this.correctionCounts.set(railKey, 0);
       return {
         action: 'none',
         driftSeconds,
-        issuedAtWallTimeMs: this.now(),
+        issuedAtWallTimeMs,
         reason: 'Drift is above warning threshold but within correction tolerance.',
         revision: ++this.correctionRevision,
       };
+    }
+    if (absoluteDrift < DRIFT_DEGRADE_THRESHOLD_SECONDS) {
+      const lastCorrectionMs = this.lastCorrectionWallTimeMs.get(railKey);
+      if (lastCorrectionMs !== undefined && issuedAtWallTimeMs - lastCorrectionMs < DRIFT_CORRECTION_COOLDOWN_MS) {
+        return {
+          action: 'none',
+          driftSeconds,
+          issuedAtWallTimeMs,
+          reason: 'Drift exceeded correction threshold but correction cooldown is active.',
+          revision: ++this.correctionRevision,
+        };
+      }
     }
     const attempts = (this.correctionCounts.get(railKey) ?? 0) + 1;
     this.correctionCounts.set(railKey, attempts);
@@ -1037,17 +1064,18 @@ export class Director extends EventEmitter {
         action: 'degraded',
         targetSeconds: this.getPlaybackTimeSeconds(),
         driftSeconds,
-        issuedAtWallTimeMs: this.now(),
+        issuedAtWallTimeMs,
         reason: `${DRIFT_DEGRADATION_REASON_PREFIX} ${(DRIFT_DEGRADE_THRESHOLD_SECONDS * 1000).toFixed(0)}ms after repeated corrections.`,
         revision: ++this.correctionRevision,
       };
     }
+    this.lastCorrectionWallTimeMs.set(railKey, issuedAtWallTimeMs);
     return {
       action: 'seek',
       targetSeconds: this.getPlaybackTimeSeconds(),
       driftSeconds,
-      issuedAtWallTimeMs: this.now(),
-      reason: 'Drift exceeded correction threshold.',
+      issuedAtWallTimeMs,
+      reason: 'Drift exceeded sustained correction threshold.',
       revision: ++this.correctionRevision,
     };
   }

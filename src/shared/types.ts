@@ -32,6 +32,13 @@ export type DisplayWindowState = {
   health: DisplayHealth;
   lastDriftSeconds?: number;
   lastFrameRateFps?: number;
+  lastPresentedFrameRateFps?: number;
+  lastDroppedVideoFrames?: number;
+  lastTotalVideoFrames?: number;
+  lastMaxVideoFrameGapMs?: number;
+  lastMediaSeekCount?: number;
+  lastMediaSeekFallbackCount?: number;
+  lastMediaSeekDurationMs?: number;
   degradationReason?: string;
 };
 
@@ -158,6 +165,7 @@ export type DirectorState = {
   loop: LoopState;
   globalAudioMuted: boolean;
   globalDisplayBlackout: boolean;
+  performanceMode: boolean;
   visuals: Record<VisualId, VisualState>;
   audioSources: Record<AudioSourceId, AudioSourceState>;
   outputs: Record<VirtualOutputId, VirtualOutputState>;
@@ -301,6 +309,13 @@ export type DriftReport = {
   directorSeconds: number;
   driftSeconds: number;
   frameRateFps?: number;
+  presentedFrameRateFps?: number;
+  droppedVideoFrames?: number;
+  totalVideoFrames?: number;
+  maxVideoFrameGapMs?: number;
+  mediaSeekCount?: number;
+  mediaSeekFallbackCount?: number;
+  mediaSeekDurationMs?: number;
   reportedAtWallTimeMs: number;
 };
 
@@ -354,7 +369,7 @@ export type AudioSourceCreateResult = AudioSourceState | undefined;
 export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
-export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout'>>;
+export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
 
 export type VirtualOutputUpdate = Partial<
   Pick<

@@ -3,6 +3,7 @@ import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
+import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/mediaSync';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
@@ -17,16 +18,34 @@ let syncTimer: number | undefined;
 let frameCounter = 0;
 let lastFrameSampleMs = performance.now();
 let lastFrameRateFps: number | undefined;
+let mediaSeekCount = 0;
+let mediaSeekFallbackCount = 0;
+let lastMediaSeekDurationMs: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
 const videoElements = new Map<VisualId, HTMLVideoElement>();
-const mediaSyncStates = new WeakMap<HTMLMediaElement, MediaSyncState>();
-const SEEK_THRESHOLD_SECONDS = 0.12;
+const videoFrameStats = new WeakMap<HTMLVideoElement, VideoFrameStats>();
+const DISPLAY_SYNC_INTERVAL_MS = 500;
+const DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS = 0.5;
+const SYNC_KEY_SEEK_THRESHOLD_SECONDS = 0.12;
 
-type MediaSyncState = {
-  pendingSeekSeconds?: number;
-  playAfterSeek?: boolean;
-  lastPlayAttemptMs?: number;
-  lastSyncKey?: string;
+type VideoPlaybackQualitySnapshot = {
+  totalVideoFrames?: number;
+  droppedVideoFrames?: number;
+  corruptedVideoFrames?: number;
+};
+
+type FrameTrackedVideo = HTMLVideoElement & {
+  requestVideoFrameCallback?: (callback: (now: number) => void) => number;
+  getVideoPlaybackQuality?: () => VideoPlaybackQualitySnapshot;
+};
+
+type VideoFrameStats = {
+  presentedFrames: number;
+  samplePresentedFrames: number;
+  sampleWallTimeMs: number;
+  maxFrameGapMs: number;
+  lastFrameWallTimeMs?: number;
+  presentedFrameRateFps?: number;
 };
 
 if (!root) {
@@ -112,6 +131,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
         error: video.error?.message ?? 'Video failed to load.',
       });
     });
+    observeVideoFrames(video);
     visualElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(visualId, 'muted visual rail')] : []));
     videoElements.set(visualId, video);
     return visualElement;
@@ -183,7 +203,25 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
     const effectiveTarget = getMediaEffectiveTime(baseTarget * (visual?.playbackRate ?? 1), visualDuration, state.loop);
-    syncTimedMediaElement(video, effectiveTarget, !state.paused, shouldApplyCorrection ? `${syncKey}:correction:${correction.revision}` : syncKey, 0.75, clampVideoTime);
+    syncTimedMediaElement(
+      video,
+      effectiveTarget,
+      !state.paused,
+      shouldApplyCorrection ? `${syncKey}:correction:${correction.revision}` : syncKey,
+      DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS,
+      {
+        syncKeySeekThresholdSeconds: SYNC_KEY_SEEK_THRESHOLD_SECONDS,
+        onSeekStart: () => {
+          mediaSeekCount += 1;
+        },
+        onSeekComplete: ({ durationMs, usedFallback }) => {
+          lastMediaSeekDurationMs = durationMs;
+          if (usedFallback) {
+            mediaSeekFallbackCount += 1;
+          }
+        },
+      },
+    );
     if (correction?.revision !== undefined && shouldApplyCorrection) {
       appliedCorrectionRevisions.add(correction.revision);
     }
@@ -199,93 +237,72 @@ function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
   element.style.filter = `brightness(${visual.brightness ?? 1}) contrast(${visual.contrast ?? 1})`;
 }
 
-function syncTimedMediaElement(
-  element: HTMLMediaElement,
-  targetSeconds: number,
-  shouldPlay: boolean,
-  syncKey: string,
-  driftSeekThresholdSeconds: number,
-  clamp: (seconds: number, element: HTMLMediaElement) => number,
-): void {
-  const state = getMediaSyncState(element);
-  const clampedTarget = clamp(targetSeconds, element);
-  const hasPendingSeek = state.pendingSeekSeconds !== undefined;
-  if (hasPendingSeek) {
-    state.playAfterSeek = shouldPlay;
-    if (!shouldPlay) {
-      element.pause();
+function observeVideoFrames(video: HTMLVideoElement): void {
+  const trackedVideo = video as FrameTrackedVideo;
+  if (!trackedVideo.requestVideoFrameCallback) {
+    return;
+  }
+  const stats: VideoFrameStats = {
+    presentedFrames: 0,
+    samplePresentedFrames: 0,
+    sampleWallTimeMs: performance.now(),
+    maxFrameGapMs: 0,
+  };
+  videoFrameStats.set(video, stats);
+  const recordFrame = (now: number) => {
+    if (!videoFrameStats.has(video)) {
+      return;
     }
-    return;
-  }
-
-  const syncKeyChanged = state.lastSyncKey !== syncKey;
-  state.lastSyncKey = syncKey;
-  const driftSeconds = Math.abs(element.currentTime - clampedTarget);
-  const shouldSeek = syncKeyChanged ? driftSeconds > 0.05 : driftSeconds > driftSeekThresholdSeconds;
-  if (shouldSeek) {
-    state.pendingSeekSeconds = clampedTarget;
-    state.playAfterSeek = shouldPlay;
-    const completeSeek = () => {
-      element.removeEventListener('seeked', completeSeek);
-      state.pendingSeekSeconds = undefined;
-      if (state.playAfterSeek) {
-        requestMediaPlay(element, state, true);
-      }
-    };
-    element.addEventListener('seeked', completeSeek, { once: true });
-    element.currentTime = clampedTarget;
-    window.setTimeout(() => {
-      if (state.pendingSeekSeconds === clampedTarget) {
-        completeSeek();
-      }
-    }, 250);
-    if (!shouldPlay) {
-      element.pause();
+    if (stats.lastFrameWallTimeMs !== undefined) {
+      stats.maxFrameGapMs = Math.max(stats.maxFrameGapMs, now - stats.lastFrameWallTimeMs);
     }
-    return;
-  }
-
-  if (!shouldPlay) {
-    element.pause();
-    return;
-  }
-  requestMediaPlay(element, state);
+    stats.lastFrameWallTimeMs = now;
+    stats.presentedFrames += 1;
+    trackedVideo.requestVideoFrameCallback?.(recordFrame);
+  };
+  trackedVideo.requestVideoFrameCallback(recordFrame);
 }
 
-function createPlaybackSyncKey(state: DirectorState): string {
-  return JSON.stringify({
-    paused: state.paused,
-    anchorWallTimeMs: state.anchorWallTimeMs,
-    offsetSeconds: state.offsetSeconds,
-    rate: state.rate,
-    loop: state.loop,
-  });
-}
-
-function getMediaSyncState(element: HTMLMediaElement): MediaSyncState {
-  let state = mediaSyncStates.get(element);
-  if (!state) {
-    state = {};
-    mediaSyncStates.set(element, state);
+function summarizeVideoDiagnostics(videos: HTMLVideoElement[]): {
+  presentedFrameRateFps?: number;
+  droppedVideoFrames?: number;
+  totalVideoFrames?: number;
+  maxVideoFrameGapMs?: number;
+} {
+  let presentedFrameRateFps = 0;
+  let presentedFrameSamples = 0;
+  let maxVideoFrameGapMs: number | undefined;
+  let droppedVideoFrames: number | undefined;
+  let totalVideoFrames: number | undefined;
+  const now = performance.now();
+  for (const video of videos) {
+    const stats = videoFrameStats.get(video);
+    if (stats) {
+      const elapsedMs = now - stats.sampleWallTimeMs;
+      if (elapsedMs > 0) {
+        stats.presentedFrameRateFps = ((stats.presentedFrames - stats.samplePresentedFrames) * 1000) / elapsedMs;
+        stats.samplePresentedFrames = stats.presentedFrames;
+        stats.sampleWallTimeMs = now;
+      }
+      if (stats.presentedFrameRateFps !== undefined) {
+        presentedFrameRateFps += stats.presentedFrameRateFps;
+        presentedFrameSamples += 1;
+      }
+      maxVideoFrameGapMs = Math.max(maxVideoFrameGapMs ?? 0, stats.maxFrameGapMs);
+      stats.maxFrameGapMs = 0;
+    }
+    const quality = (video as FrameTrackedVideo).getVideoPlaybackQuality?.();
+    if (quality) {
+      droppedVideoFrames = (droppedVideoFrames ?? 0) + (quality.droppedVideoFrames ?? 0);
+      totalVideoFrames = (totalVideoFrames ?? 0) + (quality.totalVideoFrames ?? 0);
+    }
   }
-  return state;
-}
-
-function requestMediaPlay(element: HTMLMediaElement, state = getMediaSyncState(element), immediate = false): void {
-  const now = Date.now();
-  if (!immediate && state.lastPlayAttemptMs !== undefined && now - state.lastPlayAttemptMs < 500) {
-    return;
-  }
-  state.lastPlayAttemptMs = now;
-  void element.play().catch(() => undefined);
-}
-
-function clampVideoTime(seconds: number, video: HTMLMediaElement): number {
-  const safeSeconds = Math.max(0, seconds);
-  if (!Number.isFinite(video.duration)) {
-    return safeSeconds;
-  }
-  return Math.min(safeSeconds, Math.max(0, video.duration - 0.001));
+  return {
+    presentedFrameRateFps: presentedFrameSamples > 0 ? presentedFrameRateFps / presentedFrameSamples : undefined,
+    droppedVideoFrames,
+    totalVideoFrames,
+    maxVideoFrameGapMs,
+  };
 }
 
 window.xtream.director.onState(handleState);
@@ -326,6 +343,7 @@ driftTimer = window.setInterval(() => {
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)
       : 0;
+  const videoDiagnostics = summarizeVideoDiagnostics(videos);
   void window.xtream.renderer.reportDrift({
     kind: 'display',
     displayId,
@@ -333,6 +351,13 @@ driftTimer = window.setInterval(() => {
     directorSeconds,
     driftSeconds,
     frameRateFps: lastFrameRateFps,
+    presentedFrameRateFps: videoDiagnostics.presentedFrameRateFps,
+    droppedVideoFrames: videoDiagnostics.droppedVideoFrames,
+    totalVideoFrames: videoDiagnostics.totalVideoFrames,
+    maxVideoFrameGapMs: videoDiagnostics.maxVideoFrameGapMs,
+    mediaSeekCount,
+    mediaSeekFallbackCount,
+    mediaSeekDurationMs: lastMediaSeekDurationMs,
     reportedAtWallTimeMs: Date.now(),
   });
 }, 1000);
@@ -344,7 +369,7 @@ syncTimer = window.setInterval(() => {
       syncVideoElements(display, currentState);
     }
   }
-}, 250);
+}, DISPLAY_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {
   if (driftTimer !== undefined) {

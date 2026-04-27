@@ -92,12 +92,14 @@ const elements = {
   resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
   globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
   displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
+  performanceModeButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceModeButton'), 'performanceModeButton'),
   runtimeVersionLabel: assertElement(document.querySelector<HTMLSpanElement>('#runtimeVersionLabel'), 'runtimeVersionLabel'),
   createDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#createDisplayButton'), 'createDisplayButton'),
 };
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
+let previewSyncTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
 let displayMonitors: DisplayMonitorInfo[] = [];
 let currentIssues: MediaValidationIssue[] = [];
@@ -117,6 +119,9 @@ let localPreviewCleanup: (() => void) | undefined;
 let rateDragStart: { clientX: number; rate: number } | undefined;
 let soloOutputIds = new Set<VirtualOutputId>();
 const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
+const meterLaneElementCache = new Map<string, Set<HTMLElement>>();
+const meterPeakElementCache = new Map<VirtualOutputId, Set<HTMLElement>>();
+const meterLaneSegmentsCache = new WeakMap<HTMLElement, HTMLElement[]>();
 let activeAudioSourceMenu: HTMLElement | undefined;
 const activePanels = new WeakSet<HTMLElement>();
 
@@ -131,7 +136,8 @@ type ControlSurface = 'patch' | 'cue' | 'performance' | 'config' | 'logs';
 const UI_PREF_KEY = 'xtream.control.layout.v1';
 const DISPLAY_PREVIEW_MAX_WIDTH = 854;
 const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
-const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 30;
+const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 15;
+const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
 const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
 
 type LayoutPrefs = {
@@ -290,6 +296,12 @@ function syncTransportInputs(state: DirectorState): void {
   elements.displayBlackoutButton.classList.toggle('active', state.globalDisplayBlackout);
   elements.displayBlackoutButton.textContent = state.globalDisplayBlackout ? 'Display Blackout On' : 'Display Blackout';
   elements.displayBlackoutButton.setAttribute('aria-pressed', String(state.globalDisplayBlackout));
+  elements.performanceModeButton.classList.toggle('active', state.performanceMode);
+  elements.performanceModeButton.textContent = state.performanceMode ? 'Performance Mode On' : 'Performance Mode';
+  elements.performanceModeButton.setAttribute('aria-pressed', String(state.performanceMode));
+  elements.performanceModeButton.title = state.performanceMode
+    ? 'Performance mode disables control-window video previews and live meter sampling.'
+    : 'Disable control-window preview and meter workloads for weaker playback machines.';
   syncTimelineScrubber(state);
 }
 
@@ -478,6 +490,7 @@ function dismissAudioSourceContextMenu(): void {
 }
 
 function renderOutputs(state: DirectorState): void {
+  clearMeterElementCaches();
   const strips = Object.values(state.outputs).map((output) => createMixerStrip(output));
   const addStrip = createButton('Add Output', 'secondary mixer-add-strip', async () => {
     const output = await window.xtream.outputs.create();
@@ -508,16 +521,16 @@ function applyOutputMeterReport(report: OutputMeterReport): void {
   latestMeterReports.set(report.outputId, report);
   for (const lane of report.lanes) {
     const percent = meterLevelPercent(lane.db);
-    document.querySelectorAll<HTMLElement>(`[data-meter-lane="${cssEscape(lane.id)}"]`).forEach((laneElement) => {
+    for (const laneElement of getCachedMeterLaneElements(lane.id)) {
       laneElement.style.setProperty('--meter-level', `${percent}%`);
       laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
       laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
       syncMeterLaneSegments(laneElement, percent);
-    });
+    }
   }
-  document.querySelectorAll<HTMLElement>(`[data-meter-peak="${report.outputId}"]`).forEach((peak) => {
+  for (const peak of getCachedMeterPeakElements(report.outputId)) {
     peak.textContent = report.peakDb <= -60 ? '-inf' : `${report.peakDb.toFixed(1)}`;
-  });
+  }
 }
 
 function createMixerStrip(output: VirtualOutputState, state = currentState): HTMLElement {
@@ -602,6 +615,7 @@ function createOutputMeter(output: VirtualOutputState, state = currentState): HT
   peak.className = 'output-meter-peak';
   peak.dataset.meterPeak = output.id;
   peak.textContent = output.meterDb === undefined || output.meterDb <= -60 ? '-inf' : `${output.meterDb.toFixed(1)}`;
+  registerMeterPeakElement(output.id, peak);
 
   meter.append(scale, lanes, peak);
   return meter;
@@ -612,17 +626,21 @@ function createOutputMeterLane(lane: MeterLaneState): HTMLElement {
   laneElement.className = 'output-meter-lane';
   laneElement.dataset.meterLane = lane.id;
   laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+  registerMeterLaneElement(lane.id, laneElement);
   const percent = meterLevelPercent(lane.db);
   laneElement.style.setProperty('--meter-level', `${percent}%`);
   laneElement.setAttribute('role', 'presentation');
 
   const segments = document.createElement('div');
   segments.className = 'output-meter-segments';
+  const segmentElements: HTMLElement[] = [];
   for (let index = 0; index < 20; index += 1) {
     const segment = document.createElement('span');
     segment.dataset.segment = String(index);
+    segmentElements.push(segment);
     segments.append(segment);
   }
+  meterLaneSegmentsCache.set(laneElement, segmentElements);
 
   const label = document.createElement('span');
   label.className = 'output-meter-lane-label';
@@ -633,7 +651,7 @@ function createOutputMeterLane(lane: MeterLaneState): HTMLElement {
 }
 
 function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void {
-  const segments = Array.from(laneElement.querySelectorAll<HTMLElement>('.output-meter-segments span'));
+  const segments = meterLaneSegmentsCache.get(laneElement) ?? Array.from(laneElement.querySelectorAll<HTMLElement>('.output-meter-segments span'));
   const activeCount = Math.round((segments.length * percent) / 100);
   const isClipped = laneElement.dataset.state === 'clip';
   segments.forEach((segment, index) => {
@@ -641,6 +659,50 @@ function syncMeterLaneSegments(laneElement: HTMLElement, percent: number): void 
     segment.dataset.active = String(index >= segments.length - activeCount);
     segment.dataset.zone = isClipped || segmentDb >= -3 ? 'danger' : segmentDb >= -12 ? 'hot' : 'nominal';
   });
+}
+
+function clearMeterElementCaches(): void {
+  meterLaneElementCache.clear();
+  meterPeakElementCache.clear();
+}
+
+function registerMeterLaneElement(laneId: string, element: HTMLElement): void {
+  const elements = meterLaneElementCache.get(laneId) ?? new Set<HTMLElement>();
+  elements.add(element);
+  meterLaneElementCache.set(laneId, elements);
+}
+
+function registerMeterPeakElement(outputId: VirtualOutputId, element: HTMLElement): void {
+  const elements = meterPeakElementCache.get(outputId) ?? new Set<HTMLElement>();
+  elements.add(element);
+  meterPeakElementCache.set(outputId, elements);
+}
+
+function getCachedMeterLaneElements(laneId: string): HTMLElement[] {
+  return getConnectedCachedElements(meterLaneElementCache, laneId);
+}
+
+function getCachedMeterPeakElements(outputId: VirtualOutputId): HTMLElement[] {
+  return getConnectedCachedElements(meterPeakElementCache, outputId);
+}
+
+function getConnectedCachedElements<Key>(cache: Map<Key, Set<HTMLElement>>, key: Key): HTMLElement[] {
+  const elements = cache.get(key);
+  if (!elements) {
+    return [];
+  }
+  const connected: HTMLElement[] = [];
+  for (const element of elements) {
+    if (element.isConnected) {
+      connected.push(element);
+    } else {
+      elements.delete(element);
+    }
+  }
+  if (elements.size === 0) {
+    cache.delete(key);
+  }
+  return connected;
 }
 
 function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: number) => void): HTMLElement {
@@ -719,10 +781,6 @@ function formatMeterLaneLabel(source: AudioSourceState | undefined, channelIndex
     return channelIndex === 0 ? 'L' : 'R';
   }
   return `C${channelIndex + 1}`;
-}
-
-function cssEscape(value: string): string {
-  return 'CSS' in window && typeof CSS.escape === 'function' ? CSS.escape(value) : value.replace(/"/g, '\\"');
 }
 
 function getFilteredVisuals(visuals: VisualState[]): VisualState[] {
@@ -939,7 +997,7 @@ function renderDisplays(displays: DisplayWindowState[]): void {
       const telemetry = document.createElement('div');
       telemetry.className = 'display-telemetry';
       telemetry.dataset.displayDetails = display.id;
-      telemetry.textContent = getDisplayTelemetry(display);
+      telemetry.textContent = getDisplayCardTelemetry(display);
       const remove = createButton('Remove', 'secondary icon-button display-remove', async () => {
         if (confirm(`Remove ${display.id}?`)) {
           await window.xtream.displays.close(display.id);
@@ -968,7 +1026,7 @@ function createDisplayRenderSignature(state: DirectorState): string {
       });
       return `${display.id}:${display.layout.type}:${JSON.stringify(display.layout)}:${visualParts.join(',')}`;
     });
-  return displayParts.join('|');
+  return `${state.performanceMode ? 'performance' : 'normal'}|${displayParts.join('|')}`;
 }
 
 function syncDisplayCardSummaries(displays: DisplayWindowState[]): void {
@@ -989,7 +1047,7 @@ function syncDisplayCardSummaries(displays: DisplayWindowState[]): void {
     }
     const details = elements.displayList.querySelector<HTMLElement>(`[data-display-details="${display.id}"]`);
     if (details) {
-      details.textContent = getDisplayTelemetry(display);
+      details.textContent = getDisplayCardTelemetry(display);
     }
     const preview = elements.displayList.querySelector<HTMLElement>(`[data-display-preview="${display.id}"]`);
     if (preview) {
@@ -1026,11 +1084,23 @@ function getDisplayStatusClass(display: DisplayWindowState): string {
 }
 
 function getDisplayTelemetry(display: DisplayWindowState): string {
-  return `${describeLayout(display.layout)} | drift ${display.lastDriftSeconds?.toFixed(3) ?? '--'}s | fps ${
+  return `${describeLayout(display.layout)} | drift ${display.lastDriftSeconds?.toFixed(3) ?? '--'}s | raf ${
     display.lastFrameRateFps?.toFixed(1) ?? '--'
-  } | ${
+  } | video ${display.lastPresentedFrameRateFps?.toFixed(1) ?? '--'}fps | drop ${display.lastDroppedVideoFrames ?? '--'}/${
+    display.lastTotalVideoFrames ?? '--'
+  } | gap ${display.lastMaxVideoFrameGapMs?.toFixed(0) ?? '--'}ms | seeks ${display.lastMediaSeekCount ?? 0} | ${
     display.fullscreen ? 'fullscreen' : 'windowed'
   } | monitor ${display.displayId ?? 'default'}`;
+}
+
+function getDisplayCardTelemetry(display: DisplayWindowState): string {
+  return `drift ${formatMilliseconds(display.lastDriftSeconds)} | video ${display.lastPresentedFrameRateFps?.toFixed(1) ?? '--'}fps | drop ${
+    display.lastDroppedVideoFrames ?? '--'
+  } | gap ${display.lastMaxVideoFrameGapMs?.toFixed(0) ?? '--'}ms | seeks ${display.lastMediaSeekCount ?? 0}`;
+}
+
+function formatMilliseconds(seconds: number | undefined): string {
+  return seconds === undefined ? '--' : `${Math.round(seconds * 1000)}ms`;
 }
 
 function createDisplayPreview(display: DisplayWindowState, state: DirectorState | undefined): HTMLElement {
@@ -1059,6 +1129,11 @@ function createDisplayPreview(display: DisplayWindowState, state: DirectorState 
       );
       pane.append(image);
     } else {
+      if (state.performanceMode) {
+        pane.append(createPreviewLabel(visual.label, 'video preview disabled in performance mode'));
+        preview.append(pane);
+        continue;
+      }
       const video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
@@ -1339,6 +1414,7 @@ function renderActiveSurface(state: DirectorState): void {
     globals: {
       globalAudioMuted: state.globalAudioMuted,
       globalDisplayBlackout: state.globalDisplayBlackout,
+      performanceMode: state.performanceMode,
     },
     displays: Object.values(state.displays).map((display) => ({
       id: display.id,
@@ -1408,6 +1484,7 @@ function renderConfigSurface(state: DirectorState): void {
     createDetailLine('Readiness', getLiveStateLabel(state)),
     createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
     createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
+    createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
   );
 
   const actions = createSurfaceCard('System Actions');
@@ -1752,6 +1829,14 @@ function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
 
 function renderSelectedAssetPreview(state: DirectorState): void {
   const previewableSelection = selectedEntity?.type === 'visual' || selectedEntity?.type === 'audio-source' ? selectedEntity : undefined;
+  if (state.performanceMode) {
+    assetPreviewSignature = 'performance-mode';
+    localPreviewCleanup?.();
+    localPreviewCleanup = undefined;
+    elements.assetPreview.replaceChildren();
+    elements.assetPreviewRegion.hidden = true;
+    return;
+  }
   const signature = JSON.stringify({
     selectedEntity: previewableSelection,
     visual: selectedEntity?.type === 'visual' ? state.visuals[selectedEntity.id] : undefined,
@@ -1960,12 +2045,15 @@ function tick(): void {
       elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState));
     }
     syncTimelineScrubber(currentState);
-    syncPreviewElements(currentState);
   }
   animationFrame = window.requestAnimationFrame(tick);
 }
 
 function syncPreviewElements(state: DirectorState): void {
+  if (state.performanceMode) {
+    document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]').forEach((video) => video.pause());
+    return;
+  }
   const targetSeconds = getDirectorSeconds(state);
   const syncKey = createPlaybackSyncKey(state);
   const videos = document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]');
@@ -2426,6 +2514,9 @@ elements.globalAudioMuteButton.addEventListener('click', async () => {
 elements.displayBlackoutButton.addEventListener('click', async () => {
   renderState(await window.xtream.director.updateGlobalState({ globalDisplayBlackout: !currentState?.globalDisplayBlackout }));
 });
+elements.performanceModeButton.addEventListener('click', async () => {
+  renderState(await window.xtream.director.updateGlobalState({ performanceMode: !currentState?.performanceMode }));
+});
 elements.clearSoloButton.addEventListener('click', () => {
   setMixerSoloOutputIds([]);
 });
@@ -2462,9 +2553,17 @@ void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);
 
 animationFrame = window.requestAnimationFrame(tick);
+previewSyncTimer = window.setInterval(() => {
+  if (currentState) {
+    syncPreviewElements(currentState);
+  }
+}, DISPLAY_PREVIEW_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {
   if (animationFrame !== undefined) {
     window.cancelAnimationFrame(animationFrame);
+  }
+  if (previewSyncTimer !== undefined) {
+    window.clearInterval(previewSyncTimer);
   }
 });

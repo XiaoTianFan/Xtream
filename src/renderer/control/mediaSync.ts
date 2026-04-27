@@ -7,6 +7,15 @@ export type MediaSyncState = {
   lastSyncKey?: string;
 };
 
+export type MediaSyncOptions = {
+  beforePlay?: () => void;
+  clamp?: (seconds: number, element: HTMLMediaElement) => number;
+  syncKeySeekThresholdSeconds?: number;
+  seekFallbackMs?: number;
+  onSeekStart?: (targetSeconds: number) => void;
+  onSeekComplete?: (result: { targetSeconds: number; durationMs: number; usedFallback: boolean }) => void;
+};
+
 const mediaSyncStates = new WeakMap<HTMLMediaElement, MediaSyncState>();
 
 export function syncTimedMediaElement(
@@ -15,13 +24,14 @@ export function syncTimedMediaElement(
   shouldPlay: boolean,
   syncKey: string,
   driftSeekThresholdSeconds: number,
-  beforePlay?: () => void,
+  optionsOrBeforePlay?: MediaSyncOptions | (() => void),
 ): void {
   if (element.readyState < HTMLMediaElement.HAVE_METADATA) {
     return;
   }
+  const options = typeof optionsOrBeforePlay === 'function' ? { beforePlay: optionsOrBeforePlay } : (optionsOrBeforePlay ?? {});
   const state = getMediaSyncState(element);
-  const safeTarget = clampMediaTime(targetSeconds, element);
+  const safeTarget = (options.clamp ?? clampMediaTime)(targetSeconds, element);
   if (state.pendingSeekSeconds !== undefined) {
     state.playAfterSeek = shouldPlay;
     if (!shouldPlay) {
@@ -33,25 +43,38 @@ export function syncTimedMediaElement(
   const syncKeyChanged = state.lastSyncKey !== syncKey;
   state.lastSyncKey = syncKey;
   const driftSeconds = Math.abs(element.currentTime - safeTarget);
-  const shouldSeek = syncKeyChanged ? driftSeconds > 0.05 : driftSeconds > driftSeekThresholdSeconds;
+  const shouldSeek = syncKeyChanged ? driftSeconds > (options.syncKeySeekThresholdSeconds ?? 0.05) : driftSeconds > driftSeekThresholdSeconds;
   if (shouldSeek) {
     state.pendingSeekSeconds = safeTarget;
     state.playAfterSeek = shouldPlay;
-    const completeSeek = () => {
-      element.removeEventListener('seeked', completeSeek);
+    options.onSeekStart?.(safeTarget);
+    const seekStartedMs = performance.now();
+    let completed = false;
+    const completeSeek = (usedFallback = false) => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      element.removeEventListener('seeked', handleSeeked);
       state.pendingSeekSeconds = undefined;
+      options.onSeekComplete?.({
+        targetSeconds: safeTarget,
+        durationMs: performance.now() - seekStartedMs,
+        usedFallback,
+      });
       if (state.playAfterSeek) {
-        beforePlay?.();
+        options.beforePlay?.();
         requestMediaPlay(element, state, true);
       }
     };
-    element.addEventListener('seeked', completeSeek, { once: true });
+    const handleSeeked = () => completeSeek();
+    element.addEventListener('seeked', handleSeeked, { once: true });
     element.currentTime = safeTarget;
     window.setTimeout(() => {
       if (state.pendingSeekSeconds === safeTarget) {
-        completeSeek();
+        completeSeek(true);
       }
-    }, 250);
+    }, options.seekFallbackMs ?? 250);
     if (!shouldPlay) {
       element.pause();
     }
@@ -62,7 +85,7 @@ export function syncTimedMediaElement(
     element.pause();
     return;
   }
-  beforePlay?.();
+  options.beforePlay?.();
   requestMediaPlay(element, state);
 }
 
