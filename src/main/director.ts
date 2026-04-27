@@ -6,12 +6,14 @@ import type {
   DisplayWindowState,
   DriftReport,
   PersistedShowConfigV3,
+  PreviewStatus,
   PresetId,
   PresetResult,
   RailCorrection,
   ReadinessIssue,
   TransportCommand,
   VisualImportItem,
+  VisualUpdate,
   VisualMetadataReport,
   VisualState,
   VirtualOutputState,
@@ -60,6 +62,7 @@ export class Director extends EventEmitter {
       corrections: {
         displays: {},
       },
+      previews: {},
     };
   }
 
@@ -102,6 +105,16 @@ export class Director extends EventEmitter {
       ready: false,
     };
     this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.visuals[visualId]);
+  }
+
+  updateVisual(visualId: string, update: VisualUpdate): VisualState {
+    const visual = this.state.visuals[visualId];
+    if (!visual) {
+      throw new Error(`Unknown visual: ${visualId}`);
+    }
+    this.state.visuals[visualId] = { ...visual, ...update };
     this.emitState();
     return structuredClone(this.state.visuals[visualId]);
   }
@@ -184,7 +197,6 @@ export class Director extends EventEmitter {
       url: audioUrl,
       ready: false,
     };
-    this.ensurePrimaryOutputUsesSource(id);
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.audioSources[id]);
@@ -202,10 +214,49 @@ export class Director extends EventEmitter {
       ready: Boolean(visual?.ready),
       error: visual?.error,
     };
-    this.ensurePrimaryOutputUsesSource(id);
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.audioSources[id]);
+  }
+
+  replaceAudioFileSource(audioSourceId: string, audioPath: string, audioUrl: string): AudioSourceState {
+    const source = this.state.audioSources[audioSourceId];
+    if (!source) {
+      throw new Error(`Unknown audio source: ${audioSourceId}`);
+    }
+    this.state.audioSources[audioSourceId] = {
+      id: audioSourceId,
+      label: source.label,
+      type: 'external-file',
+      path: audioPath,
+      url: audioUrl,
+      ready: false,
+    };
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[audioSourceId]);
+  }
+
+  clearAudioSource(audioSourceId: string): AudioSourceState | undefined {
+    const source = this.state.audioSources[audioSourceId];
+    if (!source) {
+      throw new Error(`Unknown audio source: ${audioSourceId}`);
+    }
+    if (source.type === 'embedded-visual') {
+      this.removeAudioSource(audioSourceId);
+      return undefined;
+    }
+    this.state.audioSources[audioSourceId] = {
+      id: source.id,
+      label: source.label,
+      type: 'external-file',
+      ready: false,
+    };
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[audioSourceId]);
   }
 
   updateAudioSource(audioSourceId: string, update: Partial<Pick<AudioSourceState, 'label'>>): AudioSourceState {
@@ -264,12 +315,27 @@ export class Director extends EventEmitter {
       ...output,
       ...update,
       ready: output.ready,
-      error: update.error ?? output.error,
+      error: Object.prototype.hasOwnProperty.call(update, 'error') ? update.error : output.error,
     };
     this.updateOutputReadiness();
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.outputs[outputId]);
+  }
+
+  updateOutputMeter(outputId: string, meterDb: number): VirtualOutputState {
+    const output = this.state.outputs[outputId];
+    if (!output) {
+      throw new Error(`Unknown virtual output: ${outputId}`);
+    }
+    this.state.outputs[outputId] = { ...output, meterDb };
+    return structuredClone(this.state.outputs[outputId]);
+  }
+
+  updatePreviewStatus(report: PreviewStatus): DirectorState {
+    this.state.previews[report.key] = structuredClone(report);
+    this.emitState();
+    return this.getState();
   }
 
   removeVirtualOutput(outputId: string): DirectorState {
@@ -410,6 +476,7 @@ export class Director extends EventEmitter {
     }
     this.state.displays = {};
     this.state.corrections = { displays: {} };
+    this.state.previews = {};
     this.correctionCounts.clear();
     this.updateOutputReadiness();
     this.recalculateTimeline();
@@ -672,6 +739,11 @@ export class Director extends EventEmitter {
     if (this.state.activeTimeline.notice) {
       issues.push({ severity: 'warning', target: 'loop', message: this.state.activeTimeline.notice });
     }
+    for (const preview of Object.values(this.state.previews)) {
+      if (!preview.ready && preview.error) {
+        issues.push({ severity: 'warning', target: `preview:${preview.key}`, message: preview.error });
+      }
+    }
 
     return issues;
   }
@@ -710,15 +782,6 @@ export class Director extends EventEmitter {
       fallbackAccepted: false,
       fallbackReason: 'none',
     };
-  }
-
-  private ensurePrimaryOutputUsesSource(audioSourceId: string): void {
-    const output = this.state.outputs['output-main'] ?? this.createOutputState('output-main', 'Main Output');
-    if (!output.sources.some((source) => source.audioSourceId === audioSourceId)) {
-      output.sources.push({ audioSourceId, levelDb: 0 });
-    }
-    this.state.outputs[output.id] = output;
-    this.updateOutputReadiness();
   }
 
   private updateOutputReadiness(): void {

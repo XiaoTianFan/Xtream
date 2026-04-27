@@ -22,6 +22,7 @@ import type {
   DisplayCreateOptions,
   DisplayUpdate,
   DriftReport,
+  PreviewStatus,
   PresetId,
   PresetResult,
   RendererReadyReport,
@@ -30,6 +31,7 @@ import type {
   VisualImportItem,
   VisualMediaType,
   VisualMetadataReport,
+  VisualUpdate,
   VirtualOutputUpdate,
 } from '../shared/types';
 
@@ -164,9 +166,11 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
   director.restoreShowConfig(config, mediaUrls);
   for (const display of config.displays) {
     const state = displayRegistry.create({
+      id: display.id,
       layout: display.layout,
       fullscreen: display.fullscreen,
       displayId: display.displayId,
+      bounds: display.bounds,
     });
     director.registerDisplay(state);
   }
@@ -209,6 +213,12 @@ function registerIpcHandlers(): void {
     const visuals = director.addVisuals(items);
     scheduleShowConfigAutoSave();
     return visuals;
+  });
+
+  ipcMain.handle('visual:update', (_event, visualId: string, update: VisualUpdate) => {
+    const visual = director.updateVisual(visualId, update);
+    scheduleShowConfigAutoSave();
+    return visual;
   });
 
   ipcMain.handle('visual:replace', async (_event, visualId: string) => {
@@ -254,6 +264,25 @@ function registerIpcHandlers(): void {
     return source;
   });
 
+  ipcMain.handle('audio-source:replace-file', async (_event, audioSourceId: string) => {
+    const result = await showOpenDialog({
+      title: 'Replace external audio',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Audio', extensions: ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus'] },
+        { name: 'Video/Audio', extensions: ['mp4', 'mov', 'm4v', 'webm'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return undefined;
+    }
+    const audioPath = result.filePaths[0];
+    const source = director.replaceAudioFileSource(audioSourceId, audioPath, pathToFileURL(audioPath).toString());
+    scheduleShowConfigAutoSave();
+    return source;
+  });
+
   ipcMain.handle('audio-source:add-embedded', (_event, visualId: string) => {
     const source = director.addEmbeddedAudioSource(visualId);
     scheduleShowConfigAutoSave();
@@ -262,6 +291,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-source:update', (_event, audioSourceId: string, update: AudioSourceUpdate) => {
     const source = director.updateAudioSource(audioSourceId, update);
+    scheduleShowConfigAutoSave();
+    return source;
+  });
+
+  ipcMain.handle('audio-source:clear', (_event, audioSourceId: string) => {
+    const source = director.clearAudioSource(audioSourceId);
     scheduleShowConfigAutoSave();
     return source;
   });
@@ -282,11 +317,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('output:update', (_event, outputId: string, update: VirtualOutputUpdate) => {
     const output = director.updateVirtualOutput(outputId, update);
-    if (update.meterDb === undefined) {
-      scheduleShowConfigAutoSave();
-    }
+    scheduleShowConfigAutoSave();
     return output;
   });
+
+  ipcMain.handle('output:meter', (_event, outputId: string, meterDb: number) => director.updateOutputMeter(outputId, meterDb));
 
   ipcMain.handle('output:remove', (_event, outputId: string) => {
     director.removeVirtualOutput(outputId);
@@ -411,6 +446,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle('renderer:drift', (_event, report: DriftReport) => {
     if (!isShuttingDown) {
       director.ingestDrift(report);
+    }
+  });
+
+  ipcMain.handle('renderer:preview-status', (_event, report: PreviewStatus) => {
+    if (!isShuttingDown) {
+      director.updatePreviewStatus(report);
     }
   });
 }

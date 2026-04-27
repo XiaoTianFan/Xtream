@@ -52,6 +52,28 @@ export function getMediaEffectiveTime(
   return loopStart + ((safeSeconds - loopStart) % (loopEnd - loopStart));
 }
 
+export type AudioEffectiveTime = {
+  seconds: number;
+  audible: boolean;
+};
+
+export function getAudioEffectiveTime(
+  directorSeconds: number,
+  durationSeconds: number | undefined,
+  loop: LoopState,
+): AudioEffectiveTime {
+  const safeSeconds = Math.max(0, directorSeconds);
+  if (!Number.isFinite(durationSeconds) || durationSeconds === undefined || durationSeconds <= 0) {
+    return { seconds: safeSeconds, audible: true };
+  }
+
+  if (!loop.enabled) {
+    return safeSeconds >= durationSeconds ? { seconds: Math.max(0, durationSeconds - 0.001), audible: false } : { seconds: safeSeconds, audible: true };
+  }
+
+  return { seconds: getMediaEffectiveTime(safeSeconds, durationSeconds, loop), audible: true };
+}
+
 export function formatTimecode(seconds: number): string {
   const safeSeconds = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   const hours = Math.floor(safeSeconds / 3600);

@@ -157,6 +157,14 @@ input {
   font: inherit;
 }
 
+.label-input {
+  width: min(100%, 22rem);
+  padding: 0.35rem 0.5rem;
+  border-color: transparent;
+  background: #0f1420;
+  font-weight: 800;
+}
+
 .display-list,
 .slot-list,
 .audio-panel,
@@ -267,7 +275,8 @@ input {
   display: none;
 }
 
-.visual-preview img {
+.visual-preview img,
+.visual-preview video {
   display: block;
   width: 100%;
   max-height: 12rem;
@@ -302,9 +311,13 @@ input {
 
 .output-source-row {
   display: grid;
-  grid-template-columns: minmax(8rem, 1fr) minmax(14rem, 20rem) auto;
+  grid-template-columns: minmax(8rem, 1fr) minmax(14rem, 20rem) minmax(10rem, auto);
   gap: 0.75rem;
   align-items: end;
+}
+
+.button-row.compact {
+  gap: 0.4rem;
 }
 
 .db-control {

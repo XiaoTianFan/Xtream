@@ -21,7 +21,7 @@ export class DisplayRegistry {
   ) {}
 
   create(options: DisplayCreateOptions = {}): DisplayWindowState {
-    const id = this.allocateDisplayId();
+    const id = options.id ?? this.allocateDisplayId();
     return this.createEntry(id, options);
   }
 
@@ -71,7 +71,7 @@ export class DisplayRegistry {
       ? screen.getAllDisplays().find((display) => String(display.id) === options.displayId)
       : undefined;
 
-    const bounds = targetDisplay?.bounds;
+    const bounds = options.bounds ?? targetDisplay?.bounds;
     const window = new BrowserWindow({
       x: bounds?.x,
       y: bounds?.y,

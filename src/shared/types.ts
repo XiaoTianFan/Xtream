@@ -98,6 +98,15 @@ export type ActiveTimelineState = {
   notice?: string;
 };
 
+export type PreviewStatus = {
+  key: string;
+  displayId?: DisplayWindowId;
+  visualId?: VisualId;
+  ready: boolean;
+  error?: string;
+  reportedAtWallTimeMs: number;
+};
+
 export type LoopState = {
   enabled: boolean;
   startSeconds: number;
@@ -117,6 +126,7 @@ export type DirectorState = {
   activeTimeline: ActiveTimelineState;
   readiness: ShowReadinessState;
   corrections: CorrectionState;
+  previews: Record<string, PreviewStatus>;
 };
 
 export type ReadinessIssue = {
@@ -237,9 +247,11 @@ export type DriftReport = {
 };
 
 export type DisplayCreateOptions = {
+  id?: DisplayWindowId;
   layout?: VisualLayoutProfile;
   fullscreen?: boolean;
   displayId?: string;
+  bounds?: DisplayWindowState['bounds'];
 };
 
 export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'layout' | 'fullscreen' | 'displayId'>>;
@@ -279,12 +291,13 @@ export type AudioMetadataReport = {
 };
 
 export type AudioSourceCreateResult = AudioSourceState | undefined;
+export type VisualUpdate = Partial<Pick<VisualState, 'label'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label'>>;
 
 export type VirtualOutputUpdate = Partial<
   Pick<
     VirtualOutputState,
-    'label' | 'sources' | 'sinkId' | 'sinkLabel' | 'busLevelDb' | 'muted' | 'meterDb' | 'fallbackAccepted' | 'physicalRoutingAvailable' | 'fallbackReason' | 'error'
+    'label' | 'sources' | 'sinkId' | 'sinkLabel' | 'busLevelDb' | 'muted' | 'fallbackAccepted' | 'physicalRoutingAvailable' | 'fallbackReason' | 'error'
   >
 >;
 
@@ -321,17 +334,21 @@ export type IpcChannels = {
   'director:apply-preset': (preset: PresetId) => PresetResult;
   'director:transport': (command: TransportCommand) => DirectorState;
   'visual:add': () => VisualState[] | undefined;
+  'visual:update': (visualId: VisualId, update: VisualUpdate) => VisualState;
   'visual:replace': (visualId: VisualId) => VisualState | undefined;
   'visual:clear': (visualId: VisualId) => VisualState;
   'visual:remove': (visualId: VisualId) => boolean;
   'visual:metadata': (report: VisualMetadataReport) => DirectorState;
   'audio-source:add-file': () => AudioSourceCreateResult;
   'audio-source:add-embedded': (visualId: VisualId) => AudioSourceState;
+  'audio-source:replace-file': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
+  'audio-source:clear': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
   'audio-source:update': (audioSourceId: AudioSourceId, update: AudioSourceUpdate) => AudioSourceState;
   'audio-source:remove': (audioSourceId: AudioSourceId) => boolean;
   'audio-source:metadata': (report: AudioMetadataReport) => DirectorState;
   'output:create': () => VirtualOutputState;
   'output:update': (outputId: VirtualOutputId, update: VirtualOutputUpdate) => VirtualOutputState;
+  'output:meter': (outputId: VirtualOutputId, meterDb: number) => VirtualOutputState;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
@@ -345,6 +362,7 @@ export type IpcChannels = {
   'display:reopen': (id: DisplayWindowId) => DisplayWindowState;
   'renderer:ready': (report: RendererReadyReport) => void;
   'renderer:drift': (report: DriftReport) => void;
+  'renderer:preview-status': (report: PreviewStatus) => void;
 };
 
 export type DirectorEventName = 'director:state';

@@ -11,6 +11,7 @@ import type {
   DisplayUpdate,
   DisplayWindowState,
   DriftReport,
+  PreviewStatus,
   PresetId,
   PresetResult,
   RendererReadyReport,
@@ -19,6 +20,7 @@ import type {
   VisualId,
   VisualMetadataReport,
   VisualState,
+  VisualUpdate,
   VirtualOutputId,
   VirtualOutputState,
   VirtualOutputUpdate,
@@ -47,6 +49,7 @@ const api = {
   },
   visuals: {
     add: (): Promise<VisualState[] | undefined> => ipcRenderer.invoke('visual:add'),
+    update: (visualId: VisualId, update: VisualUpdate): Promise<VisualState> => ipcRenderer.invoke('visual:update', visualId, update),
     replace: (visualId: VisualId): Promise<VisualState | undefined> => ipcRenderer.invoke('visual:replace', visualId),
     clear: (visualId: VisualId): Promise<VisualState> => ipcRenderer.invoke('visual:clear', visualId),
     remove: (visualId: VisualId): Promise<boolean> => ipcRenderer.invoke('visual:remove', visualId),
@@ -55,6 +58,9 @@ const api = {
   audioSources: {
     addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),
     addEmbedded: (visualId: VisualId): Promise<AudioSourceState> => ipcRenderer.invoke('audio-source:add-embedded', visualId),
+    replaceFile: (audioSourceId: AudioSourceId): Promise<AudioSourceState | undefined> =>
+      ipcRenderer.invoke('audio-source:replace-file', audioSourceId),
+    clear: (audioSourceId: AudioSourceId): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:clear', audioSourceId),
     update: (audioSourceId: AudioSourceId, update: AudioSourceUpdate): Promise<AudioSourceState> =>
       ipcRenderer.invoke('audio-source:update', audioSourceId, update),
     remove: (audioSourceId: AudioSourceId): Promise<boolean> => ipcRenderer.invoke('audio-source:remove', audioSourceId),
@@ -64,6 +70,7 @@ const api = {
     create: (): Promise<VirtualOutputState> => ipcRenderer.invoke('output:create'),
     update: (outputId: VirtualOutputId, update: VirtualOutputUpdate): Promise<VirtualOutputState> =>
       ipcRenderer.invoke('output:update', outputId, update),
+    reportMeter: (outputId: VirtualOutputId, meterDb: number): Promise<VirtualOutputState> => ipcRenderer.invoke('output:meter', outputId, meterDb),
     remove: (outputId: VirtualOutputId): Promise<boolean> => ipcRenderer.invoke('output:remove', outputId),
   },
   show: {
@@ -75,6 +82,7 @@ const api = {
   renderer: {
     ready: (report: RendererReadyReport): Promise<void> => ipcRenderer.invoke('renderer:ready', report),
     reportDrift: (report: DriftReport): Promise<void> => ipcRenderer.invoke('renderer:drift', report),
+    reportPreviewStatus: (report: PreviewStatus): Promise<void> => ipcRenderer.invoke('renderer:preview-status', report),
   },
   events: {
     hasDirectorEvent: (eventName: string): boolean => DIRECTOR_EVENTS.has(eventName as DirectorEventName),

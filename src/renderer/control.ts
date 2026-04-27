@@ -1,6 +1,6 @@
 import './styles.css';
 import { describeLayout } from '../shared/layouts';
-import { formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
+import { formatTimecode, getAudioEffectiveTime, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
 import type {
   AudioSourceState,
   DirectorState,
@@ -75,9 +75,12 @@ let driftTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
 let displayMonitors: DisplayMonitorInfo[] = [];
 let currentIssues: MediaValidationIssue[] = [];
+let visualRenderSignature = '';
+let audioRenderSignature = '';
 let displayRenderSignature = '';
 let audioGraphSignature = '';
 let outputRuntimes = new Map<string, OutputRuntime>();
+const activePanels = new WeakSet<HTMLElement>();
 
 const transportDraftElements = new Set<HTMLInputElement>([
   elements.rateInput,
@@ -98,8 +101,14 @@ function renderState(state: DirectorState): void {
   elements.stateView.textContent = JSON.stringify(state, null, 2);
   syncVirtualAudioGraph(state);
   syncTransportInputs(state);
-  renderVisuals(Object.values(state.visuals));
-  if (!isPanelInteractionActive(elements.audioPanel)) {
+  const nextVisualRenderSignature = createVisualRenderSignature(state);
+  if (!isPanelInteractionActive(elements.visualList) && visualRenderSignature !== nextVisualRenderSignature) {
+    visualRenderSignature = nextVisualRenderSignature;
+    renderVisuals(Object.values(state.visuals));
+  }
+  const nextAudioRenderSignature = createAudioRenderSignature(state);
+  if (!isPanelInteractionActive(elements.audioPanel) && audioRenderSignature !== nextAudioRenderSignature) {
+    audioRenderSignature = nextAudioRenderSignature;
     renderAudio(state);
   }
   const nextDisplayRenderSignature = createDisplayRenderSignature(state);
@@ -114,7 +123,7 @@ function renderState(state: DirectorState): void {
 
 function isPanelInteractionActive(panel: HTMLElement): boolean {
   const activeElement = document.activeElement;
-  return activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('select, input, textarea');
+  return activePanels.has(panel) || (activeElement instanceof HTMLElement && panel.contains(activeElement) && activeElement.matches('button, select, input, textarea'));
 }
 
 function renderIssues(issues: MediaValidationIssue[]): void {
@@ -126,6 +135,38 @@ function renderIssues(issues: MediaValidationIssue[]): void {
       return item;
     }),
   );
+}
+
+function createVisualRenderSignature(state: DirectorState): string {
+  return JSON.stringify(
+    Object.values(state.visuals)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((visual) => ({
+        id: visual.id,
+        label: visual.label,
+        type: visual.type,
+        path: visual.path,
+        url: visual.url,
+        ready: visual.ready,
+        error: visual.error,
+        durationSeconds: visual.durationSeconds,
+        width: visual.width,
+        height: visual.height,
+        hasEmbeddedAudio: visual.hasEmbeddedAudio,
+      })),
+  );
+}
+
+function createAudioRenderSignature(state: DirectorState): string {
+  return JSON.stringify({
+    sources: Object.values(state.audioSources)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((source) => source),
+    outputs: Object.values(state.outputs)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((output) => ({ ...output, meterDb: undefined })),
+    devices: audioDevices.map((device) => `${device.deviceId}:${device.label}`).join('|'),
+  });
 }
 
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
@@ -188,8 +229,7 @@ function renderVisuals(visuals: VisualState[]): void {
       const card = document.createElement('article');
       card.className = 'slot-card';
       const header = document.createElement('header');
-      const title = document.createElement('strong');
-      title.textContent = visual.label;
+      const title = createLabelInput(visual.label, (label) => window.xtream.visuals.update(visual.id, { label }));
       const badge = document.createElement('span');
       badge.className = 'badge';
       badge.textContent = visual.ready ? 'ready' : visual.path ? 'loading' : 'empty';
@@ -201,7 +241,20 @@ function renderVisuals(visuals: VisualState[]): void {
         const image = document.createElement('img');
         image.src = visual.url;
         image.alt = visual.label;
+        image.addEventListener('load', () => reportPreviewStatus(`visual-card:${visual.id}`, visual.id, true));
+        image.addEventListener('error', () => reportPreviewStatus(`visual-card:${visual.id}`, visual.id, false, 'Visual card image preview failed to load.'));
         preview.append(image);
+      } else if (visual.url && visual.type === 'video') {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.src = visual.url;
+        video.dataset.visualId = visual.id;
+        video.dataset.previewVideo = 'true';
+        video.addEventListener('loadedmetadata', () => reportPreviewStatus(`visual-card:${visual.id}`, visual.id, true));
+        video.addEventListener('error', () => reportPreviewStatus(`visual-card:${visual.id}`, visual.id, false, 'Visual card video preview failed to load.'));
+        preview.append(video);
       }
 
       const pathText = document.createElement('div');
@@ -285,8 +338,7 @@ function createAudioSourceCard(source: AudioSourceState, state: DirectorState): 
   const card = document.createElement('article');
   card.className = 'audio-card';
   const header = document.createElement('header');
-  const title = document.createElement('strong');
-  title.textContent = source.label;
+  const title = createLabelInput(source.label, (label) => window.xtream.audioSources.update(source.id, { label }));
   const badge = document.createElement('span');
   badge.className = 'badge';
   badge.textContent = source.ready ? 'ready' : 'loading';
@@ -300,10 +352,30 @@ function createAudioSourceCard(source: AudioSourceState, state: DirectorState): 
   meta.textContent = source.error ? `Error: ${source.error}` : `duration: ${source.durationSeconds?.toFixed(3) ?? 'n/a'}s`;
   const buttons = document.createElement('div');
   buttons.className = 'button-row';
-  buttons.append(createButton('Remove', 'secondary', async () => {
-    await window.xtream.audioSources.remove(source.id);
-    renderState(await window.xtream.director.getState());
-  }));
+  buttons.append(
+    createButton('Preview', 'secondary', () => playAudioSourcePreview(source, state)),
+    ...(source.type === 'external-file'
+      ? [
+          createButton('Replace', 'secondary', async () => {
+            await window.xtream.audioSources.replaceFile(source.id);
+            renderState(await window.xtream.director.getState());
+          }),
+          createButton('Clear', 'secondary', async () => {
+            await window.xtream.audioSources.clear(source.id);
+            renderState(await window.xtream.director.getState());
+          }),
+        ]
+      : [
+          createButton('Clear', 'secondary', async () => {
+            await window.xtream.audioSources.clear(source.id);
+            renderState(await window.xtream.director.getState());
+          }),
+        ]),
+    createButton('Remove', 'secondary', async () => {
+      await window.xtream.audioSources.remove(source.id);
+      renderState(await window.xtream.director.getState());
+    }),
+  );
   card.append(header, pathText, meta, buttons);
   return card;
 }
@@ -312,8 +384,7 @@ function createVirtualOutputCard(output: VirtualOutputState, state: DirectorStat
   const card = document.createElement('article');
   card.className = 'audio-card';
   const header = document.createElement('header');
-  const title = document.createElement('strong');
-  title.textContent = output.label;
+  const title = createLabelInput(output.label, (label) => window.xtream.outputs.update(output.id, { label }));
   const badge = document.createElement('span');
   badge.className = 'badge';
   badge.textContent = output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'empty';
@@ -340,6 +411,10 @@ function createVirtualOutputCard(output: VirtualOutputState, state: DirectorStat
   const buttons = document.createElement('div');
   buttons.className = 'button-row';
   buttons.append(
+    createButton(output.muted ? 'Unmute Output' : 'Mute Output', 'secondary', async () => {
+      await window.xtream.outputs.update(output.id, { muted: !output.muted });
+      renderState(await window.xtream.director.getState());
+    }),
     createButton('Test Tone', 'secondary', () => playOutputTestTone(output)),
     createButton(output.fallbackAccepted ? 'Fallback Accepted' : 'Accept Fallback', 'secondary', async () => {
       await window.xtream.outputs.update(output.id, { fallbackAccepted: true });
@@ -376,7 +451,18 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
       });
       renderState(await window.xtream.director.getState());
     });
-    row.append(label, levelControl, removeButton);
+    const muteButton = createButton(selection.muted ? 'Unmute Source' : 'Mute Source', 'secondary', async () => {
+      await window.xtream.outputs.update(output.id, {
+        sources: output.sources.map((candidate) =>
+          candidate.audioSourceId === selection.audioSourceId ? { ...candidate, muted: !candidate.muted } : candidate,
+        ),
+      });
+      renderState(await window.xtream.director.getState());
+    });
+    const actions = document.createElement('div');
+    actions.className = 'button-row compact';
+    actions.append(muteButton, removeButton);
+    row.append(label, levelControl, actions);
     wrapper.append(row);
   }
   const availableSources = Object.values(state.audioSources).filter(
@@ -530,13 +616,13 @@ function syncAudioRuntimeToDirector(state: DirectorState): void {
       if (!selection || !source) {
         continue;
       }
-      sourceRuntime.gainNode.gain.value = selection.muted ? 0 : dbToGain(selection.levelDb);
-      const targetSeconds = getMediaEffectiveTime(directorSeconds, source.durationSeconds, state.loop);
-      if (sourceRuntime.element.readyState >= HTMLMediaElement.HAVE_METADATA && Math.abs(sourceRuntime.element.currentTime - targetSeconds) > 0.08) {
-        sourceRuntime.element.currentTime = targetSeconds;
+      const target = getAudioEffectiveTime(directorSeconds, source.durationSeconds, state.loop);
+      sourceRuntime.gainNode.gain.value = selection.muted || !target.audible ? 0 : dbToGain(selection.levelDb);
+      if (sourceRuntime.element.readyState >= HTMLMediaElement.HAVE_METADATA && Math.abs(sourceRuntime.element.currentTime - target.seconds) > 0.08) {
+        sourceRuntime.element.currentTime = target.seconds;
       }
       sourceRuntime.element.playbackRate = state.rate;
-      if (state.paused) {
+      if (state.paused || !target.audible) {
         sourceRuntime.element.pause();
       } else if (sourceRuntime.element.paused) {
         void runtime.context.resume().then(() => sourceRuntime.element.play()).catch(() => undefined);
@@ -565,7 +651,7 @@ function sampleMeters(state: DirectorState): void {
     }
     if (now - runtime.lastMeterReportMs > 250 && currentState?.outputs[outputId]) {
       runtime.lastMeterReportMs = now;
-      void window.xtream.outputs.update(outputId, { meterDb });
+      void window.xtream.outputs.reportMeter(outputId, meterDb);
     }
   }
 }
@@ -587,6 +673,24 @@ function createHiddenAudioOutput(): SinkCapableAudioElement {
   output.style.display = 'none';
   document.body.append(output);
   return output;
+}
+
+function playAudioSourcePreview(source: AudioSourceState, state: DirectorState): void {
+  const url = source.type === 'external-file' ? source.url : state.visuals[source.visualId]?.url;
+  if (!url) {
+    setShowStatus(`Preview unavailable: ${source.label} has no playable URL.`);
+    return;
+  }
+  const audio = createHiddenAudioOutput();
+  audio.src = url;
+  audio.currentTime = 0;
+  audio.play().catch((error: unknown) => {
+    setShowStatus(`Preview failed: ${error instanceof Error ? error.message : 'Unable to play audio source.'}`);
+  });
+  window.setTimeout(() => {
+    audio.pause();
+    audio.remove();
+  }, 2500);
 }
 
 async function playOutputTestTone(output: VirtualOutputState): Promise<void> {
@@ -735,6 +839,10 @@ function createDisplayPreview(display: DisplayWindowState, state: DirectorState 
       const image = document.createElement('img');
       image.src = visual.url;
       image.alt = visual.label;
+      image.addEventListener('load', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
+      image.addEventListener('error', () =>
+        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} image preview failed to load.`, display.id),
+      );
       pane.append(image);
     } else {
       const video = document.createElement('video');
@@ -745,11 +853,26 @@ function createDisplayPreview(display: DisplayWindowState, state: DirectorState 
       video.dataset.visualId = visualId;
       video.dataset.previewVideo = 'true';
       video.playbackRate = state.rate;
+      video.addEventListener('loadedmetadata', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
+      video.addEventListener('error', () =>
+        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} video preview failed to load.`, display.id),
+      );
       pane.append(video);
     }
     preview.append(pane);
   }
   return preview;
+}
+
+function reportPreviewStatus(key: string, visualId: string | undefined, ready: boolean, error?: string, displayId?: string): void {
+  void window.xtream.renderer.reportPreviewStatus({
+    key,
+    displayId,
+    visualId,
+    ready,
+    error,
+    reportedAtWallTimeMs: Date.now(),
+  });
 }
 
 function createPreviewLabel(label: string, detail: string): HTMLElement {
@@ -977,6 +1100,19 @@ function createHint(text: string): HTMLParagraphElement {
   return hint;
 }
 
+function createLabelInput(value: string, onCommit: (label: string) => Promise<unknown>): HTMLInputElement {
+  const input = document.createElement('input');
+  input.className = 'label-input';
+  input.type = 'text';
+  input.value = value;
+  input.addEventListener('change', () => {
+    const label = input.value.trim() || value;
+    input.value = label;
+    void onCommit(label).then(async () => renderState(await window.xtream.director.getState()));
+  });
+  return input;
+}
+
 function createButton(label: string, className: string, onClick: () => void | Promise<void>): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
@@ -987,6 +1123,20 @@ function createButton(label: string, className: string, onClick: () => void | Pr
   button.addEventListener('click', () => void onClick());
   return button;
 }
+
+function installInteractionLock(panel: HTMLElement): void {
+  panel.addEventListener('pointerdown', () => activePanels.add(panel));
+  const release = () => {
+    window.setTimeout(() => activePanels.delete(panel), 0);
+  };
+  panel.addEventListener('pointerup', release);
+  panel.addEventListener('pointercancel', release);
+  panel.addEventListener('click', release);
+}
+
+installInteractionLock(elements.visualList);
+installInteractionLock(elements.audioPanel);
+installInteractionLock(elements.displayList);
 
 elements.playButton.addEventListener('click', () => void sendTransport({ type: 'play' }));
 elements.pauseButton.addEventListener('click', () => void sendTransport({ type: 'pause' }));
@@ -1059,14 +1209,6 @@ elements.createSplitButton.addEventListener('click', async () => {
   await window.xtream.displays.create({ layout: { type: 'split', visualIds: [left, right] } });
   renderState(await window.xtream.director.getState());
 });
-document.addEventListener('focusout', () => {
-  window.setTimeout(() => {
-    if (currentState) {
-      renderState(currentState);
-    }
-  }, 0);
-});
-
 window.xtream.director.onState(renderState);
 void window.xtream.renderer.ready({ kind: 'control' });
 void loadAudioDevices();

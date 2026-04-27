@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLoop, formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from './timeline';
+import { applyLoop, formatTimecode, getAudioEffectiveTime, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from './timeline';
 
 describe('timeline helpers', () => {
   it('wraps seconds inside enabled loop boundaries', () => {
@@ -28,6 +28,14 @@ describe('timeline helpers', () => {
 
   it('loops shorter media independently inside an enabled full-range loop', () => {
     expect(getMediaEffectiveTime(12, 5, { enabled: true, startSeconds: 0, endSeconds: 20 })).toBe(2);
+  });
+
+  it('silences audio after its own end when looping is disabled', () => {
+    expect(getAudioEffectiveTime(12, 10, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 9.999, audible: false });
+  });
+
+  it('loops shorter audio independently inside an enabled full-range loop', () => {
+    expect(getAudioEffectiveTime(12, 5, { enabled: true, startSeconds: 0, endSeconds: 20 })).toEqual({ seconds: 2, audible: true });
   });
 
   it('formats timecode into hours when needed', () => {

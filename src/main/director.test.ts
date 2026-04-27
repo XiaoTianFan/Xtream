@@ -63,6 +63,12 @@ describe('Director', () => {
     const director = new Director(() => 1000);
     const first = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
     const second = director.addAudioFileSource('F:\\media\\b.wav', 'file:///F:/media/b.wav');
+    director.updateVirtualOutput('output-main', {
+      sources: [
+        { audioSourceId: first.id, levelDb: 0 },
+        { audioSourceId: second.id, levelDb: 0 },
+      ],
+    });
     director.updateAudioMetadata({ audioSourceId: first.id, durationSeconds: 10, ready: true });
     director.updateAudioMetadata({ audioSourceId: second.id, durationSeconds: 20, ready: true });
     director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single' }, health: 'ready' });
@@ -70,6 +76,17 @@ describe('Director', () => {
       durationSeconds: 20,
       activeAudioSourceIds: expect.arrayContaining([first.id, second.id]),
       loopRangeLimit: { startSeconds: 0, endSeconds: 10 },
+    });
+  });
+
+  it('does not auto-route newly added audio sources', () => {
+    const director = new Director(() => 1000);
+    const source = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
+    expect(director.getState().outputs['output-main'].sources).toEqual([]);
+    director.updateVirtualOutput('output-main', { sources: [{ audioSourceId: source.id, levelDb: -3, muted: true }], muted: true });
+    expect(director.getState().outputs['output-main']).toMatchObject({
+      muted: true,
+      sources: [{ audioSourceId: source.id, levelDb: -3, muted: true }],
     });
   });
 
@@ -115,6 +132,32 @@ describe('Director', () => {
       sinkId: 'hdmi-2',
       ready: true,
     });
+  });
+
+  it('updates labels, meter, preview warnings, and audio source clear state', () => {
+    const director = new Director(() => 1000);
+    addReadyVideo(director, 'visual-a', 10);
+    expect(director.updateVisual('visual-a', { label: 'Lobby Loop' }).label).toBe('Lobby Loop');
+    const source = director.addAudioFileSource('F:\\media\\mix-a.wav', 'file:///F:/media/mix-a.wav');
+    expect(director.updateAudioSource(source.id, { label: 'Room Mix' }).label).toBe('Room Mix');
+    expect(director.clearAudioSource(source.id)).toMatchObject({ id: source.id, label: 'Room Mix', ready: false });
+    const output = director.createVirtualOutput();
+    let emitted = 0;
+    director.on('state', () => {
+      emitted += 1;
+    });
+    director.updateOutputMeter(output.id, -12);
+    expect(emitted).toBe(0);
+    expect(director.getState().outputs[output.id].meterDb).toBe(-12);
+    director.updatePreviewStatus({
+      key: 'display:display-0:visual-a',
+      displayId: 'display-0',
+      visualId: 'visual-a',
+      ready: false,
+      error: 'Preview failed.',
+      reportedAtWallTimeMs: 1000,
+    });
+    expect(director.getState().readiness.issues).toContainEqual(expect.objectContaining({ severity: 'warning', target: 'preview:display:display-0:visual-a' }));
   });
 
   it('blocks output readiness on missing sources and routing fallback', () => {

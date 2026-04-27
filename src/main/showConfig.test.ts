@@ -73,6 +73,7 @@ function createRuntimeState(): DirectorState {
     corrections: {
       displays: {},
     },
+    previews: {},
   };
 }
 
