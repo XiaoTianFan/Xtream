@@ -166,6 +166,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
     }
     const transportMode = syncTransportEnvelope(runtime, state);
     runtime.busGain.gain.value = getEffectiveOutputGain(state.globalAudioMuted, output, soloOutputIds);
+    const hasSoloedSource = output.sources.some((selection) => selection.solo);
     for (const sourceRuntime of runtime.sources) {
       const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
       const source = state.audioSources[sourceRuntime.audioSourceId];
@@ -173,7 +174,8 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
         continue;
       }
       const target = getAudioEffectiveTime(directorSeconds * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
-      sourceRuntime.gainNode.gain.value = selection.muted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
+      const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
+      sourceRuntime.gainNode.gain.value = sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
       if (transportMode === 'fading-out') {
         void runtime.context.resume();

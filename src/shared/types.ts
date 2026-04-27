@@ -99,6 +99,7 @@ export type VirtualOutputSourceSelection = {
   audioSourceId: AudioSourceId;
   levelDb: number;
   muted?: boolean;
+  solo?: boolean;
 };
 
 export type MeterLaneState = {

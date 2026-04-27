@@ -89,6 +89,7 @@ const elements = {
   addVisualsButton: assertElement(document.querySelector<HTMLButtonElement>('#addVisualsButton'), 'addVisualsButton'),
   createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
+  expandMixerButton: assertElement(document.querySelector<HTMLButtonElement>('#expandMixerButton'), 'expandMixerButton'),
   clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
   resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
   globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
@@ -118,6 +119,7 @@ let poolSort: 'label' | 'duration' | 'status' = 'label';
 let selectedEntity: SelectedEntity | undefined;
 let localPreviewCleanup: (() => void) | undefined;
 let rateDragStart: { clientX: number; rate: number } | undefined;
+let mixerExpandedTemporarily = false;
 let soloOutputIds = new Set<VirtualOutputId>();
 const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
 const meterLaneElementCache = new Map<string, Set<HTMLElement>>();
@@ -847,7 +849,7 @@ function selectEntity(entity: SelectedEntity): void {
   activeSurface = 'patch';
   selectedEntity = entity;
   syncMixerSelection();
-  document.documentElement.style.setProperty('--mixer-width', '30vw');
+  restoreTemporaryMixerExpansion();
   if (entity.type === 'visual') {
     activePoolTab = 'visuals';
   }
@@ -926,9 +928,12 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
             if (document.activeElement instanceof HTMLElement) {
               document.activeElement.blur();
             }
-            void window.xtream.outputs
-              .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] })
-              .then(async () => renderState(await window.xtream.director.getState()));
+            void window.xtream.outputs.update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] }).then(async () => {
+              const nextState = await window.xtream.director.getState();
+              renderState(nextState);
+              detailsRenderSignature = '';
+              renderDetails(nextState, true);
+            });
           }
         },
       ),
@@ -960,13 +965,24 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
     });
     levelControl.classList.add('output-source-level');
 
-    const removeButton = createButton('Remove Source', 'secondary', async () => {
+    const removeButton = createButton('Remove', 'secondary', async () => {
       await window.xtream.outputs.update(output.id, {
         sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
       });
       renderState(await window.xtream.director.getState());
     });
-    const muteButton = createButton(selection.muted ? 'Unmute Source' : 'Mute Source', 'secondary', async () => {
+    const soloButton = createButton('S', selection.solo ? 'secondary active' : 'secondary', async () => {
+      await window.xtream.outputs.update(output.id, {
+        sources: output.sources.map((candidate) =>
+          candidate.audioSourceId === selection.audioSourceId ? { ...candidate, solo: !candidate.solo } : candidate,
+        ),
+      });
+      renderState(await window.xtream.director.getState());
+    });
+    soloButton.title = `${selection.solo ? 'Unsolo' : 'Solo'} ${source?.label ?? selection.audioSourceId}`;
+    soloButton.setAttribute('aria-label', soloButton.title);
+    soloButton.setAttribute('aria-pressed', String(Boolean(selection.solo)));
+    const muteButton = createButton('M', selection.muted ? 'secondary active' : 'secondary', async () => {
       await window.xtream.outputs.update(output.id, {
         sources: output.sources.map((candidate) =>
           candidate.audioSourceId === selection.audioSourceId ? { ...candidate, muted: !candidate.muted } : candidate,
@@ -974,9 +990,12 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
       });
       renderState(await window.xtream.director.getState());
     });
+    muteButton.title = `${selection.muted ? 'Unmute' : 'Mute'} ${source?.label ?? selection.audioSourceId}`;
+    muteButton.setAttribute('aria-label', muteButton.title);
+    muteButton.setAttribute('aria-pressed', String(Boolean(selection.muted)));
     const actions = document.createElement('div');
     actions.className = 'button-row compact output-source-actions';
-    actions.append(muteButton, removeButton);
+    actions.append(soloButton, muteButton, removeButton);
     row.append(sourceInfo, levelControl, actions);
     wrapper.append(row);
   }
@@ -1335,12 +1354,12 @@ async function updateDisplayLayout(displayId: string, layout: VisualLayoutProfil
   renderState(await window.xtream.director.getState());
 }
 
-function renderDetails(state: DirectorState): void {
+function renderDetails(state: DirectorState, force = false): void {
   const signature = JSON.stringify({ selectedEntity, state: createDetailsSignature(state), devices: displayMonitors, audioDevices: audioDevices.length });
-  if (detailsRenderSignature === signature) {
+  if (!force && detailsRenderSignature === signature) {
     return;
   }
-  if (isPanelInteractionActive(elements.detailsContent)) {
+  if (!force && isPanelInteractionActive(elements.detailsContent)) {
     return;
   }
   detailsRenderSignature = signature;
@@ -1682,7 +1701,6 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
   const toolbarActions = document.createElement('div');
   toolbarActions.className = 'detail-toolbar-actions button-row';
   toolbarActions.append(
-    createButton('Preview', 'secondary', () => playAudioSourcePreview(source, state, setShowStatus)),
     ...(source.type === 'external-file'
       ? [
           createButton('Replace', 'secondary', async () => {
@@ -1692,6 +1710,16 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
         ]
       : []),
   );
+  const removeFromPool = createButton('Remove', 'secondary', async () => {
+    if (!confirmPoolRecordRemoval(source.label)) {
+      return;
+    }
+    await window.xtream.audioSources.remove(source.id);
+    clearSelectionIf({ type: 'audio-source', id: source.id });
+    renderState(await window.xtream.director.getState());
+  });
+  removeFromPool.title = `Remove ${source.label} from the audio pool (does not delete the file on disk)`;
+  toolbarActions.append(removeFromPool);
   toolbar.append(toolbarStart, toolbarActions);
   card.append(
     toolbar,
@@ -1775,10 +1803,6 @@ function renderOutputDetails(output: VirtualOutputState, state: DirectorState): 
   const toolbarActions = document.createElement('div');
   toolbarActions.className = 'output-detail-toolbar-actions button-row';
   toolbarActions.append(
-    createButton(output.muted ? 'Unmute' : 'Mute', 'secondary', async () => {
-      await window.xtream.outputs.update(output.id, { muted: !output.muted });
-      renderState(await window.xtream.director.getState());
-    }),
     createButton('Test Tone', 'secondary', () => playOutputTestTone(output)),
     createButton('Remove', 'secondary', async () => {
       if (confirm(`Remove ${output.label}?`)) {
@@ -2301,6 +2325,7 @@ function installShellIcons(): void {
   decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
   decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
   decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');
+  decorateIconButton(elements.expandMixerButton, 'Maximize2', 'Expand mixer');
 }
 
 function installSplitters(): void {
@@ -2318,7 +2343,7 @@ function installSplitters(): void {
   installSplitter(elements.footerSplitter, 'x', (delta) => {
     const footer = elements.footerSplitter.parentElement!;
     const current = readLayoutPrefs().mixerWidthPx ?? footer.querySelector<HTMLElement>('.mixer-panel')!.getBoundingClientRect().width;
-    saveLayoutPrefs({ mixerWidthPx: clamp(current + delta, 260, Math.max(320, footer.getBoundingClientRect().width - 360)) });
+    saveLayoutPrefs({ mixerWidthPx: clamp(current + delta, 260, getMaxMixerWidth()) });
   });
   installSplitter(elements.assetPreviewSplitter, 'y', (delta) => {
     const current = readLayoutPrefs().assetPreviewHeightPx ?? elements.assetPreview.getBoundingClientRect().height;
@@ -2362,6 +2387,11 @@ function installSplitter(handle: HTMLElement, axis: 'x' | 'y', onDelta: (delta: 
   });
 }
 
+function getMaxMixerWidth(): number {
+  const footerWidth = elements.operatorFooter.getBoundingClientRect().width;
+  return Math.max(320, footerWidth - 360);
+}
+
 function readLayoutPrefs(): LayoutPrefs {
   try {
     return JSON.parse(localStorage.getItem(UI_PREF_KEY) ?? '{}') as LayoutPrefs;
@@ -2371,8 +2401,27 @@ function readLayoutPrefs(): LayoutPrefs {
 }
 
 function saveLayoutPrefs(update: LayoutPrefs): void {
+  mixerExpandedTemporarily = false;
   const prefs = { ...readLayoutPrefs(), ...update };
   localStorage.setItem(UI_PREF_KEY, JSON.stringify(prefs));
+  applyLayoutPrefs(prefs);
+}
+
+function setTemporaryMixerWidth(widthPx: number): void {
+  mixerExpandedTemporarily = true;
+  document.documentElement.style.setProperty('--mixer-width', `${widthPx}px`);
+}
+
+function restoreTemporaryMixerExpansion(): void {
+  if (!mixerExpandedTemporarily) {
+    return;
+  }
+  mixerExpandedTemporarily = false;
+  const prefs = readLayoutPrefs();
+  if (prefs.mixerWidthPx === undefined) {
+    document.documentElement.style.removeProperty('--mixer-width');
+    return;
+  }
   applyLayoutPrefs(prefs);
 }
 
@@ -2556,6 +2605,9 @@ elements.createOutputButton.addEventListener('click', async () => {
 elements.refreshOutputsButton.addEventListener('click', async () => {
   await loadAudioDevices();
   renderState(await window.xtream.director.getState());
+});
+elements.expandMixerButton.addEventListener('click', () => {
+  setTemporaryMixerWidth(getMaxMixerWidth());
 });
 elements.globalAudioMuteButton.addEventListener('click', async () => {
   renderState(await window.xtream.director.updateGlobalState({ globalAudioMuted: !currentState?.globalAudioMuted }));
