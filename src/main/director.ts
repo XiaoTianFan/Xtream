@@ -2,12 +2,15 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import type {
   AudioMetadataReport,
+  AudioExtractionFormat,
   AudioSourceSplitResult,
   AudioSourceState,
   DirectorState,
+  EmbeddedAudioExtractionMode,
   DisplayWindowState,
   DriftReport,
   GlobalStateUpdate,
+  ShowSettingsUpdate,
   PersistedShowConfig,
   PreviewStatus,
   OutputMeterReport,
@@ -33,6 +36,10 @@ const DRIFT_CORRECTION_COOLDOWN_MS = 3000;
 const MAX_CORRECTION_ATTEMPTS = 10;
 const DRIFT_DEGRADATION_REASON_PREFIX = 'Rail drift stayed above';
 
+function isExtractionPendingAudioSource(source: AudioSourceState): boolean {
+  return source.type === 'embedded-visual' && source.extractionMode === 'file' && source.extractionStatus === 'pending';
+}
+
 export class Director extends EventEmitter {
   private state: DirectorState;
   private readonly now: () => number;
@@ -49,6 +56,7 @@ export class Director extends EventEmitter {
     this.state = {
       paused: true,
       rate: 1,
+      audioExtractionFormat: 'm4a',
       anchorWallTimeMs: this.now(),
       offsetSeconds: 0,
       loop: { enabled: false, startSeconds: 0 },
@@ -207,9 +215,6 @@ export class Director extends EventEmitter {
         source.error = report.error;
       }
     }
-    if (report.ready && report.hasEmbeddedAudio) {
-      this.ensureEmbeddedAudioSource(report.visualId);
-    }
     this.updateOutputReadiness();
     this.recalculateTimeline();
     this.emitState();
@@ -234,34 +239,171 @@ export class Director extends EventEmitter {
     return structuredClone(this.state.audioSources[id]);
   }
 
-  addEmbeddedAudioSource(visualId: string): AudioSourceState {
+  addEmbeddedAudioSource(visualId: string, mode: EmbeddedAudioExtractionMode = 'representation'): AudioSourceState {
     const id = `audio-source-embedded-${visualId}`;
     const existing = this.state.audioSources[id];
-    if (existing) {
-      return structuredClone(existing);
-    }
     const visual = this.state.visuals[visualId];
-    this.state.audioSources[id] = {
-      id,
-      label: `Embedded Audio ${visual?.label ?? visualId}`,
-      type: 'embedded-visual',
-      visualId,
-      durationSeconds: visual?.durationSeconds,
-      playbackRate: 1,
-      levelDb: 0,
-      fileSizeBytes: visual?.fileSizeBytes,
-      ready: Boolean(visual?.ready),
-      error: visual?.error,
-    };
+    if (existing?.type === 'embedded-visual') {
+      this.state.audioSources[id] = {
+        ...existing,
+        extractionMode: mode,
+        extractedPath: mode === 'representation' ? undefined : existing.extractedPath,
+        extractedUrl: mode === 'representation' ? undefined : existing.extractedUrl,
+        extractedFormat: mode === 'representation' ? undefined : existing.extractedFormat,
+        extractionStatus: mode === 'representation' ? undefined : existing.extractionStatus,
+        durationSeconds: visual?.durationSeconds ?? existing.durationSeconds,
+        fileSizeBytes: mode === 'representation' ? visual?.fileSizeBytes : existing.fileSizeBytes,
+        ready: mode === 'representation' ? Boolean(visual?.ready) : existing.ready,
+        error: mode === 'representation' ? visual?.error : existing.error,
+      };
+    } else {
+      this.state.audioSources[id] = {
+        id,
+        label: `Embedded Audio ${visual?.label ?? visualId}`,
+        type: 'embedded-visual',
+        visualId,
+        extractionMode: mode,
+        durationSeconds: visual?.durationSeconds,
+        playbackRate: 1,
+        levelDb: 0,
+        fileSizeBytes: visual?.fileSizeBytes,
+        ready: mode === 'representation' ? Boolean(visual?.ready) : false,
+        error: mode === 'representation' ? visual?.error : undefined,
+      };
+    }
+    this.syncDerivedEmbeddedAudioSources(this.state.audioSources[id]);
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.audioSources[id]);
+  }
+
+  markEmbeddedAudioExtractionPending(visualId: string, extractedPath: string, extractedUrl: string, format: AudioExtractionFormat): AudioSourceState {
+    const source = this.addEmbeddedAudioSource(visualId, 'file');
+    if (source.type !== 'embedded-visual') {
+      throw new Error(`Unable to create embedded audio source for ${visualId}.`);
+    }
+    this.state.audioSources[source.id] = {
+      ...source,
+      type: 'embedded-visual',
+      extractionMode: 'file',
+      extractedPath,
+      extractedUrl,
+      extractedFormat: format,
+      extractionStatus: 'pending',
+      ready: false,
+      error: undefined,
+    };
+    this.syncDerivedEmbeddedAudioSources(this.state.audioSources[source.id]);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[source.id]);
+  }
+
+  markEmbeddedAudioExtractionReady(
+    visualId: string,
+    extractedPath: string,
+    extractedUrl: string,
+    format: AudioExtractionFormat,
+    fileSizeBytes?: number,
+  ): AudioSourceState {
+    const source = this.addEmbeddedAudioSource(visualId, 'file');
+    if (source.type !== 'embedded-visual') {
+      throw new Error(`Unable to create embedded audio source for ${visualId}.`);
+    }
+    this.state.audioSources[source.id] = {
+      ...source,
+      type: 'embedded-visual',
+      extractionMode: 'file',
+      extractedPath,
+      extractedUrl,
+      extractedFormat: format,
+      extractionStatus: 'ready',
+      fileSizeBytes,
+      ready: true,
+      error: undefined,
+    };
+    this.syncDerivedEmbeddedAudioSources(this.state.audioSources[source.id]);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[source.id]);
+  }
+
+  markEmbeddedAudioExtractionFailed(visualId: string, error: string): AudioSourceState {
+    const source = this.addEmbeddedAudioSource(visualId, 'file');
+    if (source.type !== 'embedded-visual') {
+      throw new Error(`Unable to create embedded audio source for ${visualId}.`);
+    }
+    this.state.audioSources[source.id] = {
+      ...source,
+      type: 'embedded-visual',
+      extractionMode: 'file',
+      extractionStatus: 'failed',
+      ready: false,
+      error,
+    };
+    this.syncDerivedEmbeddedAudioSources(this.state.audioSources[source.id]);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[source.id]);
   }
 
   updateGlobalState(update: GlobalStateUpdate): DirectorState {
     this.state = {
       ...this.state,
       ...update,
+    };
+    this.emitState();
+    return this.getState();
+  }
+
+  updateShowSettings(update: ShowSettingsUpdate): DirectorState {
+    this.state = {
+      ...this.state,
+      audioExtractionFormat: update.audioExtractionFormat ?? this.state.audioExtractionFormat,
+    };
+    this.emitState();
+    return this.getState();
+  }
+
+  resetShow(): DirectorState {
+    this.correctionCounts.clear();
+    this.lastCorrectionWallTimeMs.clear();
+    this.correctionRevision = 0;
+    this.visualSequence = 0;
+    this.audioSourceSequence = 0;
+    this.outputSequence = 1;
+    this.state = {
+      paused: true,
+      rate: 1,
+      audioExtractionFormat: 'm4a',
+      anchorWallTimeMs: this.now(),
+      offsetSeconds: 0,
+      loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
+      performanceMode: false,
+      visuals: {},
+      audioSources: {},
+      outputs: {
+        'output-main': this.createOutputState('output-main', 'Main Output'),
+      },
+      displays: {},
+      activeTimeline: {
+        assignedVideoIds: [],
+        activeAudioSourceIds: [],
+      },
+      readiness: {
+        ready: false,
+        checkedAtWallTimeMs: this.now(),
+        issues: [],
+      },
+      corrections: {
+        displays: {},
+      },
+      previews: {},
     };
     this.emitState();
     return this.getState();
@@ -447,9 +589,10 @@ export class Director extends EventEmitter {
 
   createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       savedAt,
       rate: this.state.rate,
+      audioExtractionFormat: this.state.audioExtractionFormat,
       loop: structuredClone(this.state.loop),
       visuals: Object.fromEntries(
         Object.values(this.state.visuals).map((visual) => [
@@ -488,6 +631,10 @@ export class Director extends EventEmitter {
                 label: source.label,
                 type: source.type,
                 visualId: source.visualId,
+                extractionMode: source.extractionMode,
+                extractedPath: source.extractedPath,
+                extractedFormat: source.extractedFormat,
+                extractionStatus: source.extractionStatus,
                 playbackRate: source.playbackRate ?? 1,
                 levelDb: source.levelDb ?? 0,
                 channelCount: source.channelCount,
@@ -529,6 +676,7 @@ export class Director extends EventEmitter {
     this.state.globalDisplayBlackout = false;
     this.state.performanceMode = false;
     this.state.rate = config.rate ?? 1;
+    this.state.audioExtractionFormat = config.audioExtractionFormat ?? 'm4a';
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
     this.state.loop = structuredClone(config.loop);
@@ -573,6 +721,11 @@ export class Director extends EventEmitter {
               label: source.label,
               type: source.type,
               visualId: source.visualId,
+              extractionMode: source.extractionMode ?? 'representation',
+              extractedPath: source.extractedPath,
+              extractedUrl: urls.audioSources[source.id],
+              extractedFormat: source.extractedFormat,
+              extractionStatus: source.extractionStatus,
               playbackRate: source.playbackRate ?? 1,
               levelDb: source.levelDb ?? 0,
               channelCount: source.channelCount,
@@ -817,7 +970,7 @@ export class Director extends EventEmitter {
       durationSeconds: durations.length > 0 ? Math.max(...durations) : undefined,
       assignedVideoIds,
       activeAudioSourceIds,
-      loopRangeLimit: durations.length > 0 ? { startSeconds: 0, endSeconds: Math.min(...durations) } : undefined,
+      loopRangeLimit: durations.length > 0 ? { startSeconds: 0, endSeconds: Math.max(...durations) } : undefined,
     };
 
     const clamped = this.clampLoop(this.state.loop);
@@ -869,6 +1022,12 @@ export class Director extends EventEmitter {
             severity: 'error',
             target: `output:${output.id}`,
             message: `${output.label} references missing audio source ${selection.audioSourceId}.`,
+          });
+        } else if (isExtractionPendingAudioSource(source)) {
+          issues.push({
+            severity: 'warning',
+            target: `audio-source:${source.id}`,
+            message: `${source.label} extraction is still running.`,
           });
         } else if (!source.ready) {
           issues.push({ severity: 'error', target: `audio-source:${source.id}`, message: source.error ?? `${source.label} is not ready.` });
@@ -960,7 +1119,35 @@ export class Director extends EventEmitter {
           ...shared,
           type: 'embedded-visual',
           visualId: source.visualId,
+          extractionMode: source.extractionMode,
+          extractedPath: source.extractedPath,
+          extractedUrl: source.extractedUrl,
+          extractedFormat: source.extractedFormat,
+          extractionStatus: source.extractionStatus,
         };
+  }
+
+  private syncDerivedEmbeddedAudioSources(source: AudioSourceState): void {
+    if (source.type !== 'embedded-visual') {
+      return;
+    }
+    for (const candidate of Object.values(this.state.audioSources)) {
+      if (candidate.type !== 'embedded-visual' || candidate.derivedFromAudioSourceId !== source.id) {
+        continue;
+      }
+      this.state.audioSources[candidate.id] = {
+        ...candidate,
+        extractionMode: source.extractionMode,
+        extractedPath: source.extractedPath,
+        extractedUrl: source.extractedUrl,
+        extractedFormat: source.extractedFormat,
+        extractionStatus: source.extractionStatus,
+        durationSeconds: source.durationSeconds,
+        fileSizeBytes: source.fileSizeBytes,
+        ready: source.ready,
+        error: source.error,
+      };
+    }
   }
 
   private ensureEmbeddedAudioSource(visualId: string): AudioSourceState | undefined {
@@ -974,6 +1161,7 @@ export class Director extends EventEmitter {
       this.state.audioSources[id] = {
         ...existing,
         label: existing.label || `Embedded Audio ${visual.label}`,
+        extractionMode: existing.extractionMode ?? 'representation',
         durationSeconds: visual.durationSeconds,
         fileSizeBytes: visual.fileSizeBytes,
         ready: visual.ready,
@@ -985,6 +1173,7 @@ export class Director extends EventEmitter {
         label: `Embedded Audio ${visual.label}`,
         type: 'embedded-visual',
         visualId,
+        extractionMode: 'representation',
         durationSeconds: visual.durationSeconds,
         playbackRate: 1,
         levelDb: 0,
@@ -1016,7 +1205,7 @@ export class Director extends EventEmitter {
       const missingSource = output.sources.find((source) => !this.state.audioSources[source.audioSourceId]);
       const unreadySource = output.sources.find((source) => {
         const audioSource = this.state.audioSources[source.audioSourceId];
-        return audioSource && !audioSource.ready;
+        return audioSource && !audioSource.ready && !isExtractionPendingAudioSource(audioSource);
       });
       output.ready = output.sources.length > 0 && !missingSource && !unreadySource;
       output.error = missingSource

@@ -6,6 +6,10 @@ export type DisplayWindowId = string;
 
 export type VisualMediaType = 'video' | 'image';
 export type AudioChannelMode = 'stereo' | 'left' | 'right';
+export type EmbeddedAudioExtractionMode = 'representation' | 'file';
+export type AudioExtractionFormat = 'm4a' | 'wav';
+export type AudioExtractionStatus = 'pending' | 'ready' | 'failed';
+export type EmbeddedAudioImportChoice = 'skip' | 'representation' | 'file';
 
 export type VisualLayoutProfile =
   | { type: 'single'; visualId?: VisualId }
@@ -84,6 +88,11 @@ export type AudioSourceState =
       label: string;
       type: 'embedded-visual';
       visualId: VisualId;
+      extractionMode: EmbeddedAudioExtractionMode;
+      extractedPath?: string;
+      extractedUrl?: string;
+      extractedFormat?: AudioExtractionFormat;
+      extractionStatus?: AudioExtractionStatus;
       durationSeconds?: number;
       playbackRate?: number;
       levelDb?: number;
@@ -161,6 +170,7 @@ export type LoopState = {
 export type DirectorState = {
   paused: boolean;
   rate: number;
+  audioExtractionFormat: AudioExtractionFormat;
   anchorWallTimeMs: number;
   offsetSeconds: number;
   loop: LoopState;
@@ -228,6 +238,10 @@ export type PersistedAudioSourceConfig =
       label: string;
       type: 'embedded-visual';
       visualId: VisualId;
+      extractionMode?: EmbeddedAudioExtractionMode;
+      extractedPath?: string;
+      extractedFormat?: AudioExtractionFormat;
+      extractionStatus?: AudioExtractionStatus;
       playbackRate?: number;
       levelDb?: number;
       channelCount?: number;
@@ -271,7 +285,12 @@ export type PersistedShowConfigV4 = Omit<PersistedShowConfigV3, 'schemaVersion'>
   schemaVersion: 4;
 };
 
-export type PersistedShowConfig = PersistedShowConfigV4;
+export type PersistedShowConfigV5 = Omit<PersistedShowConfigV4, 'schemaVersion'> & {
+  schemaVersion: 5;
+  audioExtractionFormat: AudioExtractionFormat;
+};
+
+export type PersistedShowConfig = PersistedShowConfigV5;
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -371,6 +390,7 @@ export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
 export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
+export type ShowSettingsUpdate = Partial<Pick<DirectorState, 'audioExtractionFormat'>>;
 
 export type VirtualOutputUpdate = Partial<
   Pick<
@@ -420,7 +440,8 @@ export type IpcChannels = {
   'visual:remove': (visualId: VisualId) => boolean;
   'visual:metadata': (report: VisualMetadataReport) => DirectorState;
   'audio-source:add-file': () => AudioSourceCreateResult;
-  'audio-source:add-embedded': (visualId: VisualId) => AudioSourceState;
+  'audio-source:add-embedded': (visualId: VisualId, mode?: EmbeddedAudioExtractionMode) => AudioSourceState;
+  'audio-source:extract-embedded': (visualId: VisualId, format?: AudioExtractionFormat) => Promise<AudioSourceState>;
   'audio-source:replace-file': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
   'audio-source:clear': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
   'audio-source:update': (audioSourceId: AudioSourceId, update: AudioSourceUpdate) => AudioSourceState;
@@ -435,6 +456,9 @@ export type IpcChannels = {
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
+  'show:create-project': () => ShowConfigOperationResult | undefined;
+  'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
+  'show:choose-embedded-audio-import': (labels: string[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;
   'show:export-diagnostics': () => string | undefined;
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;

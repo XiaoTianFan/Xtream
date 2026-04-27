@@ -9,12 +9,16 @@ import type {
   PersistedShowConfig,
   PersistedShowConfigV3,
   PersistedShowConfigV4,
+  PersistedShowConfigV5,
 } from '../shared/types';
 
 export const SHOW_CONFIG_EXTENSION = 'xtream-show.json';
+export const SHOW_PROJECT_FILENAME = `show.${SHOW_CONFIG_EXTENSION}`;
+export const DEFAULT_SHOW_PROJECT_FOLDER = 'default-show';
+export const SHOW_AUDIO_ASSET_DIRECTORY = path.join('assets', 'audio');
 
 export function getDefaultShowConfigPath(userDataPath: string): string {
-  return path.join(userDataPath, `default.${SHOW_CONFIG_EXTENSION}`);
+  return path.join(userDataPath, DEFAULT_SHOW_PROJECT_FOLDER, SHOW_PROJECT_FILENAME);
 }
 
 export async function writeShowConfig(filePath: string, config: PersistedShowConfig): Promise<void> {
@@ -35,9 +39,9 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!value || typeof value !== 'object') {
     throw new Error('Show config must be a JSON object.');
   }
-  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4>;
-  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3 and 4 only.');
+  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5>;
+  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4 && candidate.schemaVersion !== 5) {
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3, 4, and 5 only.');
   }
   if (!candidate.visuals || typeof candidate.visuals !== 'object') {
     throw new Error('Show config is missing visuals.');
@@ -51,7 +55,13 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!Array.isArray(candidate.displays)) {
     throw new Error('Show config is missing display mappings.');
   }
-  return candidate.schemaVersion === 3 ? migrateV3ToV4(candidate as PersistedShowConfigV3) : (candidate as PersistedShowConfigV4);
+  if (candidate.schemaVersion === 3) {
+    return migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3));
+  }
+  if (candidate.schemaVersion === 4) {
+    return migrateV4ToV5(candidate as PersistedShowConfigV4);
+  }
+  return candidate as PersistedShowConfigV5;
 }
 
 export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfigV4 {
@@ -84,6 +94,26 @@ export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfi
   };
 }
 
+export function migrateV4ToV5(config: PersistedShowConfigV4): PersistedShowConfigV5 {
+  return {
+    ...config,
+    schemaVersion: 5,
+    audioExtractionFormat: 'm4a',
+    audioSources: Object.fromEntries(
+      Object.values(config.audioSources).map((source) => [
+        source.id,
+        source.type === 'embedded-visual'
+          ? {
+              ...source,
+              extractionMode: source.extractionMode ?? 'representation',
+              extractionStatus: source.extractionStatus,
+            }
+          : source,
+      ]),
+    ),
+  };
+}
+
 export function buildMediaUrls(config: PersistedShowConfig): {
   visuals: Record<string, string | undefined>;
   audioSources: Record<string, string | undefined>;
@@ -98,7 +128,11 @@ export function buildMediaUrls(config: PersistedShowConfig): {
     audioSources: Object.fromEntries(
       Object.values(config.audioSources).map((source) => [
         source.id,
-        source.type === 'external-file' && source.path ? toRendererFileUrl(source.path) : undefined,
+        source.type === 'external-file' && source.path
+          ? toRendererFileUrl(source.path)
+          : source.type === 'embedded-visual' && source.extractedPath
+            ? toRendererFileUrl(source.extractedPath)
+            : undefined,
       ]),
     ),
   };
@@ -121,6 +155,13 @@ export function validateShowConfigMedia(config: PersistedShowConfig): MediaValid
         severity: 'warning',
         target: `audio-source:${source.id}`,
         message: `Audio file is missing: ${source.path}`,
+      });
+    }
+    if (source.type === 'embedded-visual' && source.extractedPath && !fs.existsSync(source.extractedPath)) {
+      issues.push({
+        severity: 'warning',
+        target: `audio-source:${source.id}`,
+        message: `Extracted audio file is missing: ${source.extractedPath}`,
       });
     }
   }
@@ -147,6 +188,13 @@ export function validateRuntimeState(state: DirectorState): MediaValidationIssue
         severity: 'warning',
         target: `audio-source:${source.id}`,
         message: `Audio file is missing: ${source.path}`,
+      });
+    }
+    if (source.type === 'embedded-visual' && source.extractedPath && !fs.existsSync(source.extractedPath)) {
+      issues.push({
+        severity: 'warning',
+        target: `audio-source:${source.id}`,
+        message: `Extracted audio file is missing: ${source.extractedPath}`,
       });
     }
     if (source.error) {

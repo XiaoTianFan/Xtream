@@ -3,6 +3,7 @@ import { describeLayout } from '../shared/layouts';
 import { formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type {
+  AudioExtractionFormat,
   AudioSourceState,
   AudioSourceId,
   DirectorState,
@@ -85,7 +86,7 @@ const elements = {
   saveShowButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowButton'), 'saveShowButton'),
   saveShowAsButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowAsButton'), 'saveShowAsButton'),
   openShowButton: assertElement(document.querySelector<HTMLButtonElement>('#openShowButton'), 'openShowButton'),
-  exportDiagnosticsButton: assertElement(document.querySelector<HTMLButtonElement>('#exportDiagnosticsButton'), 'exportDiagnosticsButton'),
+  createShowButton: assertElement(document.querySelector<HTMLButtonElement>('#createShowButton'), 'createShowButton'),
   addVisualsButton: assertElement(document.querySelector<HTMLButtonElement>('#addVisualsButton'), 'addVisualsButton'),
   createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
@@ -127,6 +128,8 @@ const meterPeakElementCache = new Map<VirtualOutputId, Set<HTMLElement>>();
 const meterLaneSegmentsCache = new WeakMap<HTMLElement, HTMLElement[]>();
 let activeAudioSourceMenu: HTMLElement | undefined;
 const activePanels = new WeakSet<HTMLElement>();
+const pendingEmbeddedAudioImportBatches: VisualId[][] = [];
+let embeddedAudioImportPromptActive = false;
 
 type SelectedEntity =
   | { type: 'visual'; id: VisualId }
@@ -187,8 +190,9 @@ function renderState(state: DirectorState): void {
   }
   renderDetails(state);
   renderSelectedAssetPreview(state);
-  renderIssueList(elements.issueList, [...state.readiness.issues, ...currentIssues]);
+  renderIssueList(elements.issueList, combineVisibleIssues(state.readiness.issues, currentIssues));
   renderActiveSurface(state);
+  void maybePromptEmbeddedAudioImport(state);
 }
 
 function isPanelInteractionActive(panel: HTMLElement): boolean {
@@ -279,7 +283,21 @@ function setMixerSoloOutputIds(outputIds: Iterable<VirtualOutputId>): void {
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
   elements.showStatus.textContent = message;
   currentIssues = issues;
-  renderIssueList(elements.issueList, [...(currentState?.readiness.issues ?? []), ...currentIssues]);
+  renderIssueList(elements.issueList, combineVisibleIssues(currentState?.readiness.issues ?? [], currentIssues));
+}
+
+function combineVisibleIssues(readinessIssues: MediaValidationIssue[], operationIssues: MediaValidationIssue[]): MediaValidationIssue[] {
+  const seen = new Set<string>();
+  const combined: MediaValidationIssue[] = [];
+  for (const issue of [...readinessIssues, ...operationIssues]) {
+    const key = `${issue.severity}:${issue.target}:${issue.message}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    combined.push(issue);
+  }
+  return combined;
 }
 
 function syncTransportInputs(state: DirectorState): void {
@@ -403,6 +421,7 @@ function createVisualRow(visual: VisualState): HTMLElement {
   row.tabIndex = 0;
   row.dataset.assetId = visual.id;
   row.addEventListener('click', () => selectEntity({ type: 'visual', id: visual.id }));
+  row.addEventListener('contextmenu', (event) => showVisualContextMenu(event, visual));
   row.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -432,7 +451,7 @@ function createVisualRow(visual: VisualState): HTMLElement {
 
 function createAudioSourceRow(source: AudioSourceState, state: DirectorState): HTMLElement {
   const row = document.createElement('article');
-  row.className = `asset-row${isSelected('audio-source', source.id) ? ' selected' : ''}`;
+  row.className = `asset-row audio-source-row${isSelected('audio-source', source.id) ? ' selected' : ''}`;
   row.tabIndex = 0;
   row.addEventListener('click', () => selectEntity({ type: 'audio-source', id: source.id }));
   row.addEventListener('contextmenu', (event) => showAudioSourceContextMenu(event, source));
@@ -449,7 +468,17 @@ function createAudioSourceRow(source: AudioSourceState, state: DirectorState): H
   const origin = source.type === 'external-file' ? source.path ?? 'External file' : `Embedded from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
   const meta = document.createElement('span');
   meta.className = 'asset-meta';
-  meta.textContent = `${source.type === 'external-file' ? 'file' : 'embedded'}${formatAudioChannelLabel(source)} | ${formatDuration(source.durationSeconds)} | ${origin}`;
+  const marker = document.createElement('span');
+  marker.className = `asset-marker ${source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'representation' : 'file'}`;
+  marker.textContent = source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'REP' : 'FILE';
+  const metaPrimary = document.createElement('span');
+  metaPrimary.textContent = `${source.type === 'external-file' ? 'external' : 'embedded'}${formatAudioChannelLabel(source)} | ${formatDuration(source.durationSeconds)}`;
+  const metaOrigin = document.createElement('span');
+  metaOrigin.textContent = origin;
+  meta.append(metaPrimary, metaOrigin);
+  const rightMeta = document.createElement('div');
+  rightMeta.className = 'asset-row-meta-cluster';
+  rightMeta.append(marker, meta);
   const remove = createButton('Remove', 'secondary row-action', async () => {
     if (!confirmPoolRecordRemoval(source.label)) {
       return;
@@ -460,7 +489,7 @@ function createAudioSourceRow(source: AudioSourceState, state: DirectorState): H
   });
   decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
   remove.addEventListener('click', (event) => event.stopPropagation());
-  row.append(status, label, meta, remove);
+  row.append(status, label, rightMeta, remove);
   return row;
 }
 
@@ -468,6 +497,38 @@ function confirmPoolRecordRemoval(label: string): boolean {
   return window.confirm(
     `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
   );
+}
+
+function showVisualContextMenu(event: MouseEvent, visual: VisualState): void {
+  if (visual.type !== 'video') {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  dismissAudioSourceContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu audio-source-menu';
+  menu.setAttribute('role', 'menu');
+  const representationButton = createButton('Extract as representation', 'secondary context-menu-item', async () => {
+    dismissAudioSourceContextMenu();
+    await createEmbeddedAudioRepresentation(visual.id);
+  });
+  representationButton.setAttribute('role', 'menuitem');
+  const fileButton = createButton('Extract audio as file', 'secondary context-menu-item', async () => {
+    dismissAudioSourceContextMenu();
+    await extractEmbeddedAudioFile(visual.id);
+  });
+  fileButton.setAttribute('role', 'menuitem');
+  if (!visual.hasEmbeddedAudio) {
+    representationButton.disabled = true;
+    fileButton.disabled = true;
+    representationButton.title = 'No embedded audio track has been detected for this visual.';
+    fileButton.title = representationButton.title;
+  }
+  menu.append(representationButton, fileButton);
+  document.body.append(menu);
+  positionContextMenu(menu, event.clientX, event.clientY);
+  activeAudioSourceMenu = menu;
 }
 
 function showAudioSourceContextMenu(event: MouseEvent, source: AudioSourceState): void {
@@ -495,10 +556,14 @@ function showAudioSourceContextMenu(event: MouseEvent, source: AudioSourceState)
   }
   menu.append(splitButton);
   document.body.append(menu);
-  const menuBounds = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(event.clientX, window.innerWidth - menuBounds.width - 4)}px`;
-  menu.style.top = `${Math.min(event.clientY, window.innerHeight - menuBounds.height - 4)}px`;
+  positionContextMenu(menu, event.clientX, event.clientY);
   activeAudioSourceMenu = menu;
+}
+
+function positionContextMenu(menu: HTMLElement, clientX: number, clientY: number): void {
+  const menuBounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(clientX, window.innerWidth - menuBounds.width - 4)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - menuBounds.height - 4)}px`;
 }
 
 function dismissAudioSourceContextMenu(): void {
@@ -1538,6 +1603,7 @@ function renderActiveSurface(state: DirectorState): void {
       globalAudioMuted: state.globalAudioMuted,
       globalDisplayBlackout: state.globalDisplayBlackout,
       performanceMode: state.performanceMode,
+      audioExtractionFormat: state.audioExtractionFormat,
     },
     displays: Object.values(state.displays).map((display) => ({
       id: display.id,
@@ -1602,12 +1668,24 @@ function renderPlaceholderSurface(title: string, detail: string): void {
 
 function renderConfigSurface(state: DirectorState): void {
   const summary = createSurfaceCard('Runtime');
+  const formatSelect = createSelect(
+    'Extracted Audio Format',
+    [
+      ['m4a', 'M4A / AAC'],
+      ['wav', 'WAV / PCM'],
+    ],
+    state.audioExtractionFormat,
+    (audioExtractionFormat) => {
+      void window.xtream.show.updateSettings({ audioExtractionFormat: audioExtractionFormat as AudioExtractionFormat }).then(renderState);
+    },
+  );
   summary.append(
     createDetailLine('Runtime Version', XTREAM_RUNTIME_VERSION),
     createDetailLine('Readiness', getLiveStateLabel(state)),
     createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
     createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
     createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
+    formatSelect,
   );
 
   const actions = createSurfaceCard('System Actions');
@@ -1616,7 +1694,12 @@ function renderConfigSurface(state: DirectorState): void {
   actionRow.append(
     createButton('Save Show', 'secondary', () => elements.saveShowButton.click()),
     createButton('Open Show', 'secondary', () => elements.openShowButton.click()),
-    createButton('Export Diagnostics', 'secondary', () => elements.exportDiagnosticsButton.click()),
+    createButton('Export Diagnostics', 'secondary', async () => {
+      const filePath = await window.xtream.show.exportDiagnostics();
+      if (filePath) {
+        setShowStatus(`Exported diagnostics: ${filePath}`);
+      }
+    }),
     createButton('Refresh Outputs', 'secondary', () => elements.refreshOutputsButton.click()),
     createButton('Reset Meters', 'secondary', () => elements.resetMetersButton.click()),
   );
@@ -1709,6 +1792,7 @@ function renderVisualDetails(visual: VisualState): void {
     createButton('Replace', 'secondary', async () => {
       const replaced = await window.xtream.visuals.replace(visual.id);
       if (replaced) {
+        queueEmbeddedAudioImportPrompt([replaced]);
         probeVisualMetadata(replaced);
       }
       renderState(await window.xtream.director.getState());
@@ -1779,6 +1863,12 @@ function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState
     toolbar,
     createDetailLine('Type', source.type),
     createDetailLine('Path', source.type === 'external-file' ? source.path ?? '--' : state.visuals[source.visualId]?.path ?? source.visualId),
+    ...(source.type === 'embedded-visual'
+      ? [
+          createDetailLine('Extraction', source.extractionMode === 'file' ? `file ${source.extractionStatus ?? 'pending'}` : 'representation'),
+          createDetailLine('Extracted File', source.extractedPath ?? '--'),
+        ]
+      : []),
     createDetailLine('Duration', formatDuration(source.durationSeconds)),
     createDetailLine('Channels', formatAudioChannelDetail(source)),
     createDetailLine('File Size', formatBytes(source.fileSizeBytes)),
@@ -2111,8 +2201,70 @@ function reportVisualMetadataFromVideo(visualId: VisualId, video: HTMLVideoEleme
   });
 }
 
+async function maybePromptEmbeddedAudioImport(state: DirectorState): Promise<void> {
+  if (embeddedAudioImportPromptActive || pendingEmbeddedAudioImportBatches.length === 0) {
+    return;
+  }
+  const batch = pendingEmbeddedAudioImportBatches[0];
+  const batchVisuals = batch.map((visualId) => state.visuals[visualId]).filter((visual): visual is VisualState => Boolean(visual));
+  if (
+    batchVisuals.length < batch.length ||
+    batchVisuals.some((visual) => !visual.ready && !visual.error)
+  ) {
+    return;
+  }
+  const readyAudioVisuals = batchVisuals.filter(
+    (visual): visual is VisualState => visual.ready && visual.type === 'video',
+  );
+  pendingEmbeddedAudioImportBatches.shift();
+  if (readyAudioVisuals.length === 0) {
+    return;
+  }
+  embeddedAudioImportPromptActive = true;
+  const choice = await window.xtream.show.chooseEmbeddedAudioImport(readyAudioVisuals.map((visual) => visual.label));
+  try {
+    if (choice === 'representation') {
+      for (const visual of readyAudioVisuals) {
+        await createEmbeddedAudioRepresentation(visual.id);
+      }
+    }
+    if (choice === 'file') {
+      for (const visual of readyAudioVisuals) {
+        await extractEmbeddedAudioFile(visual.id);
+      }
+    }
+  } finally {
+    embeddedAudioImportPromptActive = false;
+  }
+}
+
+async function createEmbeddedAudioRepresentation(visualId: VisualId): Promise<void> {
+  const source = await window.xtream.audioSources.addEmbedded(visualId, 'representation');
+  selectedEntity = { type: 'audio-source', id: source.id };
+  renderState(await window.xtream.director.getState());
+  setShowStatus(`Created representation audio source for ${source.label}.`);
+}
+
+async function extractEmbeddedAudioFile(visualId: VisualId): Promise<void> {
+  try {
+    const source = await window.xtream.audioSources.extractEmbedded(visualId, currentState?.audioExtractionFormat);
+    selectedEntity = { type: 'audio-source', id: source.id };
+    renderState(await window.xtream.director.getState());
+    const format = source.type === 'embedded-visual' ? source.extractedFormat?.toUpperCase() : undefined;
+    setShowStatus(`Extracted embedded audio to ${format ?? 'file'} for ${source.label}.`);
+  } catch (error: unknown) {
+    renderState(await window.xtream.director.getState());
+    setShowStatus(error instanceof Error ? error.message : 'Audio extraction failed.');
+  }
+}
+
 function renderAudioAssetPreview(source: AudioSourceState, state: DirectorState): void {
-  const url = source.type === 'external-file' ? source.url : state.visuals[source.visualId]?.url;
+  const url =
+    source.type === 'external-file'
+      ? source.url
+      : source.extractionMode === 'file' && source.extractionStatus === 'ready' && source.extractedUrl
+        ? source.extractedUrl
+        : state.visuals[source.visualId]?.url;
   const shell = document.createElement('div');
   shell.className = 'asset-preview-shell';
   shell.append(createDetailTitle(source.label));
@@ -2230,8 +2382,10 @@ function syncDisplayPreviewProgressEdges(state: DirectorState): void {
   });
 }
 
-async function sendTransport(command: TransportCommand): Promise<void> {
-  renderState(await window.xtream.director.transport(command));
+async function sendTransport(command: TransportCommand): Promise<DirectorState> {
+  const state = await window.xtream.director.transport(command);
+  renderState(state);
+  return state;
 }
 
 function beginTimecodeEdit(): void {
@@ -2247,32 +2401,52 @@ function beginTimecodeEdit(): void {
   elements.timecode.replaceChildren(input);
   input.focus();
   input.select();
+  let finishing = false;
 
-  const finish = (commit: boolean) => {
-    if (timecodeEditor !== input) {
+  const finish = async (commit: boolean) => {
+    if (timecodeEditor !== input || finishing) {
       return;
     }
-    timecodeEditor = undefined;
+    finishing = true;
     if (commit) {
       const result = parseTimecodeInput(input.value);
       if (!result.ok) {
         setShowStatus(`Seek timecode rejected: ${result.error}`);
+        timecodeEditor = undefined;
+        elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
       } else {
-        void sendTransport({ type: 'seek', seconds: result.seconds });
+        input.disabled = true;
+        try {
+          const nextState = await sendTransport({ type: 'seek', seconds: result.seconds });
+          if (timecodeEditor === input) {
+            timecodeEditor = undefined;
+            elements.timecode.textContent = formatTimecode(getDirectorSeconds(nextState));
+          }
+        } catch (error) {
+          if (timecodeEditor === input) {
+            timecodeEditor = undefined;
+            setShowStatus(error instanceof Error ? `Seek failed: ${error.message}` : 'Seek failed.');
+            elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
+          }
+        }
       }
+    } else {
+      timecodeEditor = undefined;
+      elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
     }
-    elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
   };
 
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
-      finish(true);
+      event.preventDefault();
+      void finish(true);
     }
     if (event.key === 'Escape') {
-      finish(false);
+      event.preventDefault();
+      void finish(false);
     }
   });
-  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('blur', () => void finish(true));
 }
 
 function beginRateEdit(): void {
@@ -2401,7 +2575,7 @@ function installShellIcons(): void {
   decorateIconButton(elements.saveShowButton, 'Save', 'Save show');
   decorateIconButton(elements.saveShowAsButton, 'FileJson', 'Save show as');
   decorateIconButton(elements.openShowButton, 'FolderOpen', 'Open show');
-  decorateIconButton(elements.exportDiagnosticsButton, 'Bug', 'Export diagnostics');
+  decorateIconButton(elements.createShowButton, 'Plus', 'Create show project');
   decorateIconButton(elements.addVisualsButton, 'Plus', 'Add visuals');
   decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
   decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
@@ -2615,6 +2789,7 @@ elements.visualList.addEventListener('drop', async (event) => {
     return;
   }
   const visuals = await window.xtream.visuals.addDropped(paths);
+  queueEmbeddedAudioImportPrompt(visuals);
   visuals.forEach(probeVisualMetadata);
   if (visuals[0]) {
     selectedEntity = { type: 'visual', id: visuals[0].id };
@@ -2650,6 +2825,13 @@ elements.saveShowAsButton.addEventListener('click', async () => {
     setShowStatus(`Saved show config: ${result.filePath ?? 'selected location'}`, result.issues);
   }
 });
+
+function queueEmbeddedAudioImportPrompt(visuals: VisualState[] | undefined): void {
+  const videoIds = (visuals ?? []).filter((visual) => visual.type === 'video').map((visual) => visual.id);
+  if (videoIds.length > 0) {
+    pendingEmbeddedAudioImportBatches.push(videoIds);
+  }
+}
 elements.openShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.open();
   if (result) {
@@ -2657,10 +2839,12 @@ elements.openShowButton.addEventListener('click', async () => {
     setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
   }
 });
-elements.exportDiagnosticsButton.addEventListener('click', async () => {
-  const filePath = await window.xtream.show.exportDiagnostics();
-  if (filePath) {
-    setShowStatus(`Exported diagnostics: ${filePath}`);
+elements.createShowButton.addEventListener('click', async () => {
+  const result = await window.xtream.show.createProject();
+  if (result) {
+    selectedEntity = undefined;
+    renderState(result.state);
+    setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
   }
 });
 elements.addVisualsButton.addEventListener('click', async () => {
@@ -2671,6 +2855,7 @@ elements.addVisualsButton.addEventListener('click', async () => {
     }
   } else {
     const visuals = await window.xtream.visuals.add();
+    queueEmbeddedAudioImportPrompt(visuals);
     visuals?.forEach(probeVisualMetadata);
     if (visuals?.[0]) {
       selectedEntity = { type: 'visual', id: visuals[0].id };

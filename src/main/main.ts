@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import ffmpegPath from 'ffmpeg-static';
 import { Director } from './director';
 import { DisplayRegistry } from './displayRegistry';
 import { toRendererFileUrl } from './fileUrls';
@@ -8,6 +11,8 @@ import {
   buildMediaUrls,
   createDiagnosticsReport,
   getDefaultShowConfigPath,
+  SHOW_AUDIO_ASSET_DIRECTORY,
+  SHOW_PROJECT_FILENAME,
   readShowConfig,
   validateRuntimeState,
   validateShowConfigMedia,
@@ -17,16 +22,20 @@ import {
 import { getActiveDisplays } from '../shared/layouts';
 import type {
   AudioMetadataReport,
+  AudioExtractionFormat,
   AudioSourceUpdate,
   DirectorState,
   DisplayCreateOptions,
   DisplayUpdate,
   DriftReport,
+  EmbeddedAudioImportChoice,
+  EmbeddedAudioExtractionMode,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
   PresetResult,
   RendererReadyReport,
+  ShowSettingsUpdate,
   ShowConfigOperationResult,
   TransportCommand,
   VisualImportItem,
@@ -47,6 +56,7 @@ let currentShowConfigPath: string | undefined;
 let autoSaveTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
 let soloOutputIds: VirtualOutputId[] = [];
+let hasShowChanges = false;
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
@@ -147,6 +157,7 @@ function beginAppShutdown(): void {
 }
 
 function scheduleShowConfigAutoSave(): void {
+  hasShowChanges = true;
   if (isShuttingDown || !currentShowConfigPath) {
     return;
   }
@@ -156,9 +167,14 @@ function scheduleShowConfigAutoSave(): void {
   autoSaveTimer = setTimeout(() => {
     autoSaveTimer = undefined;
     if (currentShowConfigPath) {
-      void writeShowConfig(currentShowConfigPath, director.createShowConfig()).catch((error: unknown) => {
-        console.error('Failed to auto-save show config.', error);
-      });
+      void ensureShowProjectStructure(currentShowConfigPath)
+        .then(() => writeShowConfig(currentShowConfigPath!, director.createShowConfig()))
+        .then(() => {
+          hasShowChanges = false;
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to auto-save show config.', error);
+        });
     }
   }, 250);
 }
@@ -171,7 +187,9 @@ function flushShowConfigAutoSave(): void {
   autoSaveTimer = undefined;
   try {
     fs.mkdirSync(path.dirname(currentShowConfigPath), { recursive: true });
+    ensureShowProjectStructureSync(currentShowConfigPath);
     fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(director.createShowConfig(), null, 2)}\n`, 'utf8');
+    hasShowChanges = false;
   } catch (error: unknown) {
     console.error('Failed to save show config before shutdown.', error);
   }
@@ -250,7 +268,130 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
     director.registerDisplay(state);
   }
   currentShowConfigPath = configPath;
+  hasShowChanges = false;
   return { state: director.getState(), filePath: currentShowConfigPath, issues };
+}
+
+function getProjectAudioDirectory(): string | undefined {
+  if (!currentShowConfigPath || path.basename(currentShowConfigPath) !== SHOW_PROJECT_FILENAME) {
+    return undefined;
+  }
+  return path.join(path.dirname(currentShowConfigPath), SHOW_AUDIO_ASSET_DIRECTORY);
+}
+
+async function ensureShowProjectStructure(configPath: string): Promise<void> {
+  if (path.basename(configPath) !== SHOW_PROJECT_FILENAME) {
+    return;
+  }
+  await mkdir(path.join(path.dirname(configPath), SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+}
+
+function ensureShowProjectStructureSync(configPath: string): void {
+  if (path.basename(configPath) !== SHOW_PROJECT_FILENAME) {
+    return;
+  }
+  fs.mkdirSync(path.join(path.dirname(configPath), SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+}
+
+function createExtractionFilePath(visualId: string, format: AudioExtractionFormat): string {
+  const audioDirectory = getProjectAudioDirectory();
+  if (!audioDirectory) {
+    throw new Error('Create a show project before extracting embedded video audio to a file.');
+  }
+  const safeVisualId = visualId.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'visual';
+  return path.join(audioDirectory, `${safeVisualId}.${format}`);
+}
+
+function getFfmpegPath(): string {
+  if (!ffmpegPath) {
+    throw new Error('Bundled FFmpeg is unavailable.');
+  }
+  return ffmpegPath;
+}
+
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(getFfmpegPath(), args, { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `FFmpeg exited with code ${code ?? 'unknown'}.`));
+    });
+  });
+}
+
+async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFormat): Promise<ReturnType<Director['markEmbeddedAudioExtractionReady']>> {
+  const visual = director.getState().visuals[visualId];
+  if (!visual?.path) {
+    throw new Error('This visual has no source file to extract audio from.');
+  }
+  const outputPath = createExtractionFilePath(visualId, format);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const outputUrl = toRendererFileUrl(outputPath);
+  director.markEmbeddedAudioExtractionPending(visualId, outputPath, outputUrl, format);
+  const args =
+    format === 'wav'
+      ? ['-y', '-i', visual.path, '-vn', '-acodec', 'pcm_s16le', outputPath]
+      : ['-y', '-i', visual.path, '-vn', '-acodec', 'aac', '-b:a', '192k', outputPath];
+  try {
+    await runFfmpeg(args);
+    const source = director.markEmbeddedAudioExtractionReady(
+      visualId,
+      outputPath,
+      outputUrl,
+      format,
+      fs.existsSync(outputPath) ? fs.statSync(outputPath).size : undefined,
+    );
+    scheduleShowConfigAutoSave();
+    return source;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Audio extraction failed.';
+    const source = director.markEmbeddedAudioExtractionFailed(visualId, message);
+    scheduleShowConfigAutoSave();
+    throw Object.assign(new Error(message), { source });
+  }
+}
+
+async function promptBeforeCreateShowIfNeeded(): Promise<boolean> {
+  if (!hasShowChanges) {
+    return true;
+  }
+  const result = controlWindow
+    ? await dialog.showMessageBox(controlWindow, {
+        type: 'question',
+        buttons: ['Save', 'Discard', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Create new show',
+        message: 'Create a new show project?',
+        detail: 'Save or discard the current show before creating an empty project.',
+      })
+    : await dialog.showMessageBox({
+        type: 'question',
+        buttons: ['Save', 'Discard', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Create new show',
+        message: 'Create a new show project?',
+        detail: 'Save or discard the current show before creating an empty project.',
+      });
+  if (result.response === 2) {
+    return false;
+  }
+  if (result.response === 0) {
+    currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
+    await ensureShowProjectStructure(currentShowConfigPath);
+    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    hasShowChanges = false;
+  }
+  return true;
 }
 
 function registerIpcHandlers(): void {
@@ -370,9 +511,14 @@ function registerIpcHandlers(): void {
     return source;
   });
 
-  ipcMain.handle('audio-source:add-embedded', (_event, visualId: string) => {
-    const source = director.addEmbeddedAudioSource(visualId);
+  ipcMain.handle('audio-source:add-embedded', (_event, visualId: string, mode?: EmbeddedAudioExtractionMode) => {
+    const source = director.addEmbeddedAudioSource(visualId, mode ?? 'representation');
     scheduleShowConfigAutoSave();
+    return source;
+  });
+
+  ipcMain.handle('audio-source:extract-embedded', async (_event, visualId: string, format?: AudioExtractionFormat) => {
+    const source = await extractEmbeddedAudio(visualId, format ?? director.getState().audioExtractionFormat);
     return source;
   });
 
@@ -439,7 +585,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('show:save', async (): Promise<ShowConfigOperationResult> => {
     currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
+    await ensureShowProjectStructure(currentShowConfigPath);
     await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    hasShowChanges = false;
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
 
@@ -453,8 +601,66 @@ function registerIpcHandlers(): void {
       return undefined;
     }
     currentShowConfigPath = result.filePath;
+    await ensureShowProjectStructure(currentShowConfigPath);
     await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    hasShowChanges = false;
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
+  });
+
+  ipcMain.handle('show:create-project', async (): Promise<ShowConfigOperationResult | undefined> => {
+    if (!(await promptBeforeCreateShowIfNeeded())) {
+      return undefined;
+    }
+    const result = await showOpenDialog({
+      title: 'Create Xtream show project',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return undefined;
+    }
+    const projectDirectory = result.filePaths[0];
+    currentShowConfigPath = path.join(projectDirectory, SHOW_PROJECT_FILENAME);
+    await ensureShowProjectStructure(currentShowConfigPath);
+    displayRegistry?.closeAll();
+    director.resetShow();
+    if (!displayRegistry) {
+      throw new Error('Display registry is not initialized.');
+    }
+    const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
+    director.registerDisplay(display);
+    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    hasShowChanges = false;
+    return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
+  });
+
+  ipcMain.handle('show:update-settings', (_event, update: ShowSettingsUpdate) => {
+    const state = director.updateShowSettings(update);
+    scheduleShowConfigAutoSave();
+    return state;
+  });
+
+  ipcMain.handle('show:choose-embedded-audio-import', async (_event, labels: string[]): Promise<EmbeddedAudioImportChoice> => {
+    const label = labels.length === 1 ? labels[0] : `${labels.length} videos`;
+    const result = controlWindow
+      ? await dialog.showMessageBox(controlWindow, {
+          type: 'question',
+          buttons: ['Do not extract audio', 'Extract into representation', 'Extract audio into files'],
+          defaultId: 1,
+          cancelId: 0,
+          title: 'Import video audio',
+          message: `Import audio from ${label}?`,
+          detail: 'Choose how Xtream should create audio sources for the imported video media.',
+        })
+      : await dialog.showMessageBox({
+          type: 'question',
+          buttons: ['Do not extract audio', 'Extract into representation', 'Extract audio into files'],
+          defaultId: 1,
+          cancelId: 0,
+          title: 'Import video audio',
+          message: `Import audio from ${label}?`,
+          detail: 'Choose how Xtream should create audio sources for the imported video media.',
+        });
+    return result.response === 2 ? 'file' : result.response === 1 ? 'representation' : 'skip';
   });
 
   ipcMain.handle('show:open', async (): Promise<ShowConfigOperationResult | undefined> => {

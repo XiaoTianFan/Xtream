@@ -195,6 +195,7 @@ export class DisplayRegistry {
     for (const entry of this.entries.values()) {
       this.refreshWindowState(entry.state.id);
       entry.isClosing = true;
+      entry.window.removeAllListeners('closed');
       entry.window.close();
     }
     this.entries.clear();

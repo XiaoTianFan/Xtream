@@ -312,7 +312,12 @@ export function getFirstMeteredAudioSource(): { audioSourceId: string; element: 
 }
 
 export function playAudioSourcePreview(source: AudioSourceState, state: DirectorState, setStatus: (message: string) => void): void {
-  const url = source.type === 'external-file' ? source.url : state.visuals[source.visualId]?.url;
+  const url =
+    source.type === 'external-file'
+      ? source.url
+      : source.extractionMode === 'file' && source.extractionStatus === 'ready' && source.extractedUrl
+        ? source.extractedUrl
+        : state.visuals[source.visualId]?.url;
   if (!url) {
     setStatus(`Preview unavailable: ${source.label} has no playable URL.`);
     return;
@@ -375,6 +380,9 @@ function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string 
   }
   if (source.type === 'external-file') {
     return source.url ?? '';
+  }
+  if (source.extractionMode === 'file' && source.extractionStatus === 'ready' && source.extractedUrl) {
+    return source.extractedUrl;
   }
   return state.visuals[source.visualId]?.url ?? '';
 }

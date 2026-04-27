@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AudioMetadataReport,
+  AudioExtractionFormat,
   AudioSourceId,
   AudioSourceSplitResult,
   AudioSourceState,
@@ -12,12 +13,14 @@ import type {
   DisplayUpdate,
   DisplayWindowState,
   DriftReport,
+  EmbeddedAudioImportChoice,
   GlobalStateUpdate,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
   PresetResult,
   RendererReadyReport,
+  ShowSettingsUpdate,
   ShowConfigOperationResult,
   TransportCommand,
   VisualId,
@@ -62,7 +65,10 @@ const api = {
   },
   audioSources: {
     addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),
-    addEmbedded: (visualId: VisualId): Promise<AudioSourceState> => ipcRenderer.invoke('audio-source:add-embedded', visualId),
+    addEmbedded: (visualId: VisualId, mode?: 'representation' | 'file'): Promise<AudioSourceState> =>
+      ipcRenderer.invoke('audio-source:add-embedded', visualId, mode),
+    extractEmbedded: (visualId: VisualId, format?: AudioExtractionFormat): Promise<AudioSourceState> =>
+      ipcRenderer.invoke('audio-source:extract-embedded', visualId, format),
     replaceFile: (audioSourceId: AudioSourceId): Promise<AudioSourceState | undefined> =>
       ipcRenderer.invoke('audio-source:replace-file', audioSourceId),
     clear: (audioSourceId: AudioSourceId): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:clear', audioSourceId),
@@ -96,6 +102,10 @@ const api = {
   show: {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
+    createProject: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:create-project'),
+    updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),
+    chooseEmbeddedAudioImport: (labels: string[]): Promise<EmbeddedAudioImportChoice> =>
+      ipcRenderer.invoke('show:choose-embedded-audio-import', labels),
     open: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open'),
     exportDiagnostics: (): Promise<string | undefined> => ipcRenderer.invoke('show:export-diagnostics'),
   },

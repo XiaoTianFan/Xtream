@@ -764,6 +764,10 @@ input[type="range"].mini-slider:disabled {
   font-size: 0.72rem;
 }
 
+.asset-row.audio-source-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.35fr) auto;
+}
+
 .asset-row strong {
   min-width: 0;
   overflow: hidden;
@@ -771,6 +775,17 @@ input[type="range"].mini-slider:disabled {
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.asset-row-meta-cluster {
+  display: grid;
+  grid-template-columns: minmax(1.8rem, max-content) minmax(0, 1fr);
+  align-items: center;
+  justify-self: end;
+  width: min(100%, 16rem);
+  min-width: 0;
+  gap: 0.35rem;
+  text-align: right;
 }
 
 .asset-row:hover,
@@ -1008,11 +1023,21 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 }
 
 .asset-meta {
+  display: grid;
+  gap: 0.1rem;
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 0.68rem;
   line-height: 1.1;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-meta span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1045,6 +1070,32 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   min-height: 1.55rem;
   padding: 0.2rem 0.4rem;
   text-align: left;
+}
+
+.asset-marker {
+  display: inline-grid;
+  place-items: center;
+  width: 2.1rem;
+  max-width: 2.1rem;
+  height: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-marker.representation {
+  border-color: color-mix(in srgb, var(--accent-ochre) 70%, var(--border-subtle));
+  color: var(--accent-ochre);
+}
+
+.asset-marker.file {
+  border-color: color-mix(in srgb, var(--accent-teal) 70%, var(--border-subtle));
+  color: var(--accent-teal);
 }
 
 .status-dot {

@@ -75,7 +75,7 @@ describe('Director', () => {
     expect(director.getState().activeTimeline).toMatchObject({
       durationSeconds: 20,
       activeAudioSourceIds: expect.arrayContaining([first.id, second.id]),
-      loopRangeLimit: { startSeconds: 0, endSeconds: 10 },
+      loopRangeLimit: { startSeconds: 0, endSeconds: 20 },
     });
   });
 
@@ -132,7 +132,7 @@ describe('Director', () => {
     expect(() => director.splitStereoAudioSource(left.id)).toThrow(/already/i);
   });
 
-  it('auto-creates embedded audio sources when video metadata reports audio tracks', () => {
+  it('does not auto-create embedded audio sources when video metadata reports audio tracks', () => {
     const director = new Director(() => 1000);
     director.addVisuals([
       {
@@ -149,12 +149,105 @@ describe('Director', () => {
       ready: true,
       hasEmbeddedAudio: true,
     });
-    expect(state.audioSources['audio-source-embedded-visual-with-audio']).toMatchObject({
-      type: 'embedded-visual',
+    expect(state.visuals['visual-with-audio']).toMatchObject({ hasEmbeddedAudio: true });
+    expect(state.audioSources['audio-source-embedded-visual-with-audio']).toBeUndefined();
+  });
+
+  it('creates representation embedded audio sources by explicit user choice', () => {
+    const director = new Director(() => 1000);
+    director.addVisuals([
+      {
+        id: 'visual-with-audio',
+        label: 'Video With Audio',
+        type: 'video',
+        path: 'F:\\media\\video-with-audio.mp4',
+        url: 'file:///F:/media/video-with-audio.mp4',
+      },
+    ]);
+    director.updateVisualMetadata({
       visualId: 'visual-with-audio',
       durationSeconds: 12,
       ready: true,
+      hasEmbeddedAudio: true,
     });
+    const source = director.addEmbeddedAudioSource('visual-with-audio', 'representation');
+    expect(source).toMatchObject({
+      type: 'embedded-visual',
+      visualId: 'visual-with-audio',
+      extractionMode: 'representation',
+      durationSeconds: 12,
+      ready: true,
+    });
+  });
+
+  it('records extracted embedded audio file state', () => {
+    const director = new Director(() => 1000);
+    director.addVisuals([
+      {
+        id: 'visual-with-audio',
+        label: 'Video With Audio',
+        type: 'video',
+        path: 'F:\\media\\video-with-audio.mp4',
+        url: 'file:///F:/media/video-with-audio.mp4',
+      },
+    ]);
+    director.updateVisualMetadata({ visualId: 'visual-with-audio', durationSeconds: 12, ready: true, hasEmbeddedAudio: true });
+    const pending = director.markEmbeddedAudioExtractionPending(
+      'visual-with-audio',
+      'F:\\project\\assets\\audio\\visual-with-audio.m4a',
+      'file:///F:/project/assets/audio/visual-with-audio.m4a',
+      'm4a',
+    );
+    expect(pending).toMatchObject({
+      type: 'embedded-visual',
+      extractionMode: 'file',
+      extractedFormat: 'm4a',
+      extractionStatus: 'pending',
+      ready: false,
+    });
+    const ready = director.markEmbeddedAudioExtractionReady(
+      'visual-with-audio',
+      'F:\\project\\assets\\audio\\visual-with-audio.m4a',
+      'file:///F:/project/assets/audio/visual-with-audio.m4a',
+      'm4a',
+      1234,
+    );
+    expect(ready).toMatchObject({
+      extractionMode: 'file',
+      extractionStatus: 'ready',
+      extractedPath: 'F:\\project\\assets\\audio\\visual-with-audio.m4a',
+      fileSizeBytes: 1234,
+      ready: true,
+    });
+  });
+
+  it('does not block readiness while extracted embedded audio is pending', () => {
+    const director = new Director(() => 1000);
+    director.addVisuals([
+      {
+        id: 'visual-with-audio',
+        label: 'Video With Audio',
+        type: 'video',
+        path: 'F:\\media\\video-with-audio.mp4',
+        url: 'file:///F:/media/video-with-audio.mp4',
+      },
+    ]);
+    director.updateVisualMetadata({ visualId: 'visual-with-audio', durationSeconds: 12, ready: true, hasEmbeddedAudio: true });
+    const source = director.markEmbeddedAudioExtractionPending(
+      'visual-with-audio',
+      'F:\\project\\assets\\audio\\visual-with-audio.m4a',
+      'file:///F:/project/assets/audio/visual-with-audio.m4a',
+      'm4a',
+    );
+    director.updateVirtualOutput('output-main', { sources: [{ audioSourceId: source.id, levelDb: 0 }] });
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single' }, health: 'ready' });
+
+    const state = director.getState();
+    expect(state.outputs['output-main'].error).toBeUndefined();
+    expect(state.readiness.issues).toContainEqual(
+      expect.objectContaining({ severity: 'warning', target: `audio-source:${source.id}` }),
+    );
+    expect(state.readiness.issues).not.toContainEqual(expect.objectContaining({ severity: 'error', target: `audio-source:${source.id}` }));
   });
 
   it('updates session global controls without persisting them to show config', () => {
@@ -165,7 +258,7 @@ describe('Director', () => {
     expect(director.createShowConfig()).not.toHaveProperty('globalDisplayBlackout');
   });
 
-  it('clamps invalid loop settings to the active unison span', () => {
+  it('allows loop and seek across the longest active timeline span', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
     addReadyVideo(director, 'visual-b', 20);
@@ -176,10 +269,25 @@ describe('Director', () => {
       health: 'ready',
     });
     director.applyTransport({ type: 'set-loop', loop: { enabled: true, startSeconds: 12, endSeconds: 18 } });
-    expect(director.getState().loop).toEqual({ enabled: true, startSeconds: 0, endSeconds: 10 });
-    expect(director.getState().readiness.issues).toContainEqual(
-      expect.objectContaining({ target: 'loop', severity: 'warning' }),
-    );
+    expect(director.getState().loop).toEqual({ enabled: true, startSeconds: 12, endSeconds: 18 });
+    director.applyTransport({ type: 'seek', seconds: 15 });
+    expect(director.getPlaybackTimeSeconds()).toBe(15);
+    expect(director.getState().readiness.issues).not.toContainEqual(expect.objectContaining({ target: 'loop' }));
+  });
+
+  it('clamps invalid loop settings to the active timeline span', () => {
+    const director = new Director(() => 1000);
+    addReadyVideo(director, 'visual-a', 10);
+    addReadyVideo(director, 'visual-b', 20);
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'split', visualIds: ['visual-a', 'visual-b'] },
+      health: 'ready',
+    });
+    director.applyTransport({ type: 'set-loop', loop: { enabled: true, startSeconds: 22, endSeconds: 30 } });
+    expect(director.getState().loop).toEqual({ enabled: true, startSeconds: 0, endSeconds: 20 });
+    expect(director.getState().readiness.issues).toContainEqual(expect.objectContaining({ target: 'loop', severity: 'warning' }));
   });
 
   it('manages virtual output source assignments and readiness', () => {
@@ -324,7 +432,7 @@ describe('Director', () => {
     expect(director.getState().displays['display-1'].layout).toEqual({ type: 'single', visualId: 'visual-b' });
   });
 
-  it('serializes runtime state into schema v4', () => {
+  it('serializes runtime state into schema v5', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
     director.registerDisplay({
@@ -334,7 +442,8 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
+      audioExtractionFormat: 'm4a',
       visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
     });
