@@ -2719,24 +2719,77 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   margin-top: var(--gutter);
 }
 
+.stream-scene-list-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.stream-scene-list-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding: 0 var(--pane-padding) var(--compact);
+}
+
 .stream-scene-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   align-content: start;
-  padding: var(--pane-padding);
+  padding: 0 var(--pane-padding) var(--pane-padding);
+  min-height: 0;
+}
+
+.stream-scene-list-end-drop {
+  flex-shrink: 0;
+  margin: 0 var(--pane-padding) var(--pane-padding);
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  padding: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.stream-scene-list-end-drop.drag-hover {
+  border-color: var(--accent-teal);
+  background: color-mix(in srgb, var(--accent-teal) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.stream-scene-row-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stream-scene-row-wrap.focused .stream-scene-row {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 55%, transparent);
+}
+
+.stream-scene-row-wrap.drop-hover .stream-scene-row {
+  background: color-mix(in srgb, var(--accent-teal) 14%, transparent);
+}
+
+.stream-scene-row-wrap.drag-source {
+  opacity: 0.55;
 }
 
 .stream-scene-row {
   display: grid;
-  grid-template-columns: 4rem minmax(10rem, 1.4fr) minmax(9rem, 1fr) 7rem 7rem;
+  grid-template-columns: 2rem 2rem 3.25rem minmax(8rem, 1.4fr) minmax(7.5rem, 1fr) 4.75rem 5.25rem auto;
   gap: var(--gutter);
   align-items: center;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--border-subtle);
   background: transparent;
-  padding: 0.65rem 0.5rem;
+  padding: 0.55rem 0.35rem;
   color: var(--text-primary);
   text-align: left;
+}
+
+.stream-scene-row--header {
+  padding: 0.45rem 0.35rem;
 }
 
 .stream-scene-row:not(.stream-scene-row--header) {
@@ -2749,7 +2802,15 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 }
 
 .stream-scene-row.running {
-  background: color-mix(in srgb, var(--accent-teal) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-teal) 50%, transparent);
+}
+
+.stream-scene-row.preloading {
+  background: color-mix(in srgb, var(--accent-teal) 22%, transparent);
+}
+
+.stream-scene-row.paused {
+  background: color-mix(in srgb, var(--accent-ochre) 14%, transparent);
 }
 
 .stream-scene-row.disabled,
@@ -2766,12 +2827,144 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   background: color-mix(in srgb, var(--accent-ochre) 16%, transparent);
 }
 
+.stream-scene-row.dragging {
+  opacity: 0.85;
+}
+
 .stream-scene-row--header {
   color: var(--text-secondary);
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.stream-scene-expand.icon-button {
+  width: 1.65rem;
+  min-width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+}
+
+.stream-scene-expand .control-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stream-scene-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--text-secondary);
+}
+
+.stream-scene-drag-handle:active {
+  cursor: grabbing;
+}
+
+.stream-scene-drag-handle .control-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stream-scene-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.15rem;
+}
+
+.stream-scene-row-actions .stream-row-action.icon-button {
+  width: 1.85rem;
+  min-width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+}
+
+.stream-scene-row-actions .stream-row-action .control-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stream-scene-row-progress {
+  height: 3px;
+  width: var(--stream-row-progress, 0%);
+  background: var(--accent-teal);
+  pointer-events: none;
+}
+
+.stream-scene-row-progress--indeterminate {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-subtle) 50%, transparent);
+}
+
+.stream-scene-row-progress--indeterminate::after {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  animation: stream-row-progress-indeterminate 1.1s ease-in-out infinite;
+  background: var(--accent-teal);
+  content: "";
+}
+
+@keyframes stream-row-progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.stream-scene-subcue-list {
+  padding: 0.35rem 0.5rem 0.55rem 4.75rem;
+  background: color-mix(in srgb, var(--surface-low) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.stream-scene-subcue-line {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 35%, transparent);
+}
+
+.stream-scene-subcue-line:last-child {
+  border-bottom: 0;
+}
+
+.stream-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.stream-scene-note-input {
+  min-height: 4rem;
+  resize: vertical;
+}
+
+.stream-scene-form .stream-scene-form-row {
+  margin-top: 0.35rem;
+}
+
+.stream-scene-loop-detail {
+  display: grid;
+  gap: var(--compact);
+  margin: 0.35rem 0 0.5rem;
+  padding: var(--compact);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-low);
 }
 
 .stream-flow-canvas {
@@ -2930,12 +3123,9 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   }
 
   .stream-scene-row {
-    grid-template-columns: 3rem minmax(0, 1fr) 6rem;
-  }
-
-  .stream-scene-row span:nth-child(3),
-  .stream-scene-row span:nth-child(4) {
-    display: none;
+    grid-template-columns: 1.65rem 1.65rem 2.25rem minmax(0, 1fr) minmax(0, 0.65fr) minmax(0, 0.65fr) 3.25rem minmax(4.5rem, auto);
+    gap: 0.35rem;
+    font-size: 0.8rem;
   }
 
   .stream-output-detail-layout {

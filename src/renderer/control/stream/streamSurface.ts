@@ -1,12 +1,17 @@
 import { formatTimecode } from '../../../shared/timeline';
+import { resolveFollowsSceneId } from '../../../shared/streamSchedule';
 import type {
   DirectorState,
   DisplayMonitorInfo,
   DisplayWindowState,
   OutputMeterReport,
   PersistedSceneConfig,
+  PersistedStreamConfig,
   PersistedSubCueConfig,
   SceneId,
+  SceneLoopPolicy,
+  SceneRuntimeState,
+  SceneTrigger,
   StreamEnginePublicState,
   VirtualOutputState,
 } from '../../../shared/types';
@@ -19,7 +24,7 @@ import { createEmbeddedAudioImportController } from '../patch/embeddedAudioImpor
 import { createMediaPoolController, type MediaPoolController, type MediaPoolElements } from '../patch/mediaPool';
 import { createMixerPanelController, type MixerPanelController } from '../patch/mixerPanel';
 import { createButton, createHint, createSelect } from '../shared/dom';
-import { decorateIconButton } from '../shared/icons';
+import { createIcon, decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { elements } from '../shell/elements';
 
@@ -59,6 +64,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let displayWorkspace: DisplayWorkspaceController | undefined;
   let mixerRenderSignature = '';
   let displayRenderSignature = '';
+  const expandedListSceneIds = new Set<SceneId>();
+  let listDragSceneId: SceneId | undefined;
 
   const refs: Partial<Record<string, HTMLElement>> = {};
   const embeddedAudioImport = createEmbeddedAudioImportController({
@@ -505,40 +512,278 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     );
     const content = document.createElement('div');
     content.className = 'stream-workspace-content';
-    content.append(mode === 'list' ? createListMode(stream.sceneOrder.map((id) => stream.scenes[id]).filter(Boolean)) : createFlowMode());
+    content.append(mode === 'list' ? createListMode(stream) : createFlowMode());
     panel.replaceChildren(tabs, content);
   }
 
-  function createListMode(scenes: PersistedSceneConfig[]): HTMLElement {
+  function createListMode(stream: PersistedStreamConfig): HTMLElement {
+    const root = document.createElement('div');
+    root.className = 'stream-scene-list-root';
+    const toolbar = document.createElement('div');
+    toolbar.className = 'stream-scene-list-toolbar';
+    const addScene = createButton('Add scene', 'secondary', () => {
+      void window.xtream.stream.edit({ type: 'create-scene', afterSceneId: selectedSceneId }).then((s) => {
+        const idx = selectedSceneId ? s.stream.sceneOrder.indexOf(selectedSceneId) : -1;
+        const newId = idx >= 0 ? s.stream.sceneOrder[idx + 1] : s.stream.sceneOrder[s.stream.sceneOrder.length - 1];
+        if (newId) {
+          selectedSceneId = newId;
+        }
+        renderCurrent();
+      });
+    });
+    decorateIconButton(addScene, 'Plus', 'Add scene after selected row');
+    toolbar.append(addScene);
+
     const list = document.createElement('div');
     list.className = 'stream-scene-list';
     const header = document.createElement('div');
     header.className = 'stream-scene-row stream-scene-row--header';
-    header.append(createCell('#'), createCell('Title'), createCell('Trigger'), createCell('Duration'), createCell('State'));
+    header.append(
+      createCell('', 'stream-list-col-expand'),
+      createCell('', 'stream-list-col-drag'),
+      createCell('#', 'stream-list-col-num'),
+      createCell('Title', 'stream-list-col-title'),
+      createCell('Trigger', 'stream-list-col-trigger'),
+      createCell('Duration', 'stream-list-col-duration'),
+      createCell('State', 'stream-list-col-state'),
+      createCell('', 'stream-list-col-actions'),
+    );
     list.append(header);
-    scenes.forEach((scene, index) => list.append(createSceneRow(scene, index + 1)));
-    return list;
+    const scenes = stream.sceneOrder.map((id) => stream.scenes[id]).filter(Boolean) as PersistedSceneConfig[];
+    scenes.forEach((scene, index) => list.append(createSceneRowWrap(stream, scene, index + 1)));
+
+    const endDrop = document.createElement('div');
+    endDrop.className = 'stream-scene-list-end-drop';
+    endDrop.textContent = 'Drop here to move to end';
+    endDrop.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      endDrop.classList.add('drag-hover');
+    });
+    endDrop.addEventListener('dragleave', () => endDrop.classList.remove('drag-hover'));
+    endDrop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      endDrop.classList.remove('drag-hover');
+      const dragged = e.dataTransfer?.getData('text/plain') as SceneId | undefined;
+      if (dragged) {
+        applySceneReorder(dragged, undefined);
+      }
+    });
+
+    root.append(toolbar, list, endDrop);
+    return root;
   }
 
-  function createSceneRow(scene: PersistedSceneConfig, number: number): HTMLElement {
+  function scenesExplicitlyFollowing(predecessorId: SceneId): SceneId[] {
+    const stream = streamState?.stream;
+    if (!stream) {
+      return [];
+    }
+    const out: SceneId[] = [];
+    for (const sid of stream.sceneOrder) {
+      const sc = stream.scenes[sid];
+      if (!sc) {
+        continue;
+      }
+      const tr = sc.trigger;
+      if (tr.type !== 'simultaneous-start' && tr.type !== 'follow-end' && tr.type !== 'time-offset') {
+        continue;
+      }
+      if (tr.followsSceneId === predecessorId) {
+        out.push(sid);
+      }
+    }
+    return out;
+  }
+
+  function applySceneReorder(draggedId: SceneId, insertBeforeId: SceneId | undefined): void {
+    const stream = streamState?.stream;
+    if (!stream || !stream.scenes[draggedId]) {
+      return;
+    }
+    const followers = scenesExplicitlyFollowing(draggedId);
+    if (followers.length > 0) {
+      const titles = followers.map((id) => stream.scenes[id]?.title ?? id).join(', ');
+      const ok = window.confirm(
+        `Other scenes reference this one as an explicit trigger predecessor: ${titles}. Reordering can make dependencies harder to read. Continue?`,
+      );
+      if (!ok) {
+        return;
+      }
+    }
+    const order = [...stream.sceneOrder];
+    const from = order.indexOf(draggedId);
+    if (from < 0) {
+      return;
+    }
+    order.splice(from, 1);
+    if (insertBeforeId === undefined) {
+      order.push(draggedId);
+    } else {
+      const to = order.indexOf(insertBeforeId);
+      if (to < 0) {
+        return;
+      }
+      order.splice(to, 0, draggedId);
+    }
+    void window.xtream.stream.edit({ type: 'reorder-scenes', sceneOrder: order });
+  }
+
+  function createSceneRowWrap(stream: PersistedStreamConfig, scene: PersistedSceneConfig, number: number): HTMLElement {
     const runtimeState = streamState?.runtime?.sceneStates[scene.id];
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = `stream-scene-row ${scene.id === selectedSceneId ? 'selected' : ''} ${runtimeState?.status ?? (scene.disabled ? 'disabled' : 'ready')}`;
-    row.addEventListener('click', () => {
+    const statusClass = runtimeState?.status ?? (scene.disabled ? 'disabled' : 'ready');
+    const wrap = document.createElement('div');
+    wrap.className = `stream-scene-row-wrap status-${statusClass}${scene.id === selectedSceneId ? ' focused' : ''}`;
+    wrap.dataset.sceneId = scene.id;
+
+    const row = document.createElement('div');
+    row.className = `stream-scene-row ${scene.id === selectedSceneId ? 'selected' : ''} ${statusClass}${listDragSceneId === scene.id ? ' dragging' : ''}`;
+    row.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('button, [draggable="true"]')) {
+        return;
+      }
       selectedSceneId = scene.id;
       bottomTab = 'scene';
       detailPane = undefined;
       renderCurrent();
     });
-    row.append(
-      createCell(String(number).padStart(2, '0')),
-      createCell(scene.title ?? `Scene ${number}`),
-      createCell(formatTrigger(scene)),
-      createCell(formatSceneDuration(scene)),
-      createCell(runtimeState?.status ?? (scene.disabled ? 'disabled' : 'ready')),
-    );
-    return row;
+
+    const expanded = expandedListSceneIds.has(scene.id);
+    const expandBtn = document.createElement('button');
+    expandBtn.type = 'button';
+    expandBtn.className = 'stream-scene-expand';
+    expandBtn.setAttribute('aria-expanded', String(expanded));
+    expandBtn.setAttribute('aria-label', expanded ? 'Collapse sub-cues' : 'Expand sub-cues');
+    decorateIconButton(expandBtn, expanded ? 'ChevronDown' : 'ChevronRight', expanded ? 'Collapse' : 'Expand');
+    expandBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (expandedListSceneIds.has(scene.id)) {
+        expandedListSceneIds.delete(scene.id);
+      } else {
+        expandedListSceneIds.add(scene.id);
+      }
+      renderCurrent();
+    });
+
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'stream-scene-drag-handle';
+    dragHandle.draggable = true;
+    dragHandle.title = 'Drag to reorder';
+    dragHandle.append(createIcon('GripVertical', 'Reorder'));
+    dragHandle.addEventListener('dragstart', (event) => {
+      listDragSceneId = scene.id;
+      event.dataTransfer?.setData('text/plain', scene.id);
+      event.dataTransfer!.effectAllowed = 'move';
+      wrap.classList.add('drag-source');
+    });
+    dragHandle.addEventListener('dragend', () => {
+      listDragSceneId = undefined;
+      wrap.classList.remove('drag-source');
+      document.querySelectorAll('.stream-scene-row-wrap.drop-hover').forEach((el) => el.classList.remove('drop-hover'));
+    });
+
+    row.addEventListener('dragover', (event) => {
+      if (!listDragSceneId || listDragSceneId === scene.id) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer!.dropEffect = 'move';
+      wrap.classList.add('drop-hover');
+    });
+    row.addEventListener('dragleave', () => wrap.classList.remove('drop-hover'));
+    row.addEventListener('drop', (event) => {
+      event.preventDefault();
+      wrap.classList.remove('drop-hover');
+      const dragged = event.dataTransfer?.getData('text/plain') as SceneId | undefined;
+      if (dragged && dragged !== scene.id) {
+        applySceneReorder(dragged, scene.id);
+      }
+    });
+
+    const cueCell = createCell(String(number).padStart(2, '0'), 'stream-list-col-num');
+    const titleCell = createCell(scene.title ?? `Scene ${number}`, 'stream-list-col-title');
+    const triggerCell = createCell(formatTriggerSummary(stream, scene), 'stream-list-col-trigger');
+    const durationCell = createCell(formatSceneDuration(scene), 'stream-list-col-duration');
+    const stateCell = createCell(formatSceneStateLabel(runtimeState, scene), 'stream-list-col-state');
+
+    const actions = document.createElement('div');
+    actions.className = 'stream-scene-row-actions';
+    const runHere = createButton('', 'icon-button stream-row-action', () => {
+      void window.xtream.stream.transport({ type: 'go', sceneId: scene.id });
+    });
+    decorateIconButton(runHere, 'Play', 'Run from here');
+    runHere.disabled = !!scene.disabled;
+
+    const dup = createButton('', 'icon-button stream-row-action', () => {
+      void window.xtream.stream.edit({ type: 'duplicate-scene', sceneId: scene.id }).then((s) => {
+        const idx = s.stream.sceneOrder.indexOf(scene.id);
+        const newId = idx >= 0 ? s.stream.sceneOrder[idx + 1] : scene.id;
+        selectedSceneId = newId;
+        renderCurrent();
+      });
+    });
+    decorateIconButton(dup, 'Copy', 'Duplicate scene');
+
+    const dis = createButton('', 'icon-button stream-row-action', () => {
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } });
+    });
+    decorateIconButton(dis, scene.disabled ? 'Play' : 'StopCircle', scene.disabled ? 'Enable scene' : 'Disable scene');
+
+    const rem = createButton('', 'icon-button stream-row-action', () => {
+      if (stream.sceneOrder.length <= 1) {
+        return;
+      }
+      void window.xtream.stream.edit({ type: 'remove-scene', sceneId: scene.id }).then((s) => {
+        selectedSceneId = s.stream.sceneOrder[0];
+        expandedListSceneIds.delete(scene.id);
+        renderCurrent();
+      });
+    });
+    decorateIconButton(rem, 'Trash2', 'Remove scene');
+    rem.disabled = stream.sceneOrder.length <= 1;
+
+    actions.append(runHere, dup, dis, rem);
+
+    row.append(expandBtn, dragHandle, cueCell, titleCell, triggerCell, durationCell, stateCell, actions);
+
+    wrap.append(row);
+
+    const progress = runtimeState?.progress;
+    if (runtimeState?.status === 'running' && progress !== undefined && Number.isFinite(progress)) {
+      const bar = document.createElement('div');
+      bar.className = 'stream-scene-row-progress';
+      bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+      wrap.append(bar);
+    } else if (runtimeState?.status === 'running') {
+      const bar = document.createElement('div');
+      bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
+      wrap.append(bar);
+    }
+
+    if (expanded) {
+      const sub = document.createElement('div');
+      sub.className = 'stream-scene-subcue-list';
+      if (scene.subCueOrder.length === 0) {
+        sub.append(createHint('No sub-cues in this scene.'));
+      } else {
+        for (const sid of scene.subCueOrder) {
+          const cue = scene.subCues[sid];
+          const line = document.createElement('div');
+          line.className = 'stream-scene-subcue-line';
+          line.textContent = cue ? formatSubCueLabel(cue) : sid;
+          sub.append(line);
+        }
+      }
+      wrap.append(sub);
+    }
+
+    return wrap;
+  }
+
+  function formatSceneStateLabel(runtimeState: SceneRuntimeState | undefined, scene: PersistedSceneConfig): string {
+    if (runtimeState?.status) {
+      return runtimeState.status;
+    }
+    return scene.disabled ? 'disabled' : 'ready';
   }
 
   function createFlowMode(): HTMLElement {
@@ -563,7 +808,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       const title = document.createElement('strong');
       title.textContent = scene.title ?? `Scene ${index + 1}`;
       const meta = document.createElement('small');
-      meta.textContent = `${formatTrigger(scene)} | ${formatSceneDuration(scene)}`;
+      meta.textContent = `${formatTriggerSummary(stream, scene)} | ${formatSceneDuration(scene)}`;
       card.append(number, title, meta);
       card.addEventListener('click', () => {
         selectedSceneId = sceneId;
@@ -660,28 +905,326 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
     const detail = document.createElement('div');
     detail.className = 'stream-scene-edit-detail';
-    detail.append(createSceneForm(scene));
+    detail.append(createSceneForm(stream, scene));
     wrap.append(rail, detail);
     return wrap;
   }
 
-  function createSceneForm(scene: PersistedSceneConfig): HTMLElement {
+  function createSceneForm(stream: PersistedStreamConfig, scene: PersistedSceneConfig): HTMLElement {
     const form = document.createElement('div');
     form.className = 'detail-card stream-scene-form';
-    form.append(
-      createDetailLine('Scene', scene.title ?? scene.id),
-      createDetailLine('Trigger', formatTrigger(scene)),
-      createDetailLine('Loop', scene.loop.enabled ? scene.loop.iterations.type : 'off'),
-      createDetailLine('Preload', scene.preload.enabled ? `${scene.preload.leadTimeMs ?? 0}ms` : 'off'),
-      createDetailLine('Sub-Cues', String(scene.subCueOrder.length)),
+
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'label-input';
+    titleInput.value = scene.title ?? '';
+    titleInput.placeholder = 'Scene title';
+    titleInput.addEventListener('change', () => {
+      const v = titleInput.value.trim();
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { title: v || undefined } });
+    });
+    form.append(createDetailField('Title', titleInput));
+
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'label-input stream-scene-note-input';
+    noteInput.rows = 3;
+    noteInput.value = scene.note ?? '';
+    noteInput.placeholder = 'Scene note';
+    noteInput.addEventListener('change', () => {
+      const v = noteInput.value.trim();
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { note: v || undefined } });
+    });
+    form.append(createDetailField('Note', noteInput));
+
+    const disabledLabel = document.createElement('label');
+    disabledLabel.className = 'stream-checkbox-field';
+    const disabledBox = document.createElement('input');
+    disabledBox.type = 'checkbox';
+    disabledBox.checked = !!scene.disabled;
+    disabledBox.addEventListener('change', () => {
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: disabledBox.checked } });
+    });
+    disabledLabel.append(disabledBox, document.createTextNode(' Scene disabled'));
+    form.append(disabledLabel);
+
+    const triggerType = scene.trigger.type;
+    const triggerSelect = createSelect(
+      'Trigger mode',
+      [
+        ['manual', 'Manual'],
+        ['simultaneous-start', 'Simultaneous start'],
+        ['follow-end', 'Follow end'],
+        ['time-offset', 'Time offset'],
+        ['at-timecode', 'At timecode'],
+      ],
+      triggerType,
+      (value) => {
+        const nextType = value as SceneTrigger['type'];
+        let nextTrigger: SceneTrigger;
+        if (nextType === 'manual') {
+          nextTrigger = { type: 'manual' };
+        } else if (nextType === 'at-timecode') {
+          nextTrigger = { type: 'at-timecode', timecodeMs: scene.trigger.type === 'at-timecode' ? scene.trigger.timecodeMs : 0 };
+        } else if (nextType === 'time-offset') {
+          const prev =
+            scene.trigger.type === 'time-offset'
+              ? scene.trigger
+              : { offsetMs: 1000, followsSceneId: resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }) };
+          nextTrigger = {
+            type: 'time-offset',
+            offsetMs: 'offsetMs' in prev ? prev.offsetMs : 1000,
+            followsSceneId: 'followsSceneId' in prev ? prev.followsSceneId : undefined,
+          };
+        } else if (nextType === 'simultaneous-start') {
+          nextTrigger = {
+            type: 'simultaneous-start',
+            followsSceneId:
+              scene.trigger.type === 'simultaneous-start' ? scene.trigger.followsSceneId : resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }),
+          };
+        } else {
+          nextTrigger = {
+            type: 'follow-end',
+            followsSceneId: scene.trigger.type === 'follow-end' ? scene.trigger.followsSceneId : resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }),
+          };
+        }
+        void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: nextTrigger } });
+      },
     );
+    form.append(triggerSelect);
+
+    const followOptions: Array<[string, string]> = stream.sceneOrder
+      .filter((id) => id !== scene.id)
+      .map((id) => [id, stream.scenes[id]?.title ?? id]);
+    const needsFollow =
+      triggerType === 'simultaneous-start' || triggerType === 'follow-end' || triggerType === 'time-offset';
+    const explicitFollowId =
+      needsFollow && (scene.trigger.type === 'simultaneous-start' || scene.trigger.type === 'follow-end' || scene.trigger.type === 'time-offset')
+        ? scene.trigger.followsSceneId
+        : undefined;
+    const followSelect = createSelect(
+      'Follow scene',
+      [['', '(implicit: previous row)'], ...followOptions],
+      explicitFollowId ?? '',
+      (value) => {
+        const id = value || undefined;
+        const t = scene.trigger;
+        if (t.type === 'simultaneous-start') {
+          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'simultaneous-start', followsSceneId: id } } });
+        } else if (t.type === 'follow-end') {
+          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'follow-end', followsSceneId: id } } });
+        } else if (t.type === 'time-offset') {
+          void window.xtream.stream.edit({
+            type: 'update-scene',
+            sceneId: scene.id,
+            update: { trigger: { type: 'time-offset', offsetMs: t.offsetMs, followsSceneId: id } },
+          });
+        }
+      },
+    );
+    followSelect.hidden = !needsFollow;
+    form.append(followSelect);
+
+    const offsetWrap = document.createElement('div');
+    offsetWrap.className = 'stream-scene-form-row';
+    offsetWrap.hidden = triggerType !== 'time-offset';
+    const offsetMs =
+      scene.trigger.type === 'time-offset' ? scene.trigger.offsetMs : 0;
+    const offsetInput = document.createElement('input');
+    offsetInput.type = 'number';
+    offsetInput.min = '0';
+    offsetInput.step = '100';
+    offsetInput.className = 'label-input';
+    offsetInput.value = String(offsetMs);
+    offsetInput.addEventListener('change', () => {
+      if (scene.trigger.type !== 'time-offset') {
+        return;
+      }
+      const ms = Math.max(0, Number(offsetInput.value) || 0);
+      void window.xtream.stream.edit({
+        type: 'update-scene',
+        sceneId: scene.id,
+        update: { trigger: { type: 'time-offset', offsetMs: ms, followsSceneId: scene.trigger.followsSceneId } },
+      });
+    });
+    offsetWrap.append(createDetailField('Offset (ms)', offsetInput));
+    form.append(offsetWrap);
+
+    const tcWrap = document.createElement('div');
+    tcWrap.className = 'stream-scene-form-row';
+    tcWrap.hidden = triggerType !== 'at-timecode';
+    const tcMs = scene.trigger.type === 'at-timecode' ? scene.trigger.timecodeMs : 0;
+    const tcInput = document.createElement('input');
+    tcInput.type = 'number';
+    tcInput.min = '0';
+    tcInput.step = '100';
+    tcInput.className = 'label-input';
+    tcInput.value = String(tcMs);
+    tcInput.addEventListener('change', () => {
+      const ms = Math.max(0, Number(tcInput.value) || 0);
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'at-timecode', timecodeMs: ms } } });
+    });
+    tcWrap.append(createDetailField('Timecode (ms)', tcInput));
+    form.append(tcWrap);
+
+    const loopLabel = document.createElement('label');
+    loopLabel.className = 'stream-checkbox-field';
+    const loopBox = document.createElement('input');
+    loopBox.type = 'checkbox';
+    loopBox.checked = scene.loop.enabled;
+    loopBox.addEventListener('change', () => {
+      const next: SceneLoopPolicy = loopBox.checked
+        ? scene.loop.enabled
+          ? scene.loop
+          : { enabled: true, iterations: { type: 'count', count: 1 } }
+        : { enabled: false };
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop: next } });
+    });
+    loopLabel.append(loopBox, document.createTextNode(' Scene loop'));
+    form.append(loopLabel);
+
+    const loopDetail = document.createElement('div');
+    loopDetail.className = 'stream-scene-form-row stream-scene-loop-detail';
+    loopDetail.hidden = !scene.loop.enabled;
+    if (scene.loop.enabled) {
+      const iterTypeSelect = createSelect(
+        'Loop iterations',
+        [
+          ['count', 'Count'],
+          ['infinite', 'Infinite'],
+        ],
+        scene.loop.iterations.type,
+        (value) => {
+          if (!scene.loop.enabled) {
+            return;
+          }
+          const iterations =
+            value === 'infinite' ? ({ type: 'infinite' } as const) : { type: 'count' as const, count: scene.loop.iterations.type === 'count' ? scene.loop.iterations.count : 1 };
+          void window.xtream.stream.edit({
+            type: 'update-scene',
+            sceneId: scene.id,
+            update: { loop: { ...scene.loop, iterations } },
+          });
+        },
+      );
+      loopDetail.append(iterTypeSelect);
+
+      if (scene.loop.iterations.type === 'count') {
+        const countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.min = '1';
+        countInput.step = '1';
+        countInput.className = 'label-input';
+        countInput.value = String(scene.loop.iterations.count);
+        countInput.addEventListener('change', () => {
+          if (!scene.loop.enabled || scene.loop.iterations.type !== 'count') {
+            return;
+          }
+          const c = Math.max(1, Math.floor(Number(countInput.value) || 1));
+          void window.xtream.stream.edit({
+            type: 'update-scene',
+            sceneId: scene.id,
+            update: { loop: { ...scene.loop, iterations: { type: 'count', count: c } } },
+          });
+        });
+        loopDetail.append(createDetailField('Loop count', countInput));
+      }
+
+      const rangeStart = document.createElement('input');
+      rangeStart.type = 'number';
+      rangeStart.min = '0';
+      rangeStart.step = '100';
+      rangeStart.className = 'label-input';
+      rangeStart.value = String(scene.loop.range?.startMs ?? 0);
+      rangeStart.addEventListener('change', () => {
+        if (!scene.loop.enabled) {
+          return;
+        }
+        const startMs = Math.max(0, Number(rangeStart.value) || 0);
+        const endMs = scene.loop.range?.endMs;
+        void window.xtream.stream.edit({
+          type: 'update-scene',
+          sceneId: scene.id,
+          update: { loop: { ...scene.loop, range: { startMs, endMs } } },
+        });
+      });
+      loopDetail.append(createDetailField('Loop range start (ms)', rangeStart));
+
+      const rangeEnd = document.createElement('input');
+      rangeEnd.type = 'number';
+      rangeEnd.min = '0';
+      rangeEnd.step = '100';
+      rangeEnd.className = 'label-input';
+      rangeEnd.placeholder = 'optional end';
+      rangeEnd.value = scene.loop.range?.endMs !== undefined ? String(scene.loop.range.endMs) : '';
+      rangeEnd.addEventListener('change', () => {
+        if (!scene.loop.enabled) {
+          return;
+        }
+        const raw = rangeEnd.value.trim();
+        const endMs = raw === '' ? undefined : Math.max(0, Number(raw) || 0);
+        const startMs = scene.loop.range?.startMs ?? 0;
+        void window.xtream.stream.edit({
+          type: 'update-scene',
+          sceneId: scene.id,
+          update: { loop: { ...scene.loop, range: endMs !== undefined ? { startMs, endMs } : { startMs } } },
+        });
+      });
+      loopDetail.append(createDetailField('Loop range end (ms)', rangeEnd));
+    }
+    form.append(loopDetail);
+
+    const preloadLabel = document.createElement('label');
+    preloadLabel.className = 'stream-checkbox-field';
+    const preloadBox = document.createElement('input');
+    preloadBox.type = 'checkbox';
+    preloadBox.checked = scene.preload.enabled;
+    preloadBox.addEventListener('change', () => {
+      void window.xtream.stream.edit({
+        type: 'update-scene',
+        sceneId: scene.id,
+        update: { preload: { enabled: preloadBox.checked, leadTimeMs: scene.preload.leadTimeMs } },
+      });
+    });
+    preloadLabel.append(preloadBox, document.createTextNode(' Preload'));
+    form.append(preloadLabel);
+
+    const leadWrap = document.createElement('div');
+    leadWrap.className = 'stream-scene-form-row';
+    leadWrap.hidden = !scene.preload.enabled;
+    const leadInput = document.createElement('input');
+    leadInput.type = 'number';
+    leadInput.min = '0';
+    leadInput.step = '100';
+    leadInput.className = 'label-input';
+    leadInput.value = String(scene.preload.leadTimeMs ?? 0);
+    leadInput.addEventListener('change', () => {
+      const ms = Math.max(0, Number(leadInput.value) || 0);
+      void window.xtream.stream.edit({
+        type: 'update-scene',
+        sceneId: scene.id,
+        update: { preload: { enabled: true, leadTimeMs: ms } },
+      });
+    });
+    leadWrap.append(createDetailField('Preload lead time (ms)', leadInput));
+    form.append(leadWrap);
+
+    form.append(
+      createDetailLine('Trigger summary', formatTriggerSummary(stream, scene)),
+      createDetailLine('Sub-cues', String(scene.subCueOrder.length)),
+    );
+
     const actions = document.createElement('div');
     actions.className = 'button-row';
+    const removeDisabled = stream.sceneOrder.length <= 1;
     actions.append(
-      createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary', () => updateSelectedScene({ disabled: !scene.disabled })),
+      createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary', () =>
+        void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } }),
+      ),
       createButton('Duplicate', 'secondary', () => duplicateSelectedScene(scene.id)),
       createButton('Remove', 'secondary', () => removeSelectedScene(scene.id)),
     );
+    const removeBtn = actions.querySelectorAll('button')[2] as HTMLButtonElement;
+    removeBtn.disabled = removeDisabled;
     form.append(actions);
     return form;
   }
@@ -823,9 +1366,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return tablist;
   }
 
-  function createCell(text: string): HTMLElement {
+  function createCell(text: string, className?: string): HTMLElement {
     const cell = document.createElement('span');
     cell.textContent = text;
+    if (className) {
+      cell.className = className;
+    }
     return cell;
   }
 
@@ -862,14 +1408,26 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return input;
   }
 
-  function formatTrigger(scene: PersistedSceneConfig): string {
-    if (scene.trigger.type === 'time-offset') {
-      return `offset ${Math.round(scene.trigger.offsetMs / 1000)}s`;
+  function formatTriggerSummary(stream: PersistedStreamConfig, scene: PersistedSceneConfig): string {
+    const t = scene.trigger;
+    if (t.type === 'manual') {
+      return 'Manual';
     }
-    if (scene.trigger.type === 'at-timecode') {
-      return formatTimecode(scene.trigger.timecodeMs / 1000);
+    if (t.type === 'at-timecode') {
+      return `At ${formatTimecode(t.timecodeMs / 1000)}`;
     }
-    return scene.trigger.type;
+    const pred = resolveFollowsSceneId(stream, scene.id, t);
+    const predLabel = pred ? stream.scenes[pred]?.title ?? pred : 'previous';
+    if (t.type === 'time-offset') {
+      return `+${(t.offsetMs / 1000).toFixed(2)}s · ${predLabel}`;
+    }
+    if (t.type === 'simultaneous-start') {
+      return `With start · ${predLabel}`;
+    }
+    if (t.type === 'follow-end') {
+      return `After end · ${predLabel}`;
+    }
+    return 'Trigger';
   }
 
   function formatSceneDuration(scene: PersistedSceneConfig): string {
