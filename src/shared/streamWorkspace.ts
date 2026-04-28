@@ -1,7 +1,9 @@
 import type {
   DisplayWindowId,
   LoopState,
+  PersistedDisplayConfigV8,
   PersistedSceneConfig,
+  PersistedShowConfig,
   PersistedShowConfigV8,
   PersistedStreamConfig,
   PersistedVirtualOutputConfig,
@@ -9,7 +11,10 @@ import type {
   SceneLoopPolicy,
   StreamId,
   SubCueId,
+  VisualId,
   VisualLayoutProfile,
+  VirtualOutputId,
+  VirtualOutputSourceSelection,
 } from './types';
 
 export const STREAM_MAIN_ID: StreamId = 'stream-main';
@@ -145,4 +150,98 @@ export function buildPatchCompatibilityScene(
     subCueOrder,
     subCues,
   };
+}
+
+type PatchDisplayVisualSlots = {
+  single?: VisualId;
+  left?: VisualId;
+  right?: VisualId;
+};
+
+/**
+ * Inverse of {@link buildPatchCompatibilityScene}: derive persisted Patch display layouts and
+ * virtual output source lists from the hidden compatibility scene so v8 shows stay consistent
+ * when the scene is authoritative (e.g. hand-edited or migrated).
+ */
+export function applyPatchCompatibilitySceneToPersistedRouting(
+  scene: PersistedSceneConfig,
+  displays: PersistedDisplayConfigV8[],
+  outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>,
+): {
+  displays: PersistedDisplayConfigV8[];
+  outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>;
+} {
+  const displaySlots = new Map<DisplayWindowId, PatchDisplayVisualSlots>();
+  const outputSources = new Map<VirtualOutputId, VirtualOutputSourceSelection[]>();
+
+  for (const cueId of scene.subCueOrder) {
+    const cue = scene.subCues[cueId];
+    if (!cue) {
+      continue;
+    }
+    if (cue.kind === 'visual') {
+      for (const t of cue.targets) {
+        const slot = displaySlots.get(t.displayId) ?? {};
+        const zone = t.zoneId ?? 'single';
+        if (zone === 'single') {
+          slot.single = cue.visualId;
+        } else if (zone === 'split-left') {
+          slot.left = cue.visualId;
+        } else if (zone === 'split-right') {
+          slot.right = cue.visualId;
+        }
+        displaySlots.set(t.displayId, slot);
+      }
+    } else if (cue.kind === 'audio') {
+      for (const outId of cue.outputIds) {
+        const list = outputSources.get(outId) ?? [];
+        list.push({
+          audioSourceId: cue.audioSourceId,
+          levelDb: cue.levelDb ?? 0,
+          pan: cue.pan ?? 0,
+        });
+        outputSources.set(outId, list);
+      }
+    }
+  }
+
+  const nextDisplays = displays.map((d) => {
+    const id = d.id;
+    if (!id) {
+      return d;
+    }
+    const slot = displaySlots.get(id);
+    if (!slot) {
+      const empty: VisualLayoutProfile =
+        d.layout.type === 'split' ? { type: 'split', visualIds: [undefined, undefined] } : { type: 'single' };
+      return { ...d, layout: empty };
+    }
+    let layout: VisualLayoutProfile;
+    if (slot.left !== undefined || slot.right !== undefined) {
+      layout = { type: 'split', visualIds: [slot.left, slot.right] };
+    } else if (slot.single !== undefined) {
+      layout = { type: 'single', visualId: slot.single };
+    } else {
+      layout = d.layout.type === 'split' ? { type: 'split', visualIds: [undefined, undefined] } : { type: 'single' };
+    }
+    return { ...d, layout };
+  });
+
+  const nextOutputs: Record<VirtualOutputId, PersistedVirtualOutputConfig> = {};
+  for (const [id, o] of Object.entries(outputs)) {
+    const sources = outputSources.get(id) ?? [];
+    nextOutputs[id] = { ...o, sources: sources.map((s) => ({ ...s })) };
+  }
+
+  return { displays: nextDisplays, outputs: nextOutputs };
+}
+
+/** Apply Patch compatibility scene routing over top-level persisted displays/outputs (v8). */
+export function mergeShowConfigPatchRouting(config: PersistedShowConfig): PersistedShowConfig {
+  const { displays, outputs } = applyPatchCompatibilitySceneToPersistedRouting(
+    config.patchCompatibility.scene,
+    config.displays,
+    config.outputs,
+  );
+  return { ...config, displays, outputs };
 }

@@ -24,6 +24,7 @@ import {
   writeShowConfig,
 } from './showConfig';
 import { getActiveDisplays } from '../shared/layouts';
+import { mergeShowConfigPatchRouting } from '../shared/streamWorkspace';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
@@ -424,7 +425,7 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
   const mediaUrls = buildMediaUrls(config);
   displayRegistry.closeAll();
   director.restoreShowConfig(config, mediaUrls);
-  for (const display of config.displays) {
+  for (const display of mergeShowConfigPatchRouting(config).displays) {
     const state = displayRegistry.create({
       id: display.id,
       label: display.label,

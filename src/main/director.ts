@@ -31,7 +31,12 @@ import type {
 } from '../shared/types';
 import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
-import { buildPatchCompatibilityScene, getDefaultStreamPersistence, sceneLoopPolicyToLoopState } from '../shared/streamWorkspace';
+import {
+  buildPatchCompatibilityScene,
+  getDefaultStreamPersistence,
+  mergeShowConfigPatchRouting,
+  sceneLoopPolicyToLoopState,
+} from '../shared/streamWorkspace';
 import { getDirectorSeconds } from '../shared/timeline';
 
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
@@ -792,33 +797,38 @@ export class Director extends EventEmitter {
     };
   }
 
+  /**
+   * Restores pool, outputs, and loop from persisted show data.
+   * Applies `patchCompatibility.scene` routing over persisted displays and virtual outputs (v8 Patch projection).
+   */
   restoreShowConfig(config: PersistedShowConfig, urls: { visuals: Record<string, string | undefined>; audioSources: Record<string, string | undefined> }): DirectorState {
+    const merged = mergeShowConfigPatchRouting(config);
     this.state.paused = true;
     this.state.globalAudioMuted = false;
     this.state.globalDisplayBlackout = false;
     this.state.performanceMode = false;
-    this.state.rate = config.rate ?? 1;
-    this.state.audioExtractionFormat = config.audioExtractionFormat ?? 'm4a';
+    this.state.rate = merged.rate ?? 1;
+    this.state.audioExtractionFormat = merged.audioExtractionFormat ?? 'm4a';
     this.state.globalAudioMuteFadeOutSeconds = Math.min(
       60,
-      Math.max(0, config.globalAudioMuteFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
+      Math.max(0, merged.globalAudioMuteFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
     );
     this.state.globalDisplayBlackoutFadeOutSeconds = Math.min(
       60,
-      Math.max(0, config.globalDisplayBlackoutFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
+      Math.max(0, merged.globalDisplayBlackoutFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
     );
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
     this.displayPersistMeta.clear();
-    for (const display of config.displays) {
+    for (const display of merged.displays) {
       const id = display.id;
       if (id && display.visualMingle) {
         this.displayPersistMeta.set(id, { visualMingle: display.visualMingle });
       }
     }
-    this.state.loop = sceneLoopPolicyToLoopState(config.patchCompatibility.scene.loop);
+    this.state.loop = sceneLoopPolicyToLoopState(merged.patchCompatibility.scene.loop);
     this.state.visuals = Object.fromEntries(
-      Object.values(config.visuals).map((visual) => [
+      Object.values(merged.visuals).map((visual) => [
         visual.id,
         visual.kind === 'live'
           ? ({
@@ -851,7 +861,7 @@ export class Director extends EventEmitter {
       ]),
     );
     this.state.audioSources = Object.fromEntries(
-      Object.values(config.audioSources).map((source) => [
+      Object.values(merged.audioSources).map((source) => [
         source.id,
         source.type === 'external-file'
           ? {
@@ -889,7 +899,7 @@ export class Director extends EventEmitter {
       ]),
     );
     this.state.outputs = Object.fromEntries(
-      Object.values(config.outputs).map((output) => [
+      Object.values(merged.outputs).map((output) => [
         output.id,
         {
           id: output.id,

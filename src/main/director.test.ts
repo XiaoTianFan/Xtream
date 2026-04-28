@@ -330,6 +330,47 @@ describe('Director', () => {
     expect(director.getState().globalDisplayBlackoutFadeOutSeconds).toBe(1);
   });
 
+  it('restore prefers patchCompatibility.scene audio routing over stale output.sources (v7-style regression)', () => {
+    const v7: PersistedShowConfigV7 = {
+      schemaVersion: 7,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      audioExtractionFormat: 'm4a',
+      loop: { enabled: false, startSeconds: 0 },
+      visuals: {},
+      audioSources: {
+        ax: { id: 'ax', label: 'A', type: 'external-file', path: 'F:\\a.wav', playbackRate: 1, levelDb: 0 },
+      },
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [{ audioSourceId: 'ax', levelDb: -3, pan: 0.5 }],
+          busLevelDb: 0,
+          pan: 0,
+        },
+      },
+      displays: [],
+    };
+    const v8 = migrateV7ToV8(v7);
+    const corrupted: PersistedShowConfig = {
+      ...v8,
+      outputs: {
+        ...v8.outputs,
+        'output-main': {
+          ...v8.outputs['output-main'],
+          sources: [{ audioSourceId: 'wrong-id', levelDb: 0, pan: 0 }],
+        },
+      },
+    };
+    const director = new Director(() => 1000);
+    director.restoreShowConfig(corrupted, { visuals: {}, audioSources: {} });
+    expect(director.getState().outputs['output-main'].sources[0]).toMatchObject({
+      audioSourceId: 'ax',
+      levelDb: -3,
+      pan: 0.5,
+    });
+  });
+
   it('allows loop and seek across the longest active timeline span', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
