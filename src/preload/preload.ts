@@ -39,6 +39,7 @@ import type {
   VisualState,
   VisualUpdate,
   VirtualOutputId,
+  VirtualOutputSourceSelectionUpdate,
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
@@ -105,6 +106,12 @@ const api = {
     create: (): Promise<VirtualOutputState> => ipcRenderer.invoke('output:create'),
     update: (outputId: VirtualOutputId, update: VirtualOutputUpdate): Promise<VirtualOutputState> =>
       ipcRenderer.invoke('output:update', outputId, update),
+    addSource: (outputId: VirtualOutputId, audioSourceId: AudioSourceId): Promise<VirtualOutputState> =>
+      ipcRenderer.invoke('output:add-source', outputId, audioSourceId),
+    updateSource: (outputId: VirtualOutputId, selectionId: string, update: VirtualOutputSourceSelectionUpdate): Promise<VirtualOutputState> =>
+      ipcRenderer.invoke('output:update-source', outputId, selectionId, update),
+    removeSource: (outputId: VirtualOutputId, selectionId: string): Promise<VirtualOutputState> =>
+      ipcRenderer.invoke('output:remove-source', outputId, selectionId),
     reportMeter: (report: OutputMeterReport): Promise<VirtualOutputState> => ipcRenderer.invoke('output:meter', report),
     remove: (outputId: VirtualOutputId): Promise<boolean> => ipcRenderer.invoke('output:remove', outputId),
   },

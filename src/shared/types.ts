@@ -791,6 +791,7 @@ export type VirtualOutputUpdate = Partial<
     | 'error'
   >
 >;
+export type VirtualOutputSourceSelectionUpdate = Partial<Pick<VirtualOutputSourceSelection, 'levelDb' | 'pan' | 'muted' | 'solo'>>;
 
 export type AudioCapabilityStatus =
   | 'unknown'
@@ -900,6 +901,9 @@ export type IpcChannels = {
   'audio-source:metadata': (report: AudioMetadataReport) => DirectorState;
   'output:create': () => VirtualOutputState;
   'output:update': (outputId: VirtualOutputId, update: VirtualOutputUpdate) => VirtualOutputState;
+  'output:add-source': (outputId: VirtualOutputId, audioSourceId: AudioSourceId) => VirtualOutputState;
+  'output:update-source': (outputId: VirtualOutputId, selectionId: string, update: VirtualOutputSourceSelectionUpdate) => VirtualOutputState;
+  'output:remove-source': (outputId: VirtualOutputId, selectionId: string) => VirtualOutputState;
   'output:meter': (report: OutputMeterReport) => VirtualOutputState;
   'audio:meter-report': (report: OutputMeterReport) => void;
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;

@@ -59,6 +59,7 @@ import type {
   VisualMetadataReport,
   VisualUpdate,
   VirtualOutputId,
+  VirtualOutputSourceSelectionUpdate,
   VirtualOutputUpdate,
 } from '../shared/types';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
@@ -991,6 +992,24 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('output:update', (_event, outputId: string, update: VirtualOutputUpdate) => {
     const output = director.updateVirtualOutput(outputId, update);
+    scheduleShowConfigAutoSave();
+    return output;
+  });
+
+  ipcMain.handle('output:add-source', (_event, outputId: string, audioSourceId: string) => {
+    const output = director.addVirtualOutputSource(outputId, audioSourceId);
+    scheduleShowConfigAutoSave();
+    return output;
+  });
+
+  ipcMain.handle('output:update-source', (_event, outputId: string, selectionId: string, update: VirtualOutputSourceSelectionUpdate) => {
+    const output = director.updateVirtualOutputSource(outputId, selectionId, update);
+    scheduleShowConfigAutoSave();
+    return output;
+  });
+
+  ipcMain.handle('output:remove-source', (_event, outputId: string, selectionId: string) => {
+    const output = director.removeVirtualOutputSource(outputId, selectionId);
     scheduleShowConfigAutoSave();
     return output;
   });

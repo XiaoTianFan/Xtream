@@ -690,4 +690,25 @@ describe('Director', () => {
       ),
     ).toEqual(sources.map((source) => source.id));
   });
+
+  it('updates one virtual output source route without replaying stale source row state', () => {
+    const director = new Director(() => 1000);
+    const a = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
+    const b = director.addAudioFileSource('F:\\media\\b.wav', 'file:///F:/media/b.wav');
+    director.updateVirtualOutput('output-main', {
+      sources: [
+        { audioSourceId: a.id, levelDb: -3, pan: -0.25 },
+        { audioSourceId: b.id, levelDb: -9, pan: 0.5 },
+      ],
+    });
+    const [routeA, routeB] = director.getState().outputs['output-main'].sources;
+
+    director.updateVirtualOutputSource('output-main', routeA.id!, { levelDb: -18 });
+    director.updateVirtualOutputSource('output-main', routeB.id!, { muted: true });
+
+    expect(director.getState().outputs['output-main'].sources).toMatchObject([
+      { id: routeA.id, audioSourceId: a.id, levelDb: -18, pan: -0.25 },
+      { id: routeB.id, audioSourceId: b.id, levelDb: -9, pan: 0.5, muted: true },
+    ]);
+  });
 });

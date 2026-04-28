@@ -28,6 +28,7 @@ import type {
   VisualMetadataReport,
   VisualState,
   VirtualOutputSourceSelection,
+  VirtualOutputSourceSelectionUpdate,
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
@@ -680,6 +681,47 @@ export class Director extends EventEmitter {
     this.recalculateTimeline();
     this.emitState();
     return structuredClone(this.state.outputs[outputId]);
+  }
+
+  addVirtualOutputSource(outputId: string, audioSourceId: string): VirtualOutputState {
+    const output = this.getNormalizedOutput(outputId);
+    output.sources = [...output.sources, this.createOutputSourceSelection(outputId, audioSourceId)];
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(output);
+  }
+
+  updateVirtualOutputSource(outputId: string, selectionId: string, update: VirtualOutputSourceSelectionUpdate): VirtualOutputState {
+    const output = this.getNormalizedOutput(outputId);
+    let found = false;
+    output.sources = output.sources.map((source) => {
+      if (source.id !== selectionId) {
+        return source;
+      }
+      found = true;
+      return { ...source, ...update, pan: update.pan ?? source.pan ?? 0 };
+    });
+    if (!found) {
+      throw new Error(`Unknown virtual output source: ${selectionId}`);
+    }
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(output);
+  }
+
+  removeVirtualOutputSource(outputId: string, selectionId: string): VirtualOutputState {
+    const output = this.getNormalizedOutput(outputId);
+    const nextSources = output.sources.filter((source) => source.id !== selectionId);
+    if (nextSources.length === output.sources.length) {
+      throw new Error(`Unknown virtual output source: ${selectionId}`);
+    }
+    output.sources = nextSources;
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(output);
   }
 
   updateOutputMeter(report: OutputMeterReport): VirtualOutputState {
@@ -1454,6 +1496,15 @@ export class Director extends EventEmitter {
     for (const output of Object.values(this.state.outputs)) {
       output.sources = this.normalizeOutputSourceSelections(output.id, output.sources);
     }
+  }
+
+  private getNormalizedOutput(outputId: string): VirtualOutputState {
+    const output = this.state.outputs[outputId];
+    if (!output) {
+      throw new Error(`Unknown virtual output: ${outputId}`);
+    }
+    output.sources = this.normalizeOutputSourceSelections(outputId, output.sources);
+    return output;
   }
 
   private nextOutputSourceSelectionId(outputId: string, reserved: Set<string> = new Set()): string {
