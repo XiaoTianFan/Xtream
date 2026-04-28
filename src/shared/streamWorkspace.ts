@@ -1,6 +1,7 @@
 import type {
   DisplayWindowId,
   LoopState,
+  PersistedAudioSubCueConfig,
   PersistedDisplayConfigV8,
   PersistedSceneConfig,
   PersistedShowConfig,
@@ -129,7 +130,7 @@ export function buildPatchCompatibilityScene(
     output.sources.forEach((source, index) => {
       const id = `patch-aud-${output.id}-${index}` as SubCueId;
       subCueOrder.push(id);
-      subCues[id] = {
+      const audioCue: PersistedAudioSubCueConfig = {
         id,
         kind: 'audio',
         audioSourceId: source.audioSourceId,
@@ -138,6 +139,13 @@ export function buildPatchCompatibilityScene(
         pan: source.pan,
         playbackRate: 1,
       };
+      if (source.muted !== undefined) {
+        audioCue.muted = source.muted;
+      }
+      if (source.solo !== undefined) {
+        audioCue.solo = source.solo;
+      }
+      subCues[id] = audioCue;
     });
   }
 
@@ -195,11 +203,18 @@ export function applyPatchCompatibilitySceneToPersistedRouting(
     } else if (cue.kind === 'audio') {
       for (const outId of cue.outputIds) {
         const list = outputSources.get(outId) ?? [];
-        list.push({
+        const sel: VirtualOutputSourceSelection = {
           audioSourceId: cue.audioSourceId,
           levelDb: cue.levelDb ?? 0,
           pan: cue.pan ?? 0,
-        });
+        };
+        if (cue.muted !== undefined) {
+          sel.muted = cue.muted;
+        }
+        if (cue.solo !== undefined) {
+          sel.solo = cue.solo;
+        }
+        list.push(sel);
         outputSources.set(outId, list);
       }
     }

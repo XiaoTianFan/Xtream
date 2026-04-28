@@ -162,6 +162,10 @@ function sendStreamState(window: BrowserWindow | undefined, state: StreamEngineP
 
 function broadcastStreamState(state: StreamEnginePublicState): void {
   sendStreamState(controlWindow, state);
+  sendStreamState(audioWindow, state);
+  for (const displayWindow of displayRegistry?.getAllWindows() ?? []) {
+    sendStreamState(displayWindow, state);
+  }
 }
 
 function createPersistedShowForDisk(): ReturnType<Director['createShowConfig']> {

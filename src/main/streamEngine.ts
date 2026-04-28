@@ -247,7 +247,7 @@ export class StreamEngine extends EventEmitter {
         break;
       case 'back-to-first':
         this.runtime = null;
-        this.handleGo(stream, stream.sceneOrder[0]);
+        this.handleGo(stream);
         break;
       default:
         break;

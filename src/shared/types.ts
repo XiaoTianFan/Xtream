@@ -444,6 +444,9 @@ export type PersistedAudioSubCueConfig = {
   fadeOut?: FadeSpec;
   levelDb?: number;
   pan?: number;
+  /** Mirrors virtual output slot mute/solo for Patch routing round-trip through the hidden scene. */
+  muted?: boolean;
+  solo?: boolean;
   levelAutomation?: CurvePoint[];
   panAutomation?: CurvePoint[];
   playbackRate?: number;

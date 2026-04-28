@@ -25,6 +25,27 @@ describe('StreamEngine', () => {
     expect(state.runtime).toBeNull();
   });
 
+  it('back-to-first skips a disabled leading scene', () => {
+    const director = { isPatchTransportPlaying: () => false } as unknown as Director;
+    const engine = new StreamEngine(director);
+    engine.loadFromShow(getDefaultStreamPersistence());
+    engine.applyTransport({ type: 'go', streamId: STREAM_MAIN_ID });
+    engine.applyEdit({
+      type: 'create-scene',
+      streamId: STREAM_MAIN_ID,
+      afterSceneId: 'scene-1',
+    });
+    engine.applyEdit({
+      type: 'update-scene',
+      streamId: STREAM_MAIN_ID,
+      sceneId: 'scene-1',
+      update: { disabled: true },
+    });
+    const afterBack = engine.applyTransport({ type: 'back-to-first', streamId: STREAM_MAIN_ID });
+    const order = afterBack.streams[STREAM_MAIN_ID]!.sceneOrder;
+    expect(afterBack.runtime?.cursorSceneId).toBe(order[1]);
+  });
+
   it('jump-next completes current scene and runs the next', () => {
     const director = { isPatchTransportPlaying: () => false } as unknown as Director;
     const engine = new StreamEngine(director);
