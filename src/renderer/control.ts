@@ -1,22 +1,16 @@
 import './control.css';
 import { describeLayout } from '../shared/layouts';
-import { formatTimecode, getDirectorSeconds, getMediaEffectiveTime, parseTimecodeInput } from '../shared/timeline';
+import { formatTimecode, getDirectorSeconds } from '../shared/timeline';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type {
   AudioExtractionFormat,
   AudioSourceState,
-  AudioSourceId,
   DirectorState,
-  DisplayWindowId,
   DisplayMonitorInfo,
   DisplayWindowState,
   MediaValidationIssue,
   MeterLaneState,
   OutputMeterReport,
-  TransportCommand,
-  LaunchShowData,
-  RecentShowEntry,
-  ShowConfigOperationResult,
   VisualId,
   VisualLayoutProfile,
   VisualState,
@@ -47,86 +41,45 @@ import {
   renderOutputMeterGraticule,
 } from './control/graticuleLayout';
 import {
-  assertElement,
+  formatAudioChannelDetail,
+  formatAudioChannelLabel,
+  formatBytes,
+  formatDuration,
+  formatMilliseconds,
+} from './control/formatters';
+import {
   createButton,
   createDbFader,
   createHint,
-  createPreviewLabel,
   createSelect,
   createSlider,
   createPanKnob,
   syncSliderProgress,
   setSelectEnabled,
 } from './control/dom';
+import {
+  applyDisplayBlackoutFadeStyle,
+  applyVisualStyle,
+  createDisplayPreview,
+  getPreviewVisualIds,
+  syncPreviewElements,
+} from './control/displayPreview';
+import { elements } from './control/elements';
 import { renderIssues as renderIssueList } from './control/issues';
-import { decorateIconButton } from './control/icons';
-import { createPlaybackSyncKey, syncTimedMediaElement } from './control/mediaSync';
+import {
+  applyLayoutPrefs,
+  getMaxMixerWidth,
+  installSplitters,
+  readLayoutPrefs,
+  restoreTemporaryMixerExpansion,
+  setTemporaryMixerWidth,
+} from './control/layoutPrefs';
+import { createLaunchDashboardController } from './control/launchDashboard';
+import { createMediaPoolController } from './control/mediaPool';
+import { installShellIcons } from './control/shellIcons';
+import { createTransportController } from './control/transportControls';
+import type { ControlSurface, SelectedEntity } from './control/types';
 import { hasEmbeddedAudioTrack } from './mediaMetadata';
-
-const elements = {
-  appFrame: assertElement(document.querySelector<HTMLDivElement>('.app-frame'), 'appFrame'),
-  workspace: assertElement(document.querySelector<HTMLElement>('.workspace'), 'workspace'),
-  operatorFooter: assertElement(document.querySelector<HTMLElement>('.operator-footer'), 'operatorFooter'),
-  surfacePanel: assertElement(document.querySelector<HTMLElement>('#surfacePanel'), 'surfacePanel'),
-  patchRailButton: assertElement(document.querySelector<HTMLButtonElement>('#patchRailButton'), 'patchRailButton'),
-  cueRailButton: assertElement(document.querySelector<HTMLButtonElement>('#cueRailButton'), 'cueRailButton'),
-  performanceRailButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceRailButton'), 'performanceRailButton'),
-  configRailButton: assertElement(document.querySelector<HTMLButtonElement>('#configRailButton'), 'configRailButton'),
-  logsRailButton: assertElement(document.querySelector<HTMLButtonElement>('#logsRailButton'), 'logsRailButton'),
-  timecode: assertElement(document.querySelector<HTMLDivElement>('#timecode'), 'timecode'),
-  showStatus: assertElement(document.querySelector<HTMLDivElement>('#showStatus'), 'showStatus'),
-  issueList: assertElement(document.querySelector<HTMLDivElement>('#issueList'), 'issueList'),
-  mediaPoolPanel: assertElement(document.querySelector<HTMLElement>('#mediaPoolPanel'), 'mediaPoolPanel'),
-  visualList: assertElement(document.querySelector<HTMLDivElement>('#visualList'), 'visualList'),
-  audioPanel: assertElement(document.querySelector<HTMLDivElement>('#audioPanel'), 'audioPanel'),
-  displayList: assertElement(document.querySelector<HTMLDivElement>('#displayList'), 'displayList'),
-  outputPanel: assertElement(document.querySelector<HTMLDivElement>('#outputPanel'), 'outputPanel'),
-  workspaceSplitter: assertElement(document.querySelector<HTMLDivElement>('#workspaceSplitter'), 'workspaceSplitter'),
-  mainFooterSplitter: assertElement(document.querySelector<HTMLDivElement>('#mainFooterSplitter'), 'mainFooterSplitter'),
-  footerSplitter: assertElement(document.querySelector<HTMLDivElement>('#footerSplitter'), 'footerSplitter'),
-  assetPreviewSplitter: assertElement(document.querySelector<HTMLDivElement>('#assetPreviewSplitter'), 'assetPreviewSplitter'),
-  detailsContent: assertElement(document.querySelector<HTMLDivElement>('#detailsContent'), 'detailsContent'),
-  detailsHeading: assertElement(document.querySelector<HTMLHeadingElement>('#detailsHeading'), 'detailsHeading'),
-  assetPreviewRegion: assertElement(document.querySelector<HTMLDivElement>('#assetPreviewRegion'), 'assetPreviewRegion'),
-  assetPreview: assertElement(document.querySelector<HTMLDivElement>('#assetPreview'), 'assetPreview'),
-  liveState: assertElement(document.querySelector<HTMLSpanElement>('#liveState'), 'liveState'),
-  playButton: assertElement(document.querySelector<HTMLButtonElement>('#playButton'), 'playButton'),
-  pauseButton: assertElement(document.querySelector<HTMLButtonElement>('#pauseButton'), 'pauseButton'),
-  stopButton: assertElement(document.querySelector<HTMLButtonElement>('#stopButton'), 'stopButton'),
-  loopToggleButton: assertElement(document.querySelector<HTMLButtonElement>('#loopToggleButton'), 'loopToggleButton'),
-  rateDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#rateDisplayButton'), 'rateDisplayButton'),
-  timelineScrubber: assertElement(document.querySelector<HTMLInputElement>('#timelineScrubber'), 'timelineScrubber'),
-  timelineSummaryPrimary: assertElement(document.querySelector<HTMLDivElement>('#timelineSummaryPrimary'), 'timelineSummaryPrimary'),
-  timelineLoopLimitLine: assertElement(document.querySelector<HTMLDivElement>('#timelineLoopLimitLine'), 'timelineLoopLimitLine'),
-  loopStartInput: assertElement(document.querySelector<HTMLInputElement>('#loopStartInput'), 'loopStartInput'),
-  loopEndInput: assertElement(document.querySelector<HTMLInputElement>('#loopEndInput'), 'loopEndInput'),
-  loopActivateButton: assertElement(document.querySelector<HTMLButtonElement>('#loopActivateButton'), 'loopActivateButton'),
-  loopPopover: assertElement(document.querySelector<HTMLDivElement>('#loopPopover'), 'loopPopover'),
-  visualTabButton: assertElement(document.querySelector<HTMLButtonElement>('#visualTabButton'), 'visualTabButton'),
-  audioTabButton: assertElement(document.querySelector<HTMLButtonElement>('#audioTabButton'), 'audioTabButton'),
-  poolSearchInput: assertElement(document.querySelector<HTMLInputElement>('#poolSearchInput'), 'poolSearchInput'),
-  poolSortSelect: assertElement(document.querySelector<HTMLSelectElement>('#poolSortSelect'), 'poolSortSelect'),
-  saveShowButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowButton'), 'saveShowButton'),
-  saveShowAsButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowAsButton'), 'saveShowAsButton'),
-  openShowButton: assertElement(document.querySelector<HTMLButtonElement>('#openShowButton'), 'openShowButton'),
-  createShowButton: assertElement(document.querySelector<HTMLButtonElement>('#createShowButton'), 'createShowButton'),
-  launchDashboard: assertElement(document.querySelector<HTMLElement>('#launchDashboard'), 'launchDashboard'),
-  launchOpenShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenShowButton'), 'launchOpenShowButton'),
-  launchCreateShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchCreateShowButton'), 'launchCreateShowButton'),
-  launchOpenDefaultButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenDefaultButton'), 'launchOpenDefaultButton'),
-  launchRecentList: assertElement(document.querySelector<HTMLDivElement>('#launchRecentList'), 'launchRecentList'),
-  addVisualsButton: assertElement(document.querySelector<HTMLButtonElement>('#addVisualsButton'), 'addVisualsButton'),
-  createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
-  refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
-  expandMixerButton: assertElement(document.querySelector<HTMLButtonElement>('#expandMixerButton'), 'expandMixerButton'),
-  clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
-  resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
-  globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
-  displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
-  performanceModeButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceModeButton'), 'performanceModeButton'),
-  runtimeVersionLabel: assertElement(document.querySelector<HTMLSpanElement>('#runtimeVersionLabel'), 'runtimeVersionLabel'),
-  createDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#createDisplayButton'), 'createDisplayButton'),
-};
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
@@ -140,70 +93,48 @@ let displayRenderSignature = '';
 let detailsRenderSignature = '';
 let assetPreviewSignature = '';
 let surfaceRenderSignature = '';
-let timecodeEditor: HTMLInputElement | undefined;
-let activePoolTab: 'visuals' | 'audio' = 'visuals';
 let activeSurface: ControlSurface = 'patch';
-let poolSearchQuery = '';
-let poolSort: 'label' | 'duration' | 'status' = 'label';
 let selectedEntity: SelectedEntity | undefined;
 let localPreviewCleanup: (() => void) | undefined;
-let rateDragStart: { clientX: number; rate: number } | undefined;
-let mixerExpandedTemporarily = false;
 let soloOutputIds = new Set<VirtualOutputId>();
 const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
 const meterLaneElementCache = new Map<string, Set<HTMLElement>>();
 const meterPeakElementCache = new Map<VirtualOutputId, Set<HTMLElement>>();
 const meterLaneSegmentsCache = new WeakMap<HTMLElement, HTMLElement[]>();
-let activeAudioSourceMenu: HTMLElement | undefined;
 const activePanels = new WeakSet<HTMLElement>();
 const pendingEmbeddedAudioImportBatches: VisualId[][] = [];
 let embeddedAudioImportPromptActive = false;
-let launchDashboardVisible = true;
 
-type SelectedEntity =
-  | { type: 'visual'; id: VisualId }
-  | { type: 'audio-source'; id: AudioSourceId }
-  | { type: 'display'; id: DisplayWindowId }
-  | { type: 'output'; id: VirtualOutputId };
-
-type ControlSurface = 'patch' | 'cue' | 'performance' | 'config' | 'logs';
-
-const UI_PREF_KEY = 'xtream.control.layout.v1';
-const DISPLAY_PREVIEW_MAX_WIDTH = 854;
-const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
-const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 15;
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
-const DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS = 0.05;
-const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
 
-type DisplayPreviewProgressEdge = {
-  visualId: VisualId;
-  durationSeconds: number;
-  playbackRate: number;
-};
-
-type LayoutPrefs = {
-  mediaWidthPx?: number;
-  footerHeightPx?: number;
-  mixerWidthPx?: number;
-  assetPreviewHeightPx?: number;
-};
-
-const transportDraftElements = new Set<HTMLInputElement>([elements.loopStartInput, elements.loopEndInput]);
+const mediaPool = createMediaPoolController({
+  getState: () => currentState,
+  setSelectedEntity: (entity) => {
+    selectedEntity = entity;
+  },
+  isSelected,
+  clearSelectionIf,
+  renderState,
+  setShowStatus,
+  queueEmbeddedAudioImportPrompt,
+  probeVisualMetadata,
+  createEmbeddedAudioRepresentation,
+  extractEmbeddedAudioFile,
+});
 
 function renderState(state: DirectorState): void {
   currentState = state;
   pruneMixerSoloOutputIds(state);
-  syncTransportInputs(state);
+  transport.syncTransportInputs(state);
   const nextAudioRenderSignature = createAudioRenderSignature(state);
-  const nextVisualRenderSignature = `${createVisualRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
+  const nextVisualRenderSignature = mediaPool.createRenderSignature(state, selectedEntity);
   if (
     !isPanelInteractionActive(elements.visualList) &&
     !isPanelInteractionActive(elements.audioPanel) &&
     visualRenderSignature !== nextVisualRenderSignature
   ) {
     visualRenderSignature = nextVisualRenderSignature;
-    renderMediaPool(state);
+    mediaPool.render(state);
   }
   if (!isPanelInteractionActive(elements.outputPanel) && audioRenderSignature !== nextAudioRenderSignature) {
     audioRenderSignature = nextAudioRenderSignature;
@@ -233,31 +164,6 @@ function isPanelInteractionActive(panel: HTMLElement): boolean {
     activeElement instanceof HTMLElement &&
     panel.contains(activeElement) &&
     activeElement.matches('select, input, textarea')
-  );
-}
-
-function createVisualRenderSignature(state: DirectorState): string {
-  return JSON.stringify(
-    Object.values(state.visuals)
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .map((visual) => ({
-        id: visual.id,
-        label: visual.label,
-        type: visual.type,
-        path: visual.path,
-        url: visual.url,
-        ready: visual.ready,
-        error: visual.error,
-        durationSeconds: visual.durationSeconds,
-        width: visual.width,
-        height: visual.height,
-        hasEmbeddedAudio: visual.hasEmbeddedAudio,
-        opacity: visual.opacity,
-        brightness: visual.brightness,
-        contrast: visual.contrast,
-        playbackRate: visual.playbackRate,
-        fileSizeBytes: visual.fileSizeBytes,
-      })),
   );
 }
 
@@ -304,7 +210,7 @@ function setMixerSoloOutputIds(outputIds: Iterable<VirtualOutputId>): void {
     return;
   }
   audioRenderSignature = createAudioRenderSignature(currentState);
-  syncTransportInputs(currentState);
+  transport.syncTransportInputs(currentState);
   renderOutputs(currentState);
   syncOutputMeters(currentState);
 }
@@ -329,88 +235,6 @@ function combineVisibleIssues(readinessIssues: MediaValidationIssue[], operation
   return combined;
 }
 
-function syncTransportInputs(state: DirectorState): void {
-  elements.playButton.disabled = !state.readiness.ready;
-  elements.rateDisplayButton.textContent = `${state.rate.toFixed(2)}x`;
-  const liveState = getLiveStateLabel(state);
-  elements.liveState.textContent = liveState;
-  elements.liveState.dataset.state = liveState.toLowerCase();
-  elements.loopToggleButton.classList.toggle('active', state.loop.enabled);
-  elements.loopToggleButton.setAttribute('aria-expanded', String(!elements.loopPopover.hidden));
-  elements.loopActivateButton.textContent = state.loop.enabled ? 'Deactivate' : 'Activate';
-  elements.loopActivateButton.setAttribute('aria-pressed', String(state.loop.enabled));
-  elements.loopActivateButton.classList.toggle('active', state.loop.enabled);
-  elements.loopActivateButton.title = state.loop.enabled ? 'Turn loop playback off' : 'Turn loop playback on';
-  if (!isTransportDraftActive(elements.loopStartInput)) {
-    elements.loopStartInput.value = formatTimecode(state.loop.startSeconds);
-  }
-  if (!isTransportDraftActive(elements.loopEndInput)) {
-    elements.loopEndInput.value = state.loop.endSeconds === undefined ? '' : formatTimecode(state.loop.endSeconds);
-  }
-  elements.showStatus.textContent = state.readiness.ready
-    ? 'Show readiness: ready'
-    : `Show readiness: blocked by ${state.readiness.issues.filter((issue) => issue.severity === 'error').length} issue(s)`;
-  elements.globalAudioMuteButton.classList.toggle('active', state.globalAudioMuted);
-  elements.globalAudioMuteButton.textContent = state.globalAudioMuted ? 'Audio Muted' : 'Audio Mute';
-  elements.globalAudioMuteButton.setAttribute('aria-pressed', String(state.globalAudioMuted));
-  elements.clearSoloButton.disabled = soloOutputIds.size === 0;
-  elements.clearSoloButton.classList.toggle('active', soloOutputIds.size > 0);
-  elements.clearSoloButton.setAttribute('aria-pressed', String(soloOutputIds.size > 0));
-  elements.clearSoloButton.title = soloOutputIds.size > 0 ? 'Clear all soloed outputs' : 'No soloed outputs';
-  elements.displayBlackoutButton.classList.toggle('active', state.globalDisplayBlackout);
-  elements.displayBlackoutButton.textContent = state.globalDisplayBlackout ? 'Display Blackout On' : 'Display Blackout';
-  elements.displayBlackoutButton.setAttribute('aria-pressed', String(state.globalDisplayBlackout));
-  elements.performanceModeButton.classList.toggle('active', state.performanceMode);
-  elements.performanceModeButton.textContent = state.performanceMode ? 'Performance Mode On' : 'Performance Mode';
-  elements.performanceModeButton.setAttribute('aria-pressed', String(state.performanceMode));
-  elements.performanceModeButton.title = state.performanceMode
-    ? 'Performance mode disables control-window video previews and live meter sampling.'
-    : 'Disable control-window preview and meter workloads for weaker playback machines.';
-  syncTimelineScrubber(state);
-}
-
-function syncTimelineScrubber(state: DirectorState): void {
-  const duration = state.activeTimeline.durationSeconds;
-  const currentSeconds = getDirectorSeconds(state);
-  if (duration === undefined) {
-    elements.timelineScrubber.disabled = true;
-    elements.timelineScrubber.max = '0';
-    elements.timelineScrubber.value = '0';
-    elements.timelineSummaryPrimary.textContent = 'No active timeline duration';
-    elements.timelineLoopLimitLine.textContent = '';
-    elements.timelineLoopLimitLine.hidden = true;
-    elements.timelineScrubber.style.setProperty('--progress', '0%');
-    elements.timelineScrubber.style.removeProperty('--loop-start');
-    elements.timelineScrubber.style.removeProperty('--loop-end');
-    return;
-  }
-  elements.timelineScrubber.disabled = false;
-  elements.timelineScrubber.max = String(duration);
-  if (document.activeElement !== elements.timelineScrubber) {
-    elements.timelineScrubber.value = String(Math.min(currentSeconds, duration));
-  }
-  elements.timelineScrubber.style.setProperty('--progress', `${Math.min(100, Math.max(0, (currentSeconds / duration) * 100))}%`);
-  if (state.loop.enabled) {
-    elements.timelineScrubber.style.setProperty('--loop-start', `${Math.min(100, Math.max(0, (state.loop.startSeconds / duration) * 100))}%`);
-    elements.timelineScrubber.style.setProperty(
-      '--loop-end',
-      `${Math.min(100, Math.max(0, ((state.loop.endSeconds ?? duration) / duration) * 100))}%`,
-    );
-  } else {
-    elements.timelineScrubber.style.removeProperty('--loop-start');
-    elements.timelineScrubber.style.removeProperty('--loop-end');
-  }
-  const loopLimit = state.activeTimeline.loopRangeLimit;
-  elements.timelineSummaryPrimary.textContent = `Timeline ${formatTimecode(Math.min(currentSeconds, duration))} / ${formatTimecode(duration)}`;
-  if (loopLimit) {
-    elements.timelineLoopLimitLine.textContent = `loop range limit: ${formatTimecode(loopLimit.startSeconds)}-${formatTimecode(loopLimit.endSeconds)}`;
-    elements.timelineLoopLimitLine.hidden = false;
-  } else {
-    elements.timelineLoopLimitLine.textContent = '';
-    elements.timelineLoopLimitLine.hidden = true;
-  }
-}
-
 function getLiveStateLabel(state: DirectorState): 'LIVE' | 'STANDBY' | 'BLOCKED' | 'DEGRADED' {
   if (state.readiness.issues.some((issue) => issue.severity === 'error')) {
     return 'BLOCKED';
@@ -419,184 +243,6 @@ function getLiveStateLabel(state: DirectorState): 'LIVE' | 'STANDBY' | 'BLOCKED'
     return 'DEGRADED';
   }
   return state.paused ? 'STANDBY' : 'LIVE';
-}
-
-function isTransportDraftActive(input: HTMLInputElement): boolean {
-  return document.activeElement === input || (transportDraftElements.has(input) && input.dataset.dirty === 'true');
-}
-
-function renderMediaPool(state: DirectorState): void {
-  syncPoolTabs();
-  const rows =
-    activePoolTab === 'visuals'
-      ? getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual))
-      : getFilteredAudioSources(Object.values(state.audioSources), state).map((source) => createAudioSourceRow(source, state));
-  if (activePoolTab === 'audio') {
-    elements.visualList.hidden = true;
-    elements.audioPanel.hidden = false;
-    elements.audioPanel.replaceChildren(...(rows.length > 0 ? rows : [createHint('No audio sources match this filter.')]));
-  } else {
-    elements.visualList.hidden = false;
-    elements.audioPanel.hidden = true;
-    elements.visualList.replaceChildren(...(rows.length > 0 ? rows : [createHint('No visuals match this filter.')]));
-    elements.audioPanel.replaceChildren();
-  }
-}
-
-function createVisualRow(visual: VisualState): HTMLElement {
-  const row = document.createElement('article');
-  row.className = `asset-row${isSelected('visual', visual.id) ? ' selected' : ''}`;
-  row.tabIndex = 0;
-  row.dataset.assetId = visual.id;
-  row.addEventListener('click', () => selectEntity({ type: 'visual', id: visual.id }));
-  row.addEventListener('contextmenu', (event) => showVisualContextMenu(event, visual));
-  row.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      selectEntity({ type: 'visual', id: visual.id });
-    }
-  });
-  const status = document.createElement('span');
-  status.className = `status-dot ${visual.ready ? 'ready' : visual.error ? 'blocked' : 'standby'}`;
-  const label = document.createElement('strong');
-  label.textContent = visual.label;
-  const meta = document.createElement('span');
-  meta.className = 'asset-meta';
-  meta.textContent = `${visual.type} | ${formatDuration(visual.durationSeconds)} | ${visual.width && visual.height ? `${visual.width}x${visual.height}` : 'size --'}`;
-  const remove = createButton('Remove', 'secondary row-action', async () => {
-    if (!confirmPoolRecordRemoval(visual.label)) {
-      return;
-    }
-    await window.xtream.visuals.remove(visual.id);
-    clearSelectionIf({ type: 'visual', id: visual.id });
-    renderState(await window.xtream.director.getState());
-  });
-  decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
-  remove.addEventListener('click', (event) => event.stopPropagation());
-  row.append(status, label, meta, remove);
-  return row;
-}
-
-function createAudioSourceRow(source: AudioSourceState, state: DirectorState): HTMLElement {
-  const row = document.createElement('article');
-  row.className = `asset-row audio-source-row${isSelected('audio-source', source.id) ? ' selected' : ''}`;
-  row.tabIndex = 0;
-  row.addEventListener('click', () => selectEntity({ type: 'audio-source', id: source.id }));
-  row.addEventListener('contextmenu', (event) => showAudioSourceContextMenu(event, source));
-  row.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      selectEntity({ type: 'audio-source', id: source.id });
-    }
-  });
-  const status = document.createElement('span');
-  status.className = `status-dot ${source.ready ? 'ready' : source.error ? 'blocked' : 'standby'}`;
-  const label = document.createElement('strong');
-  label.textContent = source.label;
-  const origin = source.type === 'external-file' ? source.path ?? 'External file' : `Embedded from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
-  const meta = document.createElement('span');
-  meta.className = 'asset-meta';
-  const marker = document.createElement('span');
-  marker.className = `asset-marker ${source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'representation' : 'file'}`;
-  marker.textContent = source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'REP' : 'FILE';
-  const metaPrimary = document.createElement('span');
-  metaPrimary.textContent = `${source.type === 'external-file' ? 'external' : 'embedded'}${formatAudioChannelLabel(source)} | ${formatDuration(source.durationSeconds)}`;
-  const metaOrigin = document.createElement('span');
-  metaOrigin.textContent = origin;
-  meta.append(metaPrimary, metaOrigin);
-  const rightMeta = document.createElement('div');
-  rightMeta.className = 'asset-row-meta-cluster';
-  rightMeta.append(marker, meta);
-  const remove = createButton('Remove', 'secondary row-action', async () => {
-    if (!confirmPoolRecordRemoval(source.label)) {
-      return;
-    }
-    await window.xtream.audioSources.remove(source.id);
-    clearSelectionIf({ type: 'audio-source', id: source.id });
-    renderState(await window.xtream.director.getState());
-  });
-  decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
-  remove.addEventListener('click', (event) => event.stopPropagation());
-  row.append(status, label, rightMeta, remove);
-  return row;
-}
-
-function confirmPoolRecordRemoval(label: string): boolean {
-  return window.confirm(
-    `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
-  );
-}
-
-function showVisualContextMenu(event: MouseEvent, visual: VisualState): void {
-  if (visual.type !== 'video') {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  dismissAudioSourceContextMenu();
-  const menu = document.createElement('div');
-  menu.className = 'context-menu audio-source-menu';
-  menu.setAttribute('role', 'menu');
-  const representationButton = createButton('Extract as representation', 'secondary context-menu-item', async () => {
-    dismissAudioSourceContextMenu();
-    await createEmbeddedAudioRepresentation(visual.id);
-  });
-  representationButton.setAttribute('role', 'menuitem');
-  const fileButton = createButton('Extract audio as file', 'secondary context-menu-item', async () => {
-    dismissAudioSourceContextMenu();
-    await extractEmbeddedAudioFile(visual.id);
-  });
-  fileButton.setAttribute('role', 'menuitem');
-  if (!visual.hasEmbeddedAudio) {
-    representationButton.disabled = true;
-    fileButton.disabled = true;
-    representationButton.title = 'No embedded audio track has been detected for this visual.';
-    fileButton.title = representationButton.title;
-  }
-  menu.append(representationButton, fileButton);
-  document.body.append(menu);
-  positionContextMenu(menu, event.clientX, event.clientY);
-  activeAudioSourceMenu = menu;
-}
-
-function showAudioSourceContextMenu(event: MouseEvent, source: AudioSourceState): void {
-  event.preventDefault();
-  event.stopPropagation();
-  dismissAudioSourceContextMenu();
-  const menu = document.createElement('div');
-  menu.className = 'context-menu audio-source-menu';
-  menu.setAttribute('role', 'menu');
-  const splitButton = createButton('Split to mono', 'secondary context-menu-item', async () => {
-    dismissAudioSourceContextMenu();
-    try {
-      const [left] = await window.xtream.audioSources.splitStereo(source.id);
-      selectedEntity = { type: 'audio-source', id: left.id };
-      renderState(await window.xtream.director.getState());
-      setShowStatus(`Split ${source.label} into virtual L/R mono sources.`);
-    } catch (error: unknown) {
-      setShowStatus(error instanceof Error ? error.message : 'Unable to split this audio source.');
-    }
-  });
-  splitButton.setAttribute('role', 'menuitem');
-  if (source.derivedFromAudioSourceId || source.channelMode === 'left' || source.channelMode === 'right' || source.channelCount === 1) {
-    splitButton.disabled = true;
-    splitButton.title = source.channelCount === 1 ? 'Mono sources cannot be split.' : 'This source is already a mono channel.';
-  }
-  menu.append(splitButton);
-  document.body.append(menu);
-  positionContextMenu(menu, event.clientX, event.clientY);
-  activeAudioSourceMenu = menu;
-}
-
-function positionContextMenu(menu: HTMLElement, clientX: number, clientY: number): void {
-  const menuBounds = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(clientX, window.innerWidth - menuBounds.width - 4)}px`;
-  menu.style.top = `${Math.min(clientY, window.innerHeight - menuBounds.height - 4)}px`;
-}
-
-function dismissAudioSourceContextMenu(): void {
-  activeAudioSourceMenu?.remove();
-  activeAudioSourceMenu = undefined;
 }
 
 function renderOutputs(state: DirectorState): void {
@@ -930,62 +576,12 @@ function formatMeterLaneLabel(source: AudioSourceState | undefined, channelIndex
   return `C${channelIndex + 1}`;
 }
 
-function getFilteredVisuals(visuals: VisualState[]): VisualState[] {
-  return visuals.filter(matchesPoolQuery).sort(comparePoolItems);
-}
-
-function getFilteredAudioSources(sources: AudioSourceState[], state: DirectorState): AudioSourceState[] {
-  return sources
-    .filter((source) => {
-      const haystack =
-        source.type === 'external-file'
-          ? `${source.label} ${source.path ?? ''}`
-          : `${source.label} ${state.visuals[source.visualId]?.label ?? source.visualId}`;
-      return matchesQuery(haystack);
-    })
-    .sort(comparePoolItems);
-}
-
-function matchesPoolQuery(item: VisualState | AudioSourceState): boolean {
-  const haystack = 'path' in item ? `${item.label} ${item.path ?? ''} ${item.type}` : `${item.label} ${item.type}`;
-  return matchesQuery(haystack);
-}
-
-function matchesQuery(haystack: string): boolean {
-  return haystack.toLowerCase().includes(poolSearchQuery.trim().toLowerCase());
-}
-
-function comparePoolItems<T extends { label: string; ready: boolean; durationSeconds?: number }>(left: T, right: T): number {
-  if (poolSort === 'duration') {
-    return (left.durationSeconds ?? Number.POSITIVE_INFINITY) - (right.durationSeconds ?? Number.POSITIVE_INFINITY);
-  }
-  if (poolSort === 'status') {
-    return Number(right.ready) - Number(left.ready) || left.label.localeCompare(right.label);
-  }
-  return left.label.localeCompare(right.label);
-}
-
-function syncPoolTabs(): void {
-  const visualActive = activePoolTab === 'visuals';
-  elements.visualTabButton.classList.toggle('active', visualActive);
-  elements.visualTabButton.setAttribute('aria-selected', String(visualActive));
-  elements.audioTabButton.classList.toggle('active', !visualActive);
-  elements.audioTabButton.setAttribute('aria-selected', String(!visualActive));
-  elements.addVisualsButton.title = visualActive ? 'Add visuals' : 'Add external audio';
-  elements.addVisualsButton.setAttribute('aria-label', visualActive ? 'Add visuals' : 'Add external audio');
-}
-
 function selectEntity(entity: SelectedEntity): void {
   activeSurface = 'patch';
   selectedEntity = entity;
   syncMixerSelection();
   restoreTemporaryMixerExpansion();
-  if (entity.type === 'visual') {
-    activePoolTab = 'visuals';
-  }
-  if (entity.type === 'audio-source') {
-    activePoolTab = 'audio';
-  }
+  mediaPool.selectEntityPoolTab(entity);
   if (currentState) {
     visualRenderSignature = '';
     renderState(currentState);
@@ -1011,34 +607,10 @@ function isSelected(type: SelectedEntity['type'], id: string): boolean {
   return selectedEntity?.type === type && selectedEntity.id === id;
 }
 
-function formatDuration(seconds: number | undefined): string {
-  return seconds === undefined ? 'duration --' : formatTimecode(seconds);
-}
-
-function formatAudioChannelLabel(source: AudioSourceState): string {
-  if (source.channelMode === 'left') {
-    return ' | L mono';
-  }
-  if (source.channelMode === 'right') {
-    return ' | R mono';
-  }
-  if (source.channelCount !== undefined) {
-    return ` | ${source.channelCount} ch`;
-  }
-  return '';
-}
-
-function formatAudioChannelDetail(source: AudioSourceState): string {
-  if (source.channelMode === 'left') {
-    return `mono L${source.derivedFromAudioSourceId ? ` from ${source.derivedFromAudioSourceId}` : ''}`;
-  }
-  if (source.channelMode === 'right') {
-    return `mono R${source.derivedFromAudioSourceId ? ` from ${source.derivedFromAudioSourceId}` : ''}`;
-  }
-  if (source.channelCount !== undefined) {
-    return source.channelCount >= 2 ? `${source.channelCount} channels (stereo)` : `${source.channelCount} channel`;
-  }
-  return 'unknown';
+function confirmPoolRecordRemoval(label: string): boolean {
+  return window.confirm(
+    `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+  );
 }
 
 function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
@@ -1296,167 +868,6 @@ function getDisplayCardTelemetry(display: DisplayWindowState): string {
   return `drift ${formatMilliseconds(display.lastDriftSeconds)} | video ${display.lastPresentedFrameRateFps?.toFixed(1) ?? '--'}fps | drop ${
     display.lastDroppedVideoFrames ?? '--'
   } | gap ${display.lastMaxVideoFrameGapMs?.toFixed(0) ?? '--'}ms | seeks ${display.lastMediaSeekCount ?? 0}`;
-}
-
-function formatMilliseconds(seconds: number | undefined): string {
-  return seconds === undefined ? '--' : `${Math.round(seconds * 1000)}ms`;
-}
-
-function applyDisplayBlackoutFadeStyle(element: HTMLElement, fadeOutSeconds: number): void {
-  element.style.setProperty('--display-blackout-fade', `${Math.max(0, fadeOutSeconds)}s`);
-}
-
-function createDisplayPreview(display: DisplayWindowState, state: DirectorState | undefined): HTMLElement {
-  const preview = document.createElement('div');
-  preview.className = `display-preview ${display.layout.type}`;
-  preview.classList.toggle('blacked-out', Boolean(state?.globalDisplayBlackout));
-  if (state) {
-    applyDisplayBlackoutFadeStyle(preview, state.globalDisplayBlackoutFadeOutSeconds);
-  }
-  if (!state) {
-    preview.textContent = 'Preview unavailable';
-    return preview;
-  }
-  for (const visualId of getPreviewVisualIds(display.layout)) {
-    const visual = state.visuals[visualId];
-    const pane = document.createElement('section');
-    pane.className = 'display-preview-pane';
-    pane.dataset.visualId = visualId;
-    if (!visual?.url) {
-      pane.append(createPreviewLabel(visual?.label ?? visualId, 'No visual selected'));
-    } else if (visual.type === 'image') {
-      const image = document.createElement('img');
-      image.src = visual.url;
-      image.alt = visual.label;
-      applyVisualStyle(image, visual);
-      image.addEventListener('load', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
-      image.addEventListener('error', () =>
-        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} image preview failed to load.`, display.id),
-      );
-      pane.append(image);
-    } else {
-      if (state.performanceMode) {
-        pane.append(createPreviewLabel(visual.label, 'video preview disabled in performance mode'));
-        preview.append(pane);
-        continue;
-      }
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.src = visual.url;
-      video.dataset.visualId = visualId;
-      video.dataset.previewVideo = 'true';
-      video.style.display = 'none';
-      applyVisualStyle(video, visual);
-      video.playbackRate = state.rate * (visual.playbackRate ?? 1);
-      video.addEventListener('loadedmetadata', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
-      video.addEventListener('error', () =>
-        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} video preview failed to load.`, display.id),
-      );
-      const canvas = createDisplayPreviewCanvas(video);
-      pane.append(video, canvas);
-    }
-    preview.append(pane);
-  }
-  const progressEdge = state ? getDisplayPreviewProgressEdge(display, state) : undefined;
-  if (progressEdge) {
-    preview.append(createDisplayPreviewProgressEdge(progressEdge));
-  }
-  return preview;
-}
-
-function getDisplayPreviewProgressEdge(display: DisplayWindowState, state: DirectorState): DisplayPreviewProgressEdge | undefined {
-  if (state.performanceMode) {
-    return undefined;
-  }
-  if (display.layout.type === 'single') {
-    return getVisualProgressEdge(state.visuals[display.layout.visualId ?? '']);
-  }
-  const [leftVisualId, rightVisualId] = display.layout.visualIds;
-  if (!leftVisualId || !rightVisualId) {
-    return undefined;
-  }
-  const leftEdge = getVisualProgressEdge(state.visuals[leftVisualId]);
-  const rightEdge = getVisualProgressEdge(state.visuals[rightVisualId]);
-  if (!leftEdge || !rightEdge) {
-    return undefined;
-  }
-  if (Math.abs(leftEdge.durationSeconds - rightEdge.durationSeconds) > DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS) {
-    return undefined;
-  }
-  return leftEdge;
-}
-
-function getVisualProgressEdge(visual: VisualState | undefined): DisplayPreviewProgressEdge | undefined {
-  if (visual?.type !== 'video' || !visual.url || !Number.isFinite(visual.durationSeconds) || visual.durationSeconds === undefined || visual.durationSeconds <= 0) {
-    return undefined;
-  }
-  return {
-    visualId: visual.id,
-    durationSeconds: visual.durationSeconds,
-    playbackRate: visual.playbackRate ?? 1,
-  };
-}
-
-function createDisplayPreviewProgressEdge(edge: DisplayPreviewProgressEdge): HTMLDivElement {
-  const progress = document.createElement('div');
-  progress.className = 'display-preview-progress-edge';
-  progress.dataset.progressVisualId = edge.visualId;
-  progress.dataset.progressDurationSeconds = String(edge.durationSeconds);
-  progress.dataset.progressPlaybackRate = String(edge.playbackRate);
-  progress.style.setProperty('--display-preview-progress', '0%');
-  return progress;
-}
-
-function reportPreviewStatus(key: string, visualId: string | undefined, ready: boolean, error?: string, displayId?: string): void {
-  void window.xtream.renderer.reportPreviewStatus({
-    key,
-    displayId,
-    visualId,
-    ready,
-    error,
-    reportedAtWallTimeMs: Date.now(),
-  });
-}
-
-function createDisplayPreviewCanvas(video: HTMLVideoElement): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.className = 'display-preview-canvas';
-  canvas.width = DISPLAY_PREVIEW_MAX_WIDTH;
-  canvas.height = DISPLAY_PREVIEW_MAX_HEIGHT;
-  displayPreviewCanvases.set(video, { canvas, lastDrawMs: 0 });
-  video.addEventListener('loadedmetadata', () => resizeDisplayPreviewCanvas(video, canvas));
-  return canvas;
-}
-
-function resizeDisplayPreviewCanvas(video: HTMLVideoElement, canvas: HTMLCanvasElement): void {
-  const sourceWidth = video.videoWidth || DISPLAY_PREVIEW_MAX_WIDTH;
-  const sourceHeight = video.videoHeight || DISPLAY_PREVIEW_MAX_HEIGHT;
-  const scale = Math.min(DISPLAY_PREVIEW_MAX_WIDTH / sourceWidth, DISPLAY_PREVIEW_MAX_HEIGHT / sourceHeight, 1);
-  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-}
-
-function drawDisplayPreviewFrame(video: HTMLVideoElement): void {
-  const preview = displayPreviewCanvases.get(video);
-  if (!preview || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-    return;
-  }
-  const now = performance.now();
-  if (now - preview.lastDrawMs < DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS) {
-    return;
-  }
-  preview.lastDrawMs = now;
-  if (video.videoWidth > 0 && video.videoHeight > 0 && (preview.canvas.width === DISPLAY_PREVIEW_MAX_WIDTH || preview.canvas.height === DISPLAY_PREVIEW_MAX_HEIGHT)) {
-    resizeDisplayPreviewCanvas(video, preview.canvas);
-  }
-  const context = preview.canvas.getContext('2d');
-  context?.drawImage(video, 0, 0, preview.canvas.width, preview.canvas.height);
-}
-
-function getPreviewVisualIds(layout: VisualLayoutProfile): VisualId[] {
-  return layout.type === 'single' ? (layout.visualId ? [layout.visualId] : []) : layout.visualIds.filter(Boolean) as VisualId[];
 }
 
 function createMappingControls(display: DisplayWindowState, visualIds: VisualId[], enabled = true): HTMLDivElement {
@@ -2245,24 +1656,6 @@ function createDelayMsControlsOnly(
   return wrapper;
 }
 
-function formatBytes(bytes: number | undefined): string {
-  if (bytes === undefined) {
-    return '--';
-  }
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
-  element.style.opacity = String(visual.opacity ?? 1);
-  element.style.filter = `brightness(${visual.brightness ?? 1}) contrast(${visual.contrast ?? 1})`;
-}
-
 function renderSelectedAssetPreview(state: DirectorState): void {
   const previewableSelection = selectedEntity?.type === 'visual' || selectedEntity?.type === 'audio-source' ? selectedEntity : undefined;
   if (state.performanceMode) {
@@ -2521,220 +1914,12 @@ function createLocalMediaControls(media: HTMLMediaElement): HTMLElement {
 
 function tick(): void {
   if (currentState) {
-    if (!timecodeEditor) {
+    if (!transport.isTimecodeEditing()) {
       elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState));
     }
-    syncTimelineScrubber(currentState);
+    transport.syncTimelineScrubber(currentState);
   }
   animationFrame = window.requestAnimationFrame(tick);
-}
-
-function syncPreviewElements(state: DirectorState): void {
-  syncDisplayPreviewProgressEdges(state);
-  if (state.performanceMode) {
-    document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]').forEach((video) => video.pause());
-    return;
-  }
-  const targetSeconds = getDirectorSeconds(state);
-  const syncKey = createPlaybackSyncKey(state);
-  const videos = document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]');
-  for (const video of videos) {
-    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-      continue;
-    }
-    const visualId = video.dataset.visualId;
-    const visual = visualId ? state.visuals[visualId] : undefined;
-    const visualDuration = visual?.durationSeconds;
-    const effectiveTarget = getMediaEffectiveTime(targetSeconds * (visual?.playbackRate ?? 1), visualDuration ?? video.duration, state.loop);
-    video.playbackRate = state.rate;
-    if (visual) {
-      video.playbackRate = state.rate * (visual.playbackRate ?? 1);
-      applyVisualStyle(video, visual);
-    }
-    syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
-    drawDisplayPreviewFrame(video);
-  }
-}
-
-function syncDisplayPreviewProgressEdges(state: DirectorState): void {
-  const targetSeconds = getDirectorSeconds(state);
-  elements.displayList.querySelectorAll<HTMLElement>('[data-display-preview]').forEach((preview) => {
-    const displayId = preview.dataset.displayPreview;
-    const display = displayId ? state.displays[displayId] : undefined;
-    const edge = display ? getDisplayPreviewProgressEdge(display, state) : undefined;
-    let edgeElement = preview.querySelector<HTMLElement>('.display-preview-progress-edge');
-    if (!edge) {
-      edgeElement?.style.setProperty('--display-preview-progress', '0%');
-      edgeElement?.setAttribute('hidden', '');
-      return;
-    }
-    if (!edgeElement) {
-      edgeElement = createDisplayPreviewProgressEdge(edge);
-      preview.append(edgeElement);
-    }
-    edgeElement.hidden = false;
-    edgeElement.dataset.progressVisualId = edge.visualId;
-    edgeElement.dataset.progressDurationSeconds = String(edge.durationSeconds);
-    edgeElement.dataset.progressPlaybackRate = String(edge.playbackRate);
-    const effectiveTarget = getMediaEffectiveTime(targetSeconds * edge.playbackRate, edge.durationSeconds, state.loop);
-    const progress = Math.min(100, Math.max(0, (effectiveTarget / edge.durationSeconds) * 100));
-    edgeElement.style.setProperty('--display-preview-progress', `${progress}%`);
-  });
-}
-
-async function sendTransport(command: TransportCommand): Promise<DirectorState> {
-  const state = await window.xtream.director.transport(command);
-  renderState(state);
-  return state;
-}
-
-function beginTimecodeEdit(): void {
-  if (!currentState || timecodeEditor) {
-    return;
-  }
-  const input = document.createElement('input');
-  input.className = 'timecode-input';
-  input.type = 'text';
-  input.value = formatTimecode(getDirectorSeconds(currentState));
-  input.setAttribute('aria-label', 'Seek timecode');
-  timecodeEditor = input;
-  elements.timecode.replaceChildren(input);
-  input.focus();
-  input.select();
-  let finishing = false;
-
-  const finish = async (commit: boolean) => {
-    if (timecodeEditor !== input || finishing) {
-      return;
-    }
-    finishing = true;
-    if (commit) {
-      const result = parseTimecodeInput(input.value);
-      if (!result.ok) {
-        setShowStatus(`Seek timecode rejected: ${result.error}`);
-        timecodeEditor = undefined;
-        elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
-      } else {
-        input.disabled = true;
-        try {
-          const nextState = await sendTransport({ type: 'seek', seconds: result.seconds });
-          if (timecodeEditor === input) {
-            timecodeEditor = undefined;
-            elements.timecode.textContent = formatTimecode(getDirectorSeconds(nextState));
-          }
-        } catch (error) {
-          if (timecodeEditor === input) {
-            timecodeEditor = undefined;
-            setShowStatus(error instanceof Error ? `Seek failed: ${error.message}` : 'Seek failed.');
-            elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
-          }
-        }
-      }
-    } else {
-      timecodeEditor = undefined;
-      elements.timecode.textContent = formatTimecode(getDirectorSeconds(currentState!));
-    }
-  };
-
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void finish(true);
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      void finish(false);
-    }
-  });
-  input.addEventListener('blur', () => void finish(true));
-}
-
-function beginRateEdit(): void {
-  if (!currentState) {
-    return;
-  }
-  const input = document.createElement('input');
-  input.className = 'rate-input-inline';
-  input.type = 'number';
-  input.min = '0.1';
-  input.step = '0.01';
-  input.value = String(currentState.rate);
-  elements.rateDisplayButton.replaceChildren(input);
-  input.focus();
-  input.select();
-  const finish = (commit: boolean) => {
-    if (commit) {
-      const rate = Number(input.value);
-      if (Number.isFinite(rate) && rate > 0) {
-        void sendTransport({ type: 'set-rate', rate });
-      }
-    }
-    elements.rateDisplayButton.textContent = currentState ? `${currentState.rate.toFixed(2)}x` : '1.00x';
-  };
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      finish(true);
-    }
-    if (event.key === 'Escape') {
-      finish(false);
-    }
-  });
-  input.addEventListener('blur', () => finish(true));
-}
-
-function beginRateDrag(event: PointerEvent): void {
-  if (!currentState || event.button !== 0) {
-    return;
-  }
-  rateDragStart = { clientX: event.clientX, rate: currentState.rate };
-  elements.rateDisplayButton.setPointerCapture(event.pointerId);
-}
-
-function updateRateDrag(event: PointerEvent): void {
-  if (!rateDragStart) {
-    return;
-  }
-  const delta = event.clientX - rateDragStart.clientX;
-  const nextRate = Math.max(0.1, Math.min(4, rateDragStart.rate + delta * 0.01));
-  elements.rateDisplayButton.textContent = `${nextRate.toFixed(2)}x`;
-}
-
-function finishRateDrag(event: PointerEvent): void {
-  if (!rateDragStart) {
-    return;
-  }
-  const delta = event.clientX - rateDragStart.clientX;
-  const nextRate = Math.max(0.1, Math.min(4, rateDragStart.rate + delta * 0.01));
-  rateDragStart = undefined;
-  if (Math.abs(delta) > 2) {
-    void sendTransport({ type: 'set-rate', rate: Number(nextRate.toFixed(2)) });
-  }
-}
-
-function readLoopDraft(enabledOverride?: boolean): DirectorState['loop'] {
-  const enabled = enabledOverride !== undefined ? enabledOverride : (currentState?.loop.enabled ?? false);
-  const start = parseTimecodeInput(elements.loopStartInput.value);
-  const end = elements.loopEndInput.value.trim() === '' ? undefined : parseTimecodeInput(elements.loopEndInput.value);
-  return {
-    enabled,
-    startSeconds: start.ok ? start.seconds : 0,
-    endSeconds: end === undefined ? undefined : end.ok ? end.seconds : undefined,
-  };
-}
-
-function markTransportDraft(input: HTMLInputElement): void {
-  input.dataset.dirty = 'true';
-}
-
-function clearTransportDrafts(inputs: HTMLInputElement[]): void {
-  for (const input of inputs) {
-    input.dataset.dirty = 'false';
-  }
-}
-
-async function commitLoopDraft(enabledOverride?: boolean): Promise<void> {
-  await sendTransport({ type: 'set-loop', loop: readLoopDraft(enabledOverride) });
-  clearTransportDrafts([elements.loopStartInput, elements.loopEndInput]);
 }
 
 function getAudioSinkOptions(): Array<[string, string]> {
@@ -2767,225 +1952,20 @@ function installInteractionLock(panel: HTMLElement): void {
   panel.addEventListener('pointercancel', release);
 }
 
-function installShellIcons(): void {
-  decorateIconButton(elements.playButton, 'Play', 'Play');
-  decorateIconButton(elements.pauseButton, 'Pause', 'Pause');
-  decorateIconButton(elements.stopButton, 'StopCircle', 'Stop');
-  decorateIconButton(elements.loopToggleButton, 'Repeat', 'Loop settings');
-  decorateIconButton(elements.saveShowButton, 'Save', 'Save show');
-  decorateIconButton(elements.saveShowAsButton, 'FileJson', 'Save show as');
-  decorateIconButton(elements.openShowButton, 'FolderOpen', 'Open show');
-  decorateIconButton(elements.createShowButton, 'Plus', 'Create show project');
-  decorateIconButton(elements.launchOpenShowButton, 'FolderOpen', 'Open existing show');
-  decorateIconButton(elements.launchCreateShowButton, 'Plus', 'Create new show');
-  decorateIconButton(elements.launchOpenDefaultButton, 'FileJson', 'Open default show');
-  setLaunchActionLabel(elements.launchOpenShowButton, 'Open Existing', 'Choose a saved show file.');
-  setLaunchActionLabel(elements.launchCreateShowButton, 'Create New', 'Start an empty show project.');
-  setLaunchActionLabel(elements.launchOpenDefaultButton, 'Open Default', 'Use the default show project.');
-  decorateIconButton(elements.addVisualsButton, 'Plus', 'Add visuals');
-  decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
-  decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
-  decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');
-  decorateIconButton(elements.expandMixerButton, 'Maximize2', 'Expand mixer');
-}
+const transport = createTransportController({
+  getState: () => currentState,
+  getSoloOutputCount: () => soloOutputIds.size,
+  renderState,
+  setShowStatus,
+});
 
-function setLaunchActionLabel(button: HTMLButtonElement, title: string, description: string): void {
-  const icon = button.querySelector('.control-icon');
-  const iconWrap = document.createElement('span');
-  iconWrap.className = 'launch-action-icon';
-  if (icon) {
-    iconWrap.append(icon);
-  }
-  const copy = document.createElement('span');
-  copy.className = 'launch-action-copy';
-  const titleElement = document.createElement('span');
-  titleElement.className = 'launch-action-title';
-  titleElement.textContent = title;
-  const descriptionElement = document.createElement('span');
-  descriptionElement.className = 'launch-action-description';
-  descriptionElement.textContent = description;
-  copy.replaceChildren(titleElement, descriptionElement);
-  button.replaceChildren(iconWrap, copy);
-  button.setAttribute('aria-label', `${title}. ${description}`);
-}
-
-function showLaunchDashboard(): void {
-  launchDashboardVisible = true;
-  elements.launchDashboard.hidden = false;
-  elements.appFrame.classList.add('launch-blocked');
-}
-
-function hideLaunchDashboard(): void {
-  launchDashboardVisible = false;
-  elements.launchDashboard.hidden = true;
-  elements.appFrame.classList.remove('launch-blocked');
-}
-
-async function loadLaunchDashboard(): Promise<void> {
-  renderLaunchDashboard(await window.xtream.show.getLaunchData());
-}
-
-function renderLaunchDashboard(data: LaunchShowData): void {
-  elements.launchOpenDefaultButton.title = data.defaultShow.exists
-    ? `Open default show: ${data.defaultShow.filePath}`
-    : `Create and open default show: ${data.defaultShow.filePath}`;
-  if (data.recentShows.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'launch-empty';
-    empty.textContent = 'No recent shows yet.';
-    elements.launchRecentList.replaceChildren(empty);
-    return;
-  }
-  elements.launchRecentList.replaceChildren(...data.recentShows.map(createRecentShowRow));
-}
-
-function createRecentShowRow(entry: RecentShowEntry): HTMLButtonElement {
-  const row = document.createElement('button');
-  row.className = 'launch-recent-row';
-  row.type = 'button';
-  row.title = entry.filePath;
-  const name = document.createElement('span');
-  name.className = 'launch-recent-name';
-  name.textContent = entry.displayName;
-  const filePath = document.createElement('span');
-  filePath.className = 'launch-recent-path';
-  filePath.textContent = entry.filePath;
-  row.replaceChildren(name, filePath);
-  row.addEventListener('click', async () => {
-    const result = await window.xtream.show.openRecent(entry.filePath);
-    if (result) {
-      completeLaunch(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
-      return;
-    }
-    setShowStatus(`Recent show is no longer available: ${entry.filePath}`);
-    await loadLaunchDashboard();
-  });
-  return row;
-}
-
-function completeLaunch(result: ShowConfigOperationResult, message: string): void {
-  selectedEntity = undefined;
-  renderState(result.state);
-  setShowStatus(message, result.issues);
-  hideLaunchDashboard();
-}
-
-function installSplitters(): void {
-  applyLayoutPrefs(readLayoutPrefs());
-  installSplitter(elements.workspaceSplitter, 'x', (delta) => {
-    const workspace = elements.workspaceSplitter.parentElement!;
-    const current = readLayoutPrefs().mediaWidthPx ?? workspace.querySelector<HTMLElement>('.media-pool')!.getBoundingClientRect().width;
-    saveLayoutPrefs({ mediaWidthPx: clamp(current + delta, 260, Math.max(320, workspace.getBoundingClientRect().width - 420)) });
-  });
-  installSplitter(elements.mainFooterSplitter, 'y', (delta) => {
-    const frame = elements.mainFooterSplitter.parentElement!;
-    const current = readLayoutPrefs().footerHeightPx ?? frame.querySelector<HTMLElement>('.operator-footer')!.getBoundingClientRect().height;
-    saveLayoutPrefs({ footerHeightPx: clamp(current - delta, 180, Math.max(220, frame.getBoundingClientRect().height - 280)) });
-  });
-  installSplitter(elements.footerSplitter, 'x', (delta) => {
-    const footer = elements.footerSplitter.parentElement!;
-    const current = readLayoutPrefs().mixerWidthPx ?? footer.querySelector<HTMLElement>('.mixer-panel')!.getBoundingClientRect().width;
-    saveLayoutPrefs({ mixerWidthPx: clamp(current + delta, 260, getMaxMixerWidth()) });
-  });
-  installSplitter(elements.assetPreviewSplitter, 'y', (delta) => {
-    const current = readLayoutPrefs().assetPreviewHeightPx ?? elements.assetPreview.getBoundingClientRect().height;
-    saveLayoutPrefs({ assetPreviewHeightPx: clamp(current - delta, 110, 320) });
-  });
-}
-
-function installSplitter(handle: HTMLElement, axis: 'x' | 'y', onDelta: (delta: number) => void): void {
-  let start = 0;
-  handle.addEventListener('pointerdown', (event) => {
-    start = axis === 'x' ? event.clientX : event.clientY;
-    handle.setPointerCapture(event.pointerId);
-    handle.classList.add('dragging');
-  });
-  handle.addEventListener('pointermove', (event) => {
-    if (!handle.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-    const current = axis === 'x' ? event.clientX : event.clientY;
-    onDelta(current - start);
-    start = current;
-  });
-  const finish = (event: PointerEvent) => {
-    if (handle.hasPointerCapture(event.pointerId)) {
-      handle.releasePointerCapture(event.pointerId);
-    }
-    handle.classList.remove('dragging');
-  };
-  handle.addEventListener('pointerup', finish);
-  handle.addEventListener('pointercancel', finish);
-  handle.addEventListener('keydown', (event) => {
-    const step = event.shiftKey ? 40 : 12;
-    if (axis === 'x' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-      event.preventDefault();
-      onDelta(event.key === 'ArrowRight' ? step : -step);
-    }
-    if (axis === 'y' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-      event.preventDefault();
-      onDelta(event.key === 'ArrowDown' ? step : -step);
-    }
-  });
-}
-
-function getMaxMixerWidth(): number {
-  const footerWidth = elements.operatorFooter.getBoundingClientRect().width;
-  return Math.max(320, footerWidth - 360);
-}
-
-function readLayoutPrefs(): LayoutPrefs {
-  try {
-    return JSON.parse(localStorage.getItem(UI_PREF_KEY) ?? '{}') as LayoutPrefs;
-  } catch {
-    return {};
-  }
-}
-
-function saveLayoutPrefs(update: LayoutPrefs): void {
-  mixerExpandedTemporarily = false;
-  const prefs = { ...readLayoutPrefs(), ...update };
-  localStorage.setItem(UI_PREF_KEY, JSON.stringify(prefs));
-  applyLayoutPrefs(prefs);
-}
-
-function setTemporaryMixerWidth(widthPx: number): void {
-  mixerExpandedTemporarily = true;
-  document.documentElement.style.setProperty('--mixer-width', `${widthPx}px`);
-}
-
-function restoreTemporaryMixerExpansion(): void {
-  if (!mixerExpandedTemporarily) {
-    return;
-  }
-  mixerExpandedTemporarily = false;
-  const prefs = readLayoutPrefs();
-  if (prefs.mixerWidthPx === undefined) {
-    document.documentElement.style.removeProperty('--mixer-width');
-    return;
-  }
-  applyLayoutPrefs(prefs);
-}
-
-function applyLayoutPrefs(prefs: LayoutPrefs): void {
-  const root = document.documentElement;
-  if (prefs.mediaWidthPx !== undefined) {
-    root.style.setProperty('--media-pool-width', `${prefs.mediaWidthPx}px`);
-  }
-  if (prefs.footerHeightPx !== undefined) {
-    root.style.setProperty('--operator-footer-height', `${prefs.footerHeightPx}px`);
-  }
-  if (prefs.mixerWidthPx !== undefined) {
-    root.style.setProperty('--mixer-width', `${prefs.mixerWidthPx}px`);
-  }
-  if (prefs.assetPreviewHeightPx !== undefined) {
-    root.style.setProperty('--asset-preview-height', `${prefs.assetPreviewHeightPx}px`);
-  }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
+const launchDashboard = createLaunchDashboardController({
+  renderState,
+  setShowStatus,
+  clearSelection: () => {
+    selectedEntity = undefined;
+  },
+});
 
 installInteractionLock(elements.visualList);
 installInteractionLock(elements.audioPanel);
@@ -2995,128 +1975,55 @@ installInteractionLock(elements.detailsContent);
 elements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
 installShellIcons();
 installSplitters();
-showLaunchDashboard();
+mediaPool.install();
+launchDashboard.show();
 
 elements.timecode.tabIndex = 0;
-document.addEventListener('click', dismissAudioSourceContextMenu);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    dismissAudioSourceContextMenu();
+    mediaPool.dismissContextMenu();
   }
 });
-document.addEventListener('scroll', dismissAudioSourceContextMenu, true);
+document.addEventListener('scroll', mediaPool.dismissContextMenu, true);
 elements.patchRailButton.addEventListener('click', () => setActiveSurface('patch'));
 elements.cueRailButton.addEventListener('click', () => setActiveSurface('cue'));
 elements.performanceRailButton.addEventListener('click', () => setActiveSurface('performance'));
 elements.configRailButton.addEventListener('click', () => setActiveSurface('config'));
 elements.logsRailButton.addEventListener('click', () => setActiveSurface('logs'));
 elements.timecode.title = 'Double-click to seek by timecode';
-elements.timecode.addEventListener('dblclick', beginTimecodeEdit);
+elements.timecode.addEventListener('dblclick', transport.beginTimecodeEdit);
 elements.timecode.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
-    beginTimecodeEdit();
+    transport.beginTimecodeEdit();
   }
 });
 elements.loopToggleButton.addEventListener('click', () => {
   elements.loopPopover.hidden = !elements.loopPopover.hidden;
   elements.loopToggleButton.setAttribute('aria-expanded', String(!elements.loopPopover.hidden));
 });
-elements.rateDisplayButton.addEventListener('dblclick', beginRateEdit);
-elements.rateDisplayButton.addEventListener('pointerdown', beginRateDrag);
-elements.rateDisplayButton.addEventListener('pointermove', updateRateDrag);
-elements.rateDisplayButton.addEventListener('pointerup', finishRateDrag);
+elements.rateDisplayButton.addEventListener('dblclick', transport.beginRateEdit);
+elements.rateDisplayButton.addEventListener('pointerdown', transport.beginRateDrag);
+elements.rateDisplayButton.addEventListener('pointermove', transport.updateRateDrag);
+elements.rateDisplayButton.addEventListener('pointerup', transport.finishRateDrag);
 elements.rateDisplayButton.addEventListener('pointercancel', () => {
-  rateDragStart = undefined;
+  transport.cancelRateDrag();
 });
-elements.visualTabButton.addEventListener('click', () => {
-  activePoolTab = 'visuals';
-  visualRenderSignature = '';
-  if (currentState) {
-    renderState(currentState);
-  }
-});
-elements.audioTabButton.addEventListener('click', () => {
-  activePoolTab = 'audio';
-  visualRenderSignature = '';
-  if (currentState) {
-    renderState(currentState);
-  }
-});
-elements.poolSearchInput.addEventListener('input', () => {
-  poolSearchQuery = elements.poolSearchInput.value;
-  visualRenderSignature = '';
-  if (currentState) {
-    renderState(currentState);
-  }
-});
-elements.poolSortSelect.addEventListener('change', () => {
-  poolSort = elements.poolSortSelect.value as typeof poolSort;
-  visualRenderSignature = '';
-  if (currentState) {
-    renderState(currentState);
-  }
-});
-function isFileDragEvent(event: DragEvent): boolean {
-  return Boolean(event.dataTransfer?.types?.includes('Files'));
-}
-
-function clearMediaPoolDragOver(event: DragEvent): void {
-  const next = event.relatedTarget;
-  if (next instanceof Node && elements.mediaPoolPanel.contains(next)) {
-    return;
-  }
-  elements.mediaPoolPanel.classList.remove('drag-over');
-}
-
-elements.mediaPoolPanel.addEventListener('dragover', (event) => {
-  if (!isFileDragEvent(event)) {
-    return;
-  }
-  event.preventDefault();
-  elements.mediaPoolPanel.classList.add('drag-over');
-});
-elements.mediaPoolPanel.addEventListener('dragleave', clearMediaPoolDragOver);
-elements.mediaPoolPanel.addEventListener('drop', async (event) => {
-  event.preventDefault();
-  elements.mediaPoolPanel.classList.remove('drag-over');
-  const paths = Array.from(event.dataTransfer?.files ?? [])
-    .map((file) => (file as File & { path?: string }).path)
-    .filter((path): path is string => Boolean(path));
-  if (paths.length === 0) {
-    setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
-    return;
-  }
-  if (activePoolTab === 'visuals') {
-    const visuals = await window.xtream.visuals.addDropped(paths);
-    queueEmbeddedAudioImportPrompt(visuals);
-    visuals.forEach(probeVisualMetadata);
-    if (visuals[0]) {
-      selectedEntity = { type: 'visual', id: visuals[0].id };
-    }
-  } else {
-    const sources = await window.xtream.audioSources.addDropped(paths);
-    if (sources[0]) {
-      selectedEntity = { type: 'audio-source', id: sources[0].id };
-    }
-  }
-  renderState(await window.xtream.director.getState());
-});
-elements.playButton.addEventListener('click', () => void sendTransport({ type: 'play' }));
-elements.pauseButton.addEventListener('click', () => void sendTransport({ type: 'pause' }));
-elements.stopButton.addEventListener('click', () => void sendTransport({ type: 'stop' }));
+elements.playButton.addEventListener('click', () => void transport.sendTransport({ type: 'play' }));
+elements.pauseButton.addEventListener('click', () => void transport.sendTransport({ type: 'pause' }));
+elements.stopButton.addEventListener('click', () => void transport.sendTransport({ type: 'stop' }));
 elements.timelineScrubber.addEventListener('input', () => syncSliderProgress(elements.timelineScrubber));
 elements.timelineScrubber.addEventListener('change', () => {
-  void sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 });
+  void transport.sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 });
 });
 elements.loopActivateButton.addEventListener('click', () => {
   if (!currentState) {
     return;
   }
-  void commitLoopDraft(!currentState.loop.enabled);
+  void transport.commitLoopDraft(!currentState.loop.enabled);
 });
 for (const input of [elements.loopStartInput, elements.loopEndInput]) {
-  input.addEventListener('input', () => markTransportDraft(input));
-  input.addEventListener('change', () => void commitLoopDraft());
+  input.addEventListener('input', () => transport.markTransportDraft(input));
+  input.addEventListener('change', () => void transport.commitLoopDraft());
 }
 elements.saveShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.save();
@@ -3142,8 +2049,8 @@ elements.openShowButton.addEventListener('click', async () => {
   if (result) {
     renderState(result.state);
     setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
-    if (launchDashboardVisible) {
-      hideLaunchDashboard();
+    if (launchDashboard.isVisible()) {
+      launchDashboard.hide();
     }
   }
 });
@@ -3153,46 +2060,30 @@ elements.createShowButton.addEventListener('click', async () => {
     selectedEntity = undefined;
     renderState(result.state);
     setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
-    if (launchDashboardVisible) {
-      hideLaunchDashboard();
+    if (launchDashboard.isVisible()) {
+      launchDashboard.hide();
     }
   }
 });
 elements.launchOpenShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.open();
   if (result) {
-    completeLaunch(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
+    launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
     return;
   }
-  await loadLaunchDashboard();
+  await launchDashboard.load();
 });
 elements.launchCreateShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.createProject();
   if (result) {
-    completeLaunch(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
+    launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
     return;
   }
-  await loadLaunchDashboard();
+  await launchDashboard.load();
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
   const result = await window.xtream.show.openDefault();
-  completeLaunch(result, `Opened default show: ${result.filePath ?? 'default location'}`);
-});
-elements.addVisualsButton.addEventListener('click', async () => {
-  if (activePoolTab === 'audio') {
-    const source = await window.xtream.audioSources.addFile();
-    if (source) {
-      selectedEntity = { type: 'audio-source', id: source.id };
-    }
-  } else {
-    const visuals = await window.xtream.visuals.add();
-    queueEmbeddedAudioImportPrompt(visuals);
-    visuals?.forEach(probeVisualMetadata);
-    if (visuals?.[0]) {
-      selectedEntity = { type: 'visual', id: visuals[0].id };
-    }
-  }
-  renderState(await window.xtream.director.getState());
+  launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
 });
 elements.createOutputButton.addEventListener('click', async () => {
   const output = await window.xtream.outputs.create();
@@ -3246,7 +2137,7 @@ window.xtream.audioRuntime.onMeterLanes((report) => {
   applyOutputMeterReport(report);
 });
 void window.xtream.renderer.ready({ kind: 'control' });
-void loadLaunchDashboard();
+void launchDashboard.load();
 void loadAudioDevices();
 void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);

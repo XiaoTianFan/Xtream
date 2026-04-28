@@ -31,7 +31,7 @@ import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds } from '../shared/timeline';
 
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
-const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.5;
+const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.2;
 const DRIFT_DEGRADE_THRESHOLD_SECONDS = 2;
 const DRIFT_CORRECTION_COOLDOWN_MS = 3000;
 const MAX_CORRECTION_ATTEMPTS = 10;

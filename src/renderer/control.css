@@ -42,6 +42,7 @@
   --panel-header-below: 4px;
   --header-height: 64px;
   --utility-button-height: 2rem;
+  --transport-button-height: clamp(2.75rem, 4vw, 3.25rem);
   --status-chip-width: 8rem;
   --operator-footer-height: 220px;
   --status-footer-height: 28px;
@@ -481,6 +482,27 @@ input[type="range"].mini-slider:disabled {
 
 .top-bar-main .transport-cluster {
   min-width: 0;
+}
+
+.top-bar-main .transport-cluster button {
+  height: var(--transport-button-height);
+  min-height: var(--transport-button-height);
+  padding-block: 0;
+}
+
+.top-bar-main .transport-cluster .icon-button {
+  width: var(--transport-button-height);
+  min-width: var(--transport-button-height);
+}
+
+.top-bar-main .transport-cluster .control-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.top-bar-main #rateDisplayButton {
+  min-width: 5rem;
+  font-size: 0.9rem;
 }
 
 .timeline-meta {
