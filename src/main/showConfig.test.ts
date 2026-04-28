@@ -1,27 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {
   assertShowConfig,
+  addRecentShow,
   buildMediaUrls,
   createDiagnosticsReport,
   getDefaultShowConfigPath,
+  getRecentShowsPath,
   SHOW_AUDIO_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
   migrateV3ToV4,
   migrateV4ToV5,
+  migrateV5ToV6,
+  readRecentShows,
   readShowConfig,
   validateRuntimeState,
+  writeJsonFile,
   writeShowConfig,
 } from './showConfig';
 import { toRendererFileUrl } from './fileUrls';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
-import type { DirectorState, PersistedShowConfig } from '../shared/types';
+import type { DirectorState, PersistedShowConfig, PersistedShowConfigV5 } from '../shared/types';
 import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 
 const config: PersistedShowConfig = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   savedAt: '2026-04-26T00:00:00.000Z',
   rate: 1,
   audioExtractionFormat: 'm4a',
@@ -70,10 +75,11 @@ const config: PersistedShowConfig = {
     'output-main': {
       id: 'output-main',
       label: 'Main Output',
-      sources: [{ audioSourceId: 'audio-source-main', levelDb: 0 }],
+      sources: [{ audioSourceId: 'audio-source-main', levelDb: 0, pan: 0 }],
       sinkId: 'main',
       sinkLabel: 'Main',
       busLevelDb: 0,
+      pan: 0,
     },
   },
   displays: [
@@ -116,9 +122,42 @@ function createRuntimeState(): DirectorState {
 }
 
 describe('show config persistence helpers', () => {
-  it('validates schema v5 config shape and rejects older versions', () => {
+  it('validates schema v6 config shape and rejects older versions', () => {
     expect(assertShowConfig(config)).toEqual(config);
-    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3, 4, and 5/i);
+    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3 through 6/i);
+  });
+
+  it('migrates schema v5 outputs to v6 with centered pan for bus and each source', () => {
+    const v5: PersistedShowConfigV5 = {
+      schemaVersion: 5,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      rate: 1,
+      audioExtractionFormat: 'm4a',
+      globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      loop: { enabled: false, startSeconds: 0 },
+      visuals: {},
+      audioSources: {},
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [{ audioSourceId: 'a', levelDb: -3 }, { audioSourceId: 'b', levelDb: 0 }],
+          busLevelDb: -6,
+        },
+      },
+      displays: [],
+    };
+    const v6 = migrateV5ToV6(v5);
+    expect(v6.schemaVersion).toBe(6);
+    expect(v6.outputs['output-main']).toMatchObject({
+      pan: 0,
+      busLevelDb: -6,
+      sources: [
+        { audioSourceId: 'a', levelDb: -3, pan: 0 },
+        { audioSourceId: 'b', levelDb: 0, pan: 0 },
+      ],
+    });
   });
 
   it('migrates schema v3 configs to schema v4 defaults', () => {
@@ -276,6 +315,92 @@ describe('show config persistence helpers', () => {
     try {
       await writeShowConfig(filePath, config);
       expect(await readShowConfig(filePath)).toEqual(config);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('adds a show to the top of the recent list', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-recents-'));
+    try {
+      const first = path.join(directory, 'first', SHOW_PROJECT_FILENAME);
+      const second = path.join(directory, 'second', SHOW_PROJECT_FILENAME);
+      await writeShowConfig(first, config);
+      await writeShowConfig(second, config);
+      await addRecentShow(directory, first, '2026-04-26T00:00:00.000Z');
+      const recents = await addRecentShow(directory, second, '2026-04-27T00:00:00.000Z');
+      expect(recents.map((entry) => entry.filePath)).toEqual([second, first]);
+      expect(recents[0]).toMatchObject({ displayName: 'second' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('deduplicates recent shows by path', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-recents-'));
+    try {
+      const showPath = path.join(directory, 'project', SHOW_PROJECT_FILENAME);
+      await writeShowConfig(showPath, config);
+      await addRecentShow(directory, showPath, '2026-04-26T00:00:00.000Z');
+      const recents = await addRecentShow(directory, showPath, '2026-04-27T00:00:00.000Z');
+      expect(recents).toHaveLength(1);
+      expect(recents[0]).toMatchObject({ filePath: showPath, lastOpenedAt: '2026-04-27T00:00:00.000Z' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('caps recent shows at 8 entries', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-recents-'));
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        const showPath = path.join(directory, `project-${index}`, SHOW_PROJECT_FILENAME);
+        await writeShowConfig(showPath, config);
+        await addRecentShow(directory, showPath, `2026-04-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`);
+      }
+      const recents = await readRecentShows(directory);
+      expect(recents).toHaveLength(8);
+      expect(recents[0].filePath).toBe(path.join(directory, 'project-9', SHOW_PROJECT_FILENAME));
+      expect(recents[7].filePath).toBe(path.join(directory, 'project-2', SHOW_PROJECT_FILENAME));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('removes missing files from recent shows', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-recents-'));
+    try {
+      const valid = path.join(directory, 'valid', SHOW_PROJECT_FILENAME);
+      const missing = path.join(directory, 'missing', SHOW_PROJECT_FILENAME);
+      await writeShowConfig(valid, config);
+      await mkdir(path.dirname(getRecentShowsPath(directory)), { recursive: true });
+      await writeJsonFile(getRecentShowsPath(directory), [
+        { filePath: missing, displayName: 'missing', lastOpenedAt: '2026-04-27T00:00:00.000Z' },
+        { filePath: valid, displayName: 'valid', lastOpenedAt: '2026-04-26T00:00:00.000Z' },
+      ]);
+      expect(await readRecentShows(directory)).toEqual([
+        { filePath: valid, displayName: 'valid', lastOpenedAt: '2026-04-26T00:00:00.000Z' },
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves valid recent entries across read and write', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'xtream-recents-'));
+    try {
+      const first = path.join(directory, 'first', SHOW_PROJECT_FILENAME);
+      const second = path.join(directory, 'second.xtream-show.json');
+      await writeShowConfig(first, config);
+      await writeShowConfig(second, config);
+      await writeJsonFile(getRecentShowsPath(directory), [
+        { filePath: first, displayName: 'first', lastOpenedAt: '2026-04-26T00:00:00.000Z' },
+        { filePath: second, displayName: 'second.xtream-show.json', lastOpenedAt: '2026-04-25T00:00:00.000Z' },
+      ]);
+      expect(await readRecentShows(directory)).toEqual([
+        { filePath: first, displayName: 'first', lastOpenedAt: '2026-04-26T00:00:00.000Z' },
+        { filePath: second, displayName: 'second.xtream-show.json', lastOpenedAt: '2026-04-25T00:00:00.000Z' },
+      ]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

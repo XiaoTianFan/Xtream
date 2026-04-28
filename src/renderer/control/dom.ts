@@ -117,6 +117,94 @@ export function createDbFader(labelText: string, value: number, onChange: (value
   return field;
 }
 
+export function formatPanLabel(pan: number): { title: string; valuetext: string } {
+  const clamped = Math.max(-1, Math.min(1, pan));
+  const pct = Math.round(Math.abs(clamped) * 100);
+  if (pct < 1) {
+    return { title: 'Pan: center', valuetext: 'C' };
+  }
+  if (clamped < 0) {
+    return { title: `Pan: ${pct}% left`, valuetext: `L ${pct}%` };
+  }
+  return { title: `Pan: ${pct}% right`, valuetext: `R ${pct}%` };
+}
+
+type PanKnobOptions = {
+  /** Shown in aria-label / title, e.g. "Main bus pan" or "Pan SourceName". */
+  name: string;
+  value: number;
+  onChange: (pan: number) => void;
+  /** 'mixer' = compact strip, 'row' = output detail row. */
+  variant?: 'mixer' | 'row';
+};
+
+const PAN_KNOB_ROTATION_DEGREES = 120;
+
+export function createPanKnob({ name, value, onChange, variant = 'row' }: PanKnobOptions): HTMLDivElement {
+  const field = document.createElement('div');
+  field.className = `pan-knob pan-knob--${variant}`;
+
+  const face = document.createElement('div');
+  face.className = 'pan-knob-face';
+  const pointer = document.createElement('div');
+  pointer.className = 'pan-knob-pointer';
+  const dial = document.createElement('div');
+  dial.className = 'pan-knob-dial';
+  dial.append(pointer);
+  face.append(dial);
+
+  const { title, valuetext } = formatPanLabel(value);
+  const range = createSlider({
+    min: '-1',
+    max: '1',
+    step: '0.01',
+    value: String(Math.max(-1, Math.min(1, value))),
+    className: 'pan-knob-input',
+  });
+  range.setAttribute('aria-label', name);
+  range.setAttribute('aria-valuemin', '-1');
+  range.setAttribute('aria-valuemax', '1');
+  range.setAttribute('aria-valuetext', valuetext);
+  range.title = title;
+
+  const applyRotation = (raw: number) => {
+    const pan = Math.max(-1, Math.min(1, raw));
+    pointer.style.setProperty('--pan-knob-rotate', String(pan * PAN_KNOB_ROTATION_DEGREES));
+  };
+  applyRotation(Number(range.value));
+  const commit = (raw: string) => {
+    const next = Math.max(-1, Math.min(1, Number(raw)));
+    if (Number.isFinite(next)) {
+      const labels = formatPanLabel(next);
+      range.value = String(next);
+      range.setAttribute('aria-valuetext', labels.valuetext);
+      range.title = labels.title;
+      applyRotation(next);
+      onChange(next);
+    }
+  };
+  range.addEventListener('input', () => commit(range.value));
+  const reset = () => {
+    range.value = '0';
+    commit('0');
+  };
+  range.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    reset();
+  });
+  range.addEventListener('click', (event) => {
+    if (event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      reset();
+    }
+  });
+
+  field.append(face, range);
+  return field;
+}
+
 export function createPreviewLabel(label: string, detail: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'preview-empty';

@@ -14,6 +14,9 @@ import type {
   MeterLaneState,
   OutputMeterReport,
   TransportCommand,
+  LaunchShowData,
+  RecentShowEntry,
+  ShowConfigOperationResult,
   VisualId,
   VisualLayoutProfile,
   VisualState,
@@ -51,6 +54,7 @@ import {
   createPreviewLabel,
   createSelect,
   createSlider,
+  createPanKnob,
   syncSliderProgress,
   setSelectEnabled,
 } from './control/dom';
@@ -106,6 +110,11 @@ const elements = {
   saveShowAsButton: assertElement(document.querySelector<HTMLButtonElement>('#saveShowAsButton'), 'saveShowAsButton'),
   openShowButton: assertElement(document.querySelector<HTMLButtonElement>('#openShowButton'), 'openShowButton'),
   createShowButton: assertElement(document.querySelector<HTMLButtonElement>('#createShowButton'), 'createShowButton'),
+  launchDashboard: assertElement(document.querySelector<HTMLElement>('#launchDashboard'), 'launchDashboard'),
+  launchOpenShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenShowButton'), 'launchOpenShowButton'),
+  launchCreateShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchCreateShowButton'), 'launchCreateShowButton'),
+  launchOpenDefaultButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenDefaultButton'), 'launchOpenDefaultButton'),
+  launchRecentList: assertElement(document.querySelector<HTMLDivElement>('#launchRecentList'), 'launchRecentList'),
   addVisualsButton: assertElement(document.querySelector<HTMLButtonElement>('#addVisualsButton'), 'addVisualsButton'),
   createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
@@ -149,6 +158,7 @@ let activeAudioSourceMenu: HTMLElement | undefined;
 const activePanels = new WeakSet<HTMLElement>();
 const pendingEmbeddedAudioImportBatches: VisualId[][] = [];
 let embeddedAudioImportPromptActive = false;
+let launchDashboardVisible = true;
 
 type SelectedEntity =
   | { type: 'visual'; id: VisualId }
@@ -629,6 +639,17 @@ function applyOutputMeterReport(report: OutputMeterReport): void {
 
 function mountMixerStripContents(container: HTMLElement, output: VirtualOutputState, state: DirectorState): void {
   container.replaceChildren();
+  const busPan = createPanKnob({
+    name: `${output.label} bus pan`,
+    value: output.pan ?? 0,
+    variant: 'mixer',
+    onChange: (pan) => {
+      void window.xtream.outputs.update(output.id, { pan });
+    },
+  });
+  const panWrap = document.createElement('div');
+  panWrap.className = 'mixer-strip-pan';
+  panWrap.append(busPan);
   const db = document.createElement('strong');
   db.className = 'mixer-db';
   db.textContent = `${quantizeBusFaderDb(output.busLevelDb).toFixed(1)} dB`;
@@ -675,7 +696,7 @@ function mountMixerStripContents(container: HTMLElement, output: VirtualOutputSt
   const labelRow = document.createElement('div');
   labelRow.className = 'mixer-label-row';
   labelRow.append(status, label);
-  container.append(db, body, toggles, labelRow);
+  container.append(panWrap, db, body, toggles, labelRow);
 }
 
 function attachMixerStripSelectionHandlers(strip: HTMLElement, outputId: VirtualOutputId): void {
@@ -1037,7 +1058,9 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
             if (document.activeElement instanceof HTMLElement) {
               document.activeElement.blur();
             }
-            void window.xtream.outputs.update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0 }] }).then(async () => {
+            void window.xtream.outputs
+              .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0, pan: 0 }] })
+              .then(async () => {
               const nextState = await window.xtream.director.getState();
               renderState(nextState);
               detailsRenderSignature = '';
@@ -1074,6 +1097,20 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
     });
     levelControl.classList.add('output-source-level');
 
+    const sourcePan = createPanKnob({
+      name: `Pan ${source?.label ?? selection.audioSourceId}`,
+      value: selection.pan ?? 0,
+      variant: 'row',
+      onChange: (pan) => {
+        void window.xtream.outputs.update(output.id, {
+          sources: output.sources.map((candidate) =>
+            candidate.audioSourceId === selection.audioSourceId ? { ...candidate, pan } : candidate,
+          ),
+        });
+      },
+    });
+    sourcePan.classList.add('output-source-pan');
+
     const removeButton = createButton('Remove', 'secondary', async () => {
       await window.xtream.outputs.update(output.id, {
         sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
@@ -1105,7 +1142,10 @@ function createOutputSourceControls(output: VirtualOutputState, state: DirectorS
     const actions = document.createElement('div');
     actions.className = 'button-row compact output-source-actions';
     actions.append(soloButton, muteButton, removeButton);
-    row.append(sourceInfo, levelControl, actions);
+    const mid = document.createElement('div');
+    mid.className = 'output-source-mid';
+    mid.append(levelControl, sourcePan);
+    row.append(sourceInfo, mid, actions);
     wrapper.append(row);
   }
   return wrapper;
@@ -2736,11 +2776,98 @@ function installShellIcons(): void {
   decorateIconButton(elements.saveShowAsButton, 'FileJson', 'Save show as');
   decorateIconButton(elements.openShowButton, 'FolderOpen', 'Open show');
   decorateIconButton(elements.createShowButton, 'Plus', 'Create show project');
+  decorateIconButton(elements.launchOpenShowButton, 'FolderOpen', 'Open existing show');
+  decorateIconButton(elements.launchCreateShowButton, 'Plus', 'Create new show');
+  decorateIconButton(elements.launchOpenDefaultButton, 'FileJson', 'Open default show');
+  setLaunchActionLabel(elements.launchOpenShowButton, 'Open Existing', 'Choose a saved show file.');
+  setLaunchActionLabel(elements.launchCreateShowButton, 'Create New', 'Start an empty show project.');
+  setLaunchActionLabel(elements.launchOpenDefaultButton, 'Open Default', 'Use the default show project.');
   decorateIconButton(elements.addVisualsButton, 'Plus', 'Add visuals');
   decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
   decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
   decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');
   decorateIconButton(elements.expandMixerButton, 'Maximize2', 'Expand mixer');
+}
+
+function setLaunchActionLabel(button: HTMLButtonElement, title: string, description: string): void {
+  const icon = button.querySelector('.control-icon');
+  const iconWrap = document.createElement('span');
+  iconWrap.className = 'launch-action-icon';
+  if (icon) {
+    iconWrap.append(icon);
+  }
+  const copy = document.createElement('span');
+  copy.className = 'launch-action-copy';
+  const titleElement = document.createElement('span');
+  titleElement.className = 'launch-action-title';
+  titleElement.textContent = title;
+  const descriptionElement = document.createElement('span');
+  descriptionElement.className = 'launch-action-description';
+  descriptionElement.textContent = description;
+  copy.replaceChildren(titleElement, descriptionElement);
+  button.replaceChildren(iconWrap, copy);
+  button.setAttribute('aria-label', `${title}. ${description}`);
+}
+
+function showLaunchDashboard(): void {
+  launchDashboardVisible = true;
+  elements.launchDashboard.hidden = false;
+  elements.appFrame.classList.add('launch-blocked');
+}
+
+function hideLaunchDashboard(): void {
+  launchDashboardVisible = false;
+  elements.launchDashboard.hidden = true;
+  elements.appFrame.classList.remove('launch-blocked');
+}
+
+async function loadLaunchDashboard(): Promise<void> {
+  renderLaunchDashboard(await window.xtream.show.getLaunchData());
+}
+
+function renderLaunchDashboard(data: LaunchShowData): void {
+  elements.launchOpenDefaultButton.title = data.defaultShow.exists
+    ? `Open default show: ${data.defaultShow.filePath}`
+    : `Create and open default show: ${data.defaultShow.filePath}`;
+  if (data.recentShows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'launch-empty';
+    empty.textContent = 'No recent shows yet.';
+    elements.launchRecentList.replaceChildren(empty);
+    return;
+  }
+  elements.launchRecentList.replaceChildren(...data.recentShows.map(createRecentShowRow));
+}
+
+function createRecentShowRow(entry: RecentShowEntry): HTMLButtonElement {
+  const row = document.createElement('button');
+  row.className = 'launch-recent-row';
+  row.type = 'button';
+  row.title = entry.filePath;
+  const name = document.createElement('span');
+  name.className = 'launch-recent-name';
+  name.textContent = entry.displayName;
+  const filePath = document.createElement('span');
+  filePath.className = 'launch-recent-path';
+  filePath.textContent = entry.filePath;
+  row.replaceChildren(name, filePath);
+  row.addEventListener('click', async () => {
+    const result = await window.xtream.show.openRecent(entry.filePath);
+    if (result) {
+      completeLaunch(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
+      return;
+    }
+    setShowStatus(`Recent show is no longer available: ${entry.filePath}`);
+    await loadLaunchDashboard();
+  });
+  return row;
+}
+
+function completeLaunch(result: ShowConfigOperationResult, message: string): void {
+  selectedEntity = undefined;
+  renderState(result.state);
+  setShowStatus(message, result.issues);
+  hideLaunchDashboard();
 }
 
 function installSplitters(): void {
@@ -2868,6 +2995,7 @@ installInteractionLock(elements.detailsContent);
 elements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
 installShellIcons();
 installSplitters();
+showLaunchDashboard();
 
 elements.timecode.tabIndex = 0;
 document.addEventListener('click', dismissAudioSourceContextMenu);
@@ -3014,6 +3142,9 @@ elements.openShowButton.addEventListener('click', async () => {
   if (result) {
     renderState(result.state);
     setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
+    if (launchDashboardVisible) {
+      hideLaunchDashboard();
+    }
   }
 });
 elements.createShowButton.addEventListener('click', async () => {
@@ -3022,7 +3153,30 @@ elements.createShowButton.addEventListener('click', async () => {
     selectedEntity = undefined;
     renderState(result.state);
     setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
+    if (launchDashboardVisible) {
+      hideLaunchDashboard();
+    }
   }
+});
+elements.launchOpenShowButton.addEventListener('click', async () => {
+  const result = await window.xtream.show.open();
+  if (result) {
+    completeLaunch(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
+    return;
+  }
+  await loadLaunchDashboard();
+});
+elements.launchCreateShowButton.addEventListener('click', async () => {
+  const result = await window.xtream.show.createProject();
+  if (result) {
+    completeLaunch(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
+    return;
+  }
+  await loadLaunchDashboard();
+});
+elements.launchOpenDefaultButton.addEventListener('click', async () => {
+  const result = await window.xtream.show.openDefault();
+  completeLaunch(result, `Opened default show: ${result.filePath ?? 'default location'}`);
 });
 elements.addVisualsButton.addEventListener('click', async () => {
   if (activePoolTab === 'audio') {
@@ -3092,6 +3246,7 @@ window.xtream.audioRuntime.onMeterLanes((report) => {
   applyOutputMeterReport(report);
 });
 void window.xtream.renderer.ready({ kind: 'control' });
+void loadLaunchDashboard();
 void loadAudioDevices();
 void loadDisplayMonitors();
 void window.xtream.director.getState().then(renderState);

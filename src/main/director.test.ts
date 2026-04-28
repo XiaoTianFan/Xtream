@@ -273,7 +273,7 @@ describe('Director', () => {
   it('defaults fade durations to one second when a show file omits them', () => {
     const director = new Director(() => 1000);
     const minimal: PersistedShowConfig = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       savedAt: '2026-01-01T00:00:00.000Z',
       audioExtractionFormat: 'm4a',
       loop: { enabled: false, startSeconds: 0 },
@@ -285,6 +285,7 @@ describe('Director', () => {
           label: 'Main',
           sources: [],
           busLevelDb: 0,
+          pan: 0,
         },
       },
       displays: [],
@@ -468,7 +469,7 @@ describe('Director', () => {
     expect(director.getState().displays['display-1'].layout).toEqual({ type: 'single', visualId: 'visual-b' });
   });
 
-  it('serializes runtime state into schema v5', () => {
+  it('serializes runtime state into schema v6 with pan on outputs', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
     director.registerDisplay({
@@ -478,10 +479,29 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       audioExtractionFormat: 'm4a',
       visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
+      outputs: {
+        'output-main': {
+          pan: 0,
+        },
+      },
     });
+  });
+
+  it('defaults new virtual output and show-restored output pan to 0 and preserves source pan on partial updates', () => {
+    const director = new Director(() => 1000);
+    const a = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
+    const out = director.createVirtualOutput();
+    expect(director.getState().outputs[out.id].pan).toBe(0);
+    expect(director.getState().outputs[out.id].sources[0]).toMatchObject({ levelDb: 0, pan: 0 });
+    director.updateVirtualOutput(out.id, { sources: [{ audioSourceId: a.id, levelDb: 0, pan: -0.4 }], pan: 0.25 });
+    expect(director.getState().outputs[out.id].sources[0].pan).toBe(-0.4);
+    expect(director.getState().outputs[out.id].pan).toBe(0.25);
+    director.updateVirtualOutput(out.id, { busLevelDb: -3 });
+    expect(director.getState().outputs[out.id].pan).toBe(0.25);
+    expect(director.getState().outputs[out.id].sources[0].pan).toBe(-0.4);
   });
 });

@@ -605,7 +605,7 @@ export class Director extends EventEmitter {
 
   createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
     return {
-      schemaVersion: 5,
+      schemaVersion: 6,
       savedAt,
       rate: this.state.rate,
       audioExtractionFormat: this.state.audioExtractionFormat,
@@ -672,6 +672,7 @@ export class Director extends EventEmitter {
             sinkId: output.sinkId,
             sinkLabel: output.sinkLabel,
             busLevelDb: output.busLevelDb,
+            pan: output.pan ?? 0,
             muted: output.muted,
             outputDelaySeconds: output.outputDelaySeconds,
             fallbackAccepted: output.fallbackAccepted,
@@ -770,10 +771,14 @@ export class Director extends EventEmitter {
         {
           id: output.id,
           label: output.label,
-          sources: structuredClone(output.sources),
+          sources: output.sources.map((s) => ({
+            ...s,
+            pan: s.pan ?? 0,
+          })),
           sinkId: output.sinkId,
           sinkLabel: output.sinkLabel,
           busLevelDb: output.busLevelDb,
+          pan: output.pan ?? 0,
           muted: output.muted,
           outputDelaySeconds: output.outputDelaySeconds,
           ready: false,
@@ -1220,8 +1225,9 @@ export class Director extends EventEmitter {
     return {
       id,
       label,
-      sources: sourceId ? [{ audioSourceId: sourceId, levelDb: 0 }] : [],
+      sources: sourceId ? [{ audioSourceId: sourceId, levelDb: 0, pan: 0 }] : [],
       busLevelDb: 0,
+      pan: 0,
       outputDelaySeconds: 0,
       ready: false,
       physicalRoutingAvailable: true,

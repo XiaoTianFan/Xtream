@@ -151,6 +151,23 @@
             <button id="resetMetersButton" class="secondary" type="button">Reset Meters</button>
           </span>
         </footer>
+
+        <section id="launchDashboard" class="launch-dashboard" aria-labelledby="launchDashboardHeading" role="dialog" aria-modal="true">
+          <div class="launch-panel">
+            <div class="launch-header">
+              <h1 id="launchDashboardHeading">Choose Show</h1>
+            </div>
+            <div class="launch-actions" aria-label="Launch actions">
+              <button id="launchOpenShowButton" class="launch-action" type="button">Open Existing</button>
+              <button id="launchCreateShowButton" class="launch-action" type="button">Create New</button>
+              <button id="launchOpenDefaultButton" class="launch-action" type="button">Open Default</button>
+            </div>
+            <div class="launch-recents">
+              <div class="launch-recents-heading">Recent Shows</div>
+              <div id="launchRecentList" class="launch-recent-list" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </body>

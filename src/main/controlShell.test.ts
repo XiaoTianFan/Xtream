@@ -22,4 +22,12 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="displayBlackoutButton"');
     expect(controlHtml).toContain('id="resetMetersButton"');
   });
+
+  it('includes the launch dashboard with actions and recents', () => {
+    expect(controlHtml).toContain('id="launchDashboard"');
+    expect(controlHtml).toContain('id="launchOpenShowButton"');
+    expect(controlHtml).toContain('id="launchCreateShowButton"');
+    expect(controlHtml).toContain('id="launchOpenDefaultButton"');
+    expect(controlHtml).toContain('id="launchRecentList"');
+  });
 });

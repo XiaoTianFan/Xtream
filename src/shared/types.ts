@@ -108,6 +108,8 @@ export type AudioSourceState =
 export type VirtualOutputSourceSelection = {
   audioSourceId: AudioSourceId;
   levelDb: number;
+  /** Constant-power pan: -1 = full left, 0 = center, 1 = full right. */
+  pan?: number;
   muted?: boolean;
   solo?: boolean;
 };
@@ -135,6 +137,8 @@ export type VirtualOutputState = {
   sinkId?: string;
   sinkLabel?: string;
   busLevelDb: number;
+  /** Constant-power bus pan: -1 = full left, 0 = center, 1 = full right. */
+  pan?: number;
   muted?: boolean;
   meterDb?: number;
   meterLanes?: MeterLaneState[];
@@ -267,6 +271,7 @@ export type PersistedVirtualOutputConfig = {
   sinkId?: string;
   sinkLabel?: string;
   busLevelDb: number;
+  pan?: number;
   muted?: boolean;
   outputDelaySeconds?: number;
   fallbackAccepted?: boolean;
@@ -304,7 +309,11 @@ export type PersistedShowConfigV5 = Omit<PersistedShowConfigV4, 'schemaVersion'>
   globalDisplayBlackoutFadeOutSeconds?: number;
 };
 
-export type PersistedShowConfig = PersistedShowConfigV5;
+export type PersistedShowConfigV6 = Omit<PersistedShowConfigV5, 'schemaVersion'> & {
+  schemaVersion: 6;
+};
+
+export type PersistedShowConfig = PersistedShowConfigV6;
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -419,6 +428,7 @@ export type VirtualOutputUpdate = Partial<
     | 'sinkId'
     | 'sinkLabel'
     | 'busLevelDb'
+    | 'pan'
     | 'muted'
     | 'outputDelaySeconds'
     | 'fallbackAccepted'
@@ -456,6 +466,20 @@ export type TransportCommand =
   | { type: 'set-rate'; rate: number }
   | { type: 'set-loop'; loop: LoopState };
 
+export type RecentShowEntry = {
+  filePath: string;
+  displayName: string;
+  lastOpenedAt: string;
+};
+
+export type LaunchShowData = {
+  recentShows: RecentShowEntry[];
+  defaultShow: {
+    filePath: string;
+    exists: boolean;
+  };
+};
+
 export type IpcChannels = {
   'director:get-state': () => DirectorState;
   'director:apply-preset': (preset: PresetId) => PresetResult;
@@ -487,6 +511,9 @@ export type IpcChannels = {
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
   'show:create-project': () => ShowConfigOperationResult | undefined;
+  'show:get-launch-data': () => LaunchShowData;
+  'show:open-default': () => ShowConfigOperationResult;
+  'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
   'show:choose-embedded-audio-import': (labels: string[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;

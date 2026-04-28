@@ -11,6 +11,7 @@ type OutputSourceRuntime = {
   element: HTMLMediaElement;
   sourceNode: MediaElementAudioSourceNode;
   gainNode: GainNode;
+  sourcePanner: StereoPannerNode;
   meterLanes: SourceMeterLaneRuntime[];
 };
 
@@ -30,6 +31,7 @@ type OutputRuntime = {
   context: AudioContext;
   sources: OutputSourceRuntime[];
   busGain: GainNode;
+  busPanner: StereoPannerNode;
   globalMuteGain: GainNode;
   envelopeGain: GainNode;
   /** Per-bus output delay; meters tap sources before this node. */
@@ -71,8 +73,9 @@ export function setSoloOutputIds(outputIds: Iterable<string>): void {
   soloOutputIds = new Set(outputIds);
 }
 
-export function syncVirtualAudioGraph(state: DirectorState): void {
-  const signature = JSON.stringify(
+/** Build signature for topology-only changes (membership, URL, sink, channel layout). Pan updates do not rebuild. */
+export function computeAudioGraphSignature(state: DirectorState): string {
+  return JSON.stringify(
     Object.values(state.outputs)
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((output) => ({
@@ -86,6 +89,10 @@ export function syncVirtualAudioGraph(state: DirectorState): void {
         })),
       })),
   );
+}
+
+export function syncVirtualAudioGraph(state: DirectorState): void {
+  const signature = computeAudioGraphSignature(state);
   if (signature !== audioGraphSignature) {
     audioGraphSignature = signature;
     void rebuildAudioGraph(state);
@@ -114,6 +121,8 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
   for (const output of Object.values(state.outputs)) {
     const context = new AudioContextCtor();
     const busGain = context.createGain();
+    const busPanner = context.createStereoPanner();
+    busPanner.pan.value = clampAudioPan(output.pan);
     const globalMuteGain = context.createGain();
     globalMuteGain.gain.value = state.globalAudioMuted ? 0 : 1;
     const envelopeGain = context.createGain();
@@ -123,12 +132,13 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
     delayNode.delayTime.value = d0;
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
-    busGain.connect(globalMuteGain).connect(envelopeGain).connect(delayNode).connect(analyser);
+    busGain.connect(busPanner).connect(globalMuteGain).connect(envelopeGain).connect(delayNode).connect(analyser);
     const runtime: OutputRuntime = {
       outputId: output.id,
       context,
       sources: [],
       busGain,
+      busPanner,
       globalMuteGain,
       envelopeGain,
       delayNode,
@@ -152,8 +162,17 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
       const sourceNode = context.createMediaElementSource(element);
       const gainNode = context.createGain();
       connectAudioSourceToGain(context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
-      gainNode.connect(busGain);
-      const meterLanes = createSourceMeterLanes(context, gainNode, output.id, selection.audioSourceId, state.audioSources[selection.audioSourceId]);
+      const sourcePanner = context.createStereoPanner();
+      sourcePanner.pan.value = clampAudioPan(selection.pan);
+      gainNode.connect(sourcePanner);
+      sourcePanner.connect(busGain);
+      const meterLanes = createSourceMeterLanes(
+        context,
+        sourcePanner,
+        output.id,
+        selection.audioSourceId,
+        state.audioSources[selection.audioSourceId],
+      );
       element.addEventListener('loadedmetadata', () => {
         const detectedChannelCount = getSourceChannelCount(state.audioSources[selection.audioSourceId], sourceNode);
         void window.xtream.audioSources.reportMetadata({
@@ -171,7 +190,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
           error: element.error?.message ?? 'Audio failed to load.',
         });
       });
-      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, meterLanes });
+      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, sourcePanner, meterLanes });
     }
     outputRuntimes.set(output.id, runtime);
     await configureOutputRouting(output, context, analyser, runtime);
@@ -192,6 +211,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
     runtime.delayNode.delayTime.setTargetAtTime(targetDelay, t, DELAY_SMOOTH_SECONDS);
     const transportMode = syncTransportEnvelope(runtime, state);
     runtime.busGain.gain.value = getProgramOutputGain(output, soloOutputIds);
+    runtime.busPanner.pan.value = clampAudioPan(output.pan);
     const hasSoloedSource = output.sources.some((selection) => selection.solo);
     for (const sourceRuntime of runtime.sources) {
       const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
@@ -202,6 +222,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       const target = getAudioEffectiveTime(directorSeconds * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
       sourceRuntime.gainNode.gain.value = sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
+      sourceRuntime.sourcePanner.pan.value = clampAudioPan(selection.pan);
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
       if (transportMode === 'fading-out') {
         void runtime.context.resume();
@@ -550,14 +571,14 @@ function connectAudioSourceToGain(
 
 function createSourceMeterLanes(
   context: AudioContext,
-  gainNode: GainNode,
+  tapNode: AudioNode,
   outputId: string,
   audioSourceId: string,
   source: AudioSourceState | undefined,
 ): SourceMeterLaneRuntime[] {
   const channelCount = getExpectedChannelCount(source);
   const splitter = context.createChannelSplitter(channelCount);
-  gainNode.connect(splitter);
+  tapNode.connect(splitter);
   const lanes: SourceMeterLaneRuntime[] = [];
   for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
     const analyser = context.createAnalyser();
@@ -669,6 +690,14 @@ async function configureOutputRouting(
       error: error instanceof Error ? error.message : 'Audio sink assignment failed.',
     });
   }
+}
+
+/** Web Audio `StereoPanner.pan` range; invalid values are clamped. */
+export function clampAudioPan(pan: number | undefined): number {
+  if (pan === undefined || !Number.isFinite(pan)) {
+    return 0;
+  }
+  return Math.max(-1, Math.min(1, pan));
 }
 
 function dbToGain(db: number): number {

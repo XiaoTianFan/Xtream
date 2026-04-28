@@ -10,15 +10,27 @@ import type {
   PersistedShowConfigV3,
   PersistedShowConfigV4,
   PersistedShowConfigV5,
+  PersistedShowConfigV6,
+  RecentShowEntry,
 } from '../shared/types';
 
 export const SHOW_CONFIG_EXTENSION = 'xtream-show.json';
 export const SHOW_PROJECT_FILENAME = `show.${SHOW_CONFIG_EXTENSION}`;
 export const DEFAULT_SHOW_PROJECT_FOLDER = 'default-show';
 export const SHOW_AUDIO_ASSET_DIRECTORY = path.join('assets', 'audio');
+export const RECENT_SHOWS_FILENAME = 'recent-shows.json';
+export const RECENT_SHOWS_LIMIT = 8;
 
 export function getDefaultShowConfigPath(userDataPath: string): string {
   return path.join(userDataPath, DEFAULT_SHOW_PROJECT_FOLDER, SHOW_PROJECT_FILENAME);
+}
+
+export function getRecentShowsPath(userDataPath: string): string {
+  return path.join(userDataPath, RECENT_SHOWS_FILENAME);
+}
+
+export function getShowDisplayName(filePath: string): string {
+  return path.basename(filePath) === SHOW_PROJECT_FILENAME ? path.basename(path.dirname(filePath)) : path.basename(filePath);
 }
 
 export async function writeShowConfig(filePath: string, config: PersistedShowConfig): Promise<void> {
@@ -35,13 +47,98 @@ export async function readShowConfig(filePath: string): Promise<PersistedShowCon
   return assertShowConfig(JSON.parse(raw) as unknown);
 }
 
+export async function readRecentShows(userDataPath: string): Promise<RecentShowEntry[]> {
+  const recentShowsPath = getRecentShowsPath(userDataPath);
+  let entries: RecentShowEntry[] = [];
+  try {
+    entries = normalizeRecentShows(JSON.parse(await readFile(recentShowsPath, 'utf8')) as unknown);
+  } catch (error: unknown) {
+    if (!isMissingFileError(error)) {
+      console.error('Failed to read recent shows.', error);
+    }
+  }
+  const validEntries = filterExistingRecentShows(entries).slice(0, RECENT_SHOWS_LIMIT);
+  if (validEntries.length !== entries.length) {
+    await writeJsonFile(recentShowsPath, validEntries);
+  }
+  return validEntries;
+}
+
+export async function addRecentShow(userDataPath: string, filePath: string, lastOpenedAt = new Date().toISOString()): Promise<RecentShowEntry[]> {
+  if (!isExistingShowFile(filePath)) {
+    return readRecentShows(userDataPath);
+  }
+  const recentShowsPath = getRecentShowsPath(userDataPath);
+  const current = await readRecentShows(userDataPath);
+  const nextEntry: RecentShowEntry = {
+    filePath,
+    displayName: getShowDisplayName(filePath),
+    lastOpenedAt,
+  };
+  const next = [nextEntry, ...current.filter((entry) => getRecentShowPathKey(entry.filePath) !== getRecentShowPathKey(filePath))]
+    .filter((entry) => isExistingShowFile(entry.filePath))
+    .slice(0, RECENT_SHOWS_LIMIT);
+  await writeJsonFile(recentShowsPath, next);
+  return next;
+}
+
+function normalizeRecentShows(value: unknown): RecentShowEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const entries: RecentShowEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const candidate = item as Partial<RecentShowEntry>;
+    if (typeof candidate.filePath !== 'string' || typeof candidate.lastOpenedAt !== 'string') {
+      continue;
+    }
+    const key = getRecentShowPathKey(candidate.filePath);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    entries.push({
+      filePath: candidate.filePath,
+      displayName: typeof candidate.displayName === 'string' && candidate.displayName.trim()
+        ? candidate.displayName
+        : getShowDisplayName(candidate.filePath),
+      lastOpenedAt: candidate.lastOpenedAt,
+    });
+  }
+  return entries.sort((left, right) => right.lastOpenedAt.localeCompare(left.lastOpenedAt));
+}
+
+function filterExistingRecentShows(entries: RecentShowEntry[]): RecentShowEntry[] {
+  return entries.filter((entry) => isExistingShowFile(entry.filePath));
+}
+
+function isExistingShowFile(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function getRecentShowPathKey(filePath: string): string {
+  return path.normalize(filePath).toLowerCase();
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
 export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!value || typeof value !== 'object') {
     throw new Error('Show config must be a JSON object.');
   }
-  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5>;
-  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4 && candidate.schemaVersion !== 5) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3, 4, and 5 only.');
+  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6>;
+  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4 && candidate.schemaVersion !== 5 && candidate.schemaVersion !== 6) {
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 6 only.');
   }
   if (!candidate.visuals || typeof candidate.visuals !== 'object') {
     throw new Error('Show config is missing visuals.');
@@ -56,12 +153,15 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     throw new Error('Show config is missing display mappings.');
   }
   if (candidate.schemaVersion === 3) {
-    return migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3));
+    return migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3)));
   }
   if (candidate.schemaVersion === 4) {
-    return migrateV4ToV5(candidate as PersistedShowConfigV4);
+    return migrateV5ToV6(migrateV4ToV5(candidate as PersistedShowConfigV4));
   }
-  return candidate as PersistedShowConfigV5;
+  if (candidate.schemaVersion === 5) {
+    return migrateV5ToV6(candidate as PersistedShowConfigV5);
+  }
+  return candidate as PersistedShowConfigV6;
 }
 
 export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfigV4 {
@@ -109,6 +209,26 @@ export function migrateV4ToV5(config: PersistedShowConfigV4): PersistedShowConfi
               extractionStatus: source.extractionStatus,
             }
           : source,
+      ]),
+    ),
+  };
+}
+
+export function migrateV5ToV6(config: PersistedShowConfigV5): PersistedShowConfigV6 {
+  return {
+    ...config,
+    schemaVersion: 6,
+    outputs: Object.fromEntries(
+      Object.values(config.outputs).map((output) => [
+        output.id,
+        {
+          ...output,
+          pan: output.pan ?? 0,
+          sources: output.sources.map((s) => ({
+            ...s,
+            pan: s.pan ?? 0,
+          })),
+        },
       ]),
     ),
   };

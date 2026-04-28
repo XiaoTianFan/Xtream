@@ -12,8 +12,10 @@ import {
   buildMediaUrls,
   createDiagnosticsReport,
   getDefaultShowConfigPath,
+  addRecentShow,
   SHOW_AUDIO_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
+  readRecentShows,
   readShowConfig,
   validateRuntimeState,
   validateShowConfigMedia,
@@ -36,6 +38,7 @@ import type {
   OutputMeterReport,
   PresetId,
   PresetResult,
+  LaunchShowData,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -291,6 +294,26 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
   currentShowConfigPath = configPath;
   hasShowChanges = false;
   return { state: director.getState(), filePath: currentShowConfigPath, issues };
+}
+
+async function openShowConfigPath(configPath: string): Promise<ShowConfigOperationResult> {
+  const result = restoreShowConfigFromDiskConfig(configPath, await readShowConfig(configPath));
+  await addRecentShow(app.getPath('userData'), configPath);
+  return result;
+}
+
+async function createEmptyShowProject(configPath: string): Promise<void> {
+  currentShowConfigPath = configPath;
+  await ensureShowProjectStructure(currentShowConfigPath);
+  displayRegistry?.closeAll();
+  director.resetShow();
+  if (!displayRegistry) {
+    throw new Error('Display registry is not initialized.');
+  }
+  const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
+  director.registerDisplay(display);
+  await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+  hasShowChanges = false;
 }
 
 function getProjectAudioDirectory(): string | undefined {
@@ -638,6 +661,7 @@ function registerIpcHandlers(): void {
     await ensureShowProjectStructure(currentShowConfigPath);
     await writeShowConfig(currentShowConfigPath, director.createShowConfig());
     hasShowChanges = false;
+    await addRecentShow(app.getPath('userData'), currentShowConfigPath);
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
 
@@ -653,18 +677,36 @@ function registerIpcHandlers(): void {
       return undefined;
     }
     const projectDirectory = result.filePaths[0];
-    currentShowConfigPath = path.join(projectDirectory, SHOW_PROJECT_FILENAME);
-    await ensureShowProjectStructure(currentShowConfigPath);
-    displayRegistry?.closeAll();
-    director.resetShow();
-    if (!displayRegistry) {
-      throw new Error('Display registry is not initialized.');
-    }
-    const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
-    director.registerDisplay(display);
-    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
-    hasShowChanges = false;
+    await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME));
+    await addRecentShow(app.getPath('userData'), currentShowConfigPath!);
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
+  });
+
+  ipcMain.handle('show:get-launch-data', async (): Promise<LaunchShowData> => {
+    const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
+    return {
+      recentShows: await readRecentShows(app.getPath('userData')),
+      defaultShow: {
+        filePath: defaultShowPath,
+        exists: fs.existsSync(defaultShowPath),
+      },
+    };
+  });
+
+  ipcMain.handle('show:open-default', async (): Promise<ShowConfigOperationResult> => {
+    const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
+    if (!fs.existsSync(defaultShowPath)) {
+      await createEmptyShowProject(defaultShowPath);
+    }
+    return openShowConfigPath(defaultShowPath);
+  });
+
+  ipcMain.handle('show:open-recent', async (_event, filePath: string): Promise<ShowConfigOperationResult | undefined> => {
+    if (!fs.existsSync(filePath)) {
+      await readRecentShows(app.getPath('userData'));
+      return undefined;
+    }
+    return openShowConfigPath(filePath);
   });
 
   ipcMain.handle('show:update-settings', (_event, update: ShowSettingsUpdate) => {
@@ -706,8 +748,7 @@ function registerIpcHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return undefined;
     }
-    const configPath = result.filePaths[0];
-    return restoreShowConfigFromDiskConfig(configPath, await readShowConfig(configPath));
+    return openShowConfigPath(result.filePaths[0]);
   });
 
   ipcMain.handle('show:export-diagnostics', async (): Promise<string | undefined> => {
@@ -830,14 +871,6 @@ app.whenReady().then(() => {
 
   controlWindow = createControlWindow();
   audioWindow = createAudioWindow();
-  currentShowConfigPath = getDefaultShowConfigPath(app.getPath('userData'));
-  if (fs.existsSync(currentShowConfigPath)) {
-    void readShowConfig(currentShowConfigPath)
-      .then((config) => restoreShowConfigFromDiskConfig(currentShowConfigPath!, config))
-      .catch((error: unknown) => {
-        console.error('Failed to restore default show config.', error);
-      });
-  }
 
   app.on('activate', () => {
     if (!isShuttingDown && BrowserWindow.getAllWindows().length === 0) {

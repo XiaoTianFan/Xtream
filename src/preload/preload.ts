@@ -19,6 +19,7 @@ import type {
   OutputMeterReport,
   PresetId,
   PresetResult,
+  LaunchShowData,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -104,6 +105,9 @@ const api = {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
     createProject: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:create-project'),
+    getLaunchData: (): Promise<LaunchShowData> => ipcRenderer.invoke('show:get-launch-data'),
+    openDefault: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:open-default'),
+    openRecent: (filePath: string): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-recent', filePath),
     updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),
     chooseEmbeddedAudioImport: (labels: string[]): Promise<EmbeddedAudioImportChoice> =>
       ipcRenderer.invoke('show:choose-embedded-audio-import', labels),
