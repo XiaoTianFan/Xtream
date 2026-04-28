@@ -51,6 +51,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let assetPreview: AssetPreviewController | undefined;
   let mixerPanel: MixerPanelController | undefined;
   let displayWorkspace: DisplayWorkspaceController | undefined;
+  let bottomRenderSignature = '';
   let mixerRenderSignature = '';
   let displayRenderSignature = '';
   const expandedListSceneIds = new Set<SceneId>();
@@ -237,7 +238,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mediaPool?.syncPoolSelectionHighlight(mediaState);
     assetPreview?.render(mediaState, selectedEntity);
     renderWorkspacePane();
-    renderBottomPane();
+    renderBottomPaneIfNeeded();
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
   }
@@ -259,6 +260,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, currentState);
     syncListRuntimeProgress(requireRef('workspace'), streamState);
+    syncSceneEditRunningLock();
   }
 
   function syncListRuntimeProgress(root: HTMLElement, state: StreamEnginePublicState): void {
@@ -378,6 +380,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       setSelectedSceneId: (id) => {
         selectedSceneId = id;
         sceneEditSelection = { kind: 'scene' };
+        bottomRenderSignature = '';
       },
       setBottomTab: (tab) => {
         bottomTab = tab;
@@ -473,7 +476,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       sceneEditSelection,
       setSceneEditSelection: (sel: SceneEditSelection) => {
         sceneEditSelection = sel;
+        bottomRenderSignature = '';
       },
+      isSelectedSceneRunning,
       getDirectorState: () => currentState,
       renderDirectorState: options.renderState,
     };
@@ -501,6 +506,71 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     );
   }
 
+  function renderBottomPaneIfNeeded(): void {
+    const signature = createBottomRenderSignature();
+    if (bottomRenderSignature === signature) {
+      syncSceneEditRunningLock();
+      return;
+    }
+    bottomRenderSignature = signature;
+    renderBottomPane();
+  }
+
+  function createBottomRenderSignature(): string {
+    return JSON.stringify({
+      bottomTab,
+      detailPane,
+      selectedEntity,
+      selectedSceneId,
+      sceneEditSelection,
+      sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
+      mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(currentState!) : undefined,
+      displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(currentState!) : undefined,
+    });
+  }
+
+  function createSceneEditRenderModel(): unknown {
+    const stream = streamState!.stream;
+    const scene = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
+    return {
+      stream,
+      validationMessages: streamState!.validationMessages,
+      selectedSceneRunning: isSelectedSceneRunning(),
+      media: currentState
+        ? {
+            visuals: Object.values(currentState.visuals)
+              .filter((visual) => !isStreamRuntimeVisualId(visual.id))
+              .map((visual) => ({ id: visual.id, label: visual.label, kind: visual.kind, type: visual.type })),
+            audioSources: Object.values(currentState.audioSources)
+              .filter((source) => !isStreamRuntimeAudioSourceId(source.id))
+              .map((source) => ({ id: source.id, label: source.label, type: source.type })),
+            outputs: Object.values(currentState.outputs).map((output) => ({ id: output.id, label: output.label })),
+            displays: Object.values(currentState.displays).map((display) => ({ id: display.id, label: display.label, layout: display.layout })),
+          }
+        : undefined,
+      selectedScene: scene?.id,
+    };
+  }
+
+  function isSelectedSceneRunning(): boolean {
+    if (!selectedSceneId) {
+      return false;
+    }
+    return streamState?.runtime?.sceneStates[selectedSceneId]?.status === 'running';
+  }
+
+  function syncSceneEditRunningLock(): void {
+    const bottom = refs.bottom;
+    if (!bottom || bottomTab !== 'scene') {
+      return;
+    }
+    const edit = bottom.querySelector<HTMLElement>('.stream-scene-edit');
+    if (!edit) {
+      return;
+    }
+    edit.classList.toggle('is-locked', isSelectedSceneRunning());
+  }
+
   function updateSelectedScene(update: Partial<PersistedSceneConfig>): void {
     if (!selectedSceneId) {
       return;
@@ -513,6 +583,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       const idx = state.stream.sceneOrder.indexOf(sceneId);
       selectedSceneId = state.stream.sceneOrder[idx + 1] ?? sceneId;
       sceneEditSelection = { kind: 'scene' };
+      bottomRenderSignature = '';
     });
   }
 
@@ -520,6 +591,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((state) => {
       selectedSceneId = state.stream.sceneOrder[0];
       sceneEditSelection = { kind: 'scene' };
+      bottomRenderSignature = '';
     });
   }
 
@@ -532,10 +604,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (entity.type === 'output') {
       detailPane = { type: 'output', id: entity.id, returnTab: 'mixer' };
       bottomTab = 'mixer';
+      bottomRenderSignature = '';
     }
     if (entity.type === 'display') {
       detailPane = { type: 'display', id: entity.id, returnTab: 'displays' };
       bottomTab = 'displays';
+      bottomRenderSignature = '';
     }
     renderCurrent();
   }

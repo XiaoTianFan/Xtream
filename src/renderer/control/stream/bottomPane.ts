@@ -31,6 +31,7 @@ export type StreamBottomPaneContext = {
   removeSelectedScene: (sceneId: SceneId) => void;
   sceneEditSelection: SceneEditSelection;
   setSceneEditSelection: (sel: SceneEditSelection) => void;
+  isSelectedSceneRunning: () => boolean;
   getDirectorState: () => DirectorState | undefined;
   renderDirectorState: (state: DirectorState) => void;
 };
@@ -126,6 +127,7 @@ export function renderStreamBottomPane(
             scene,
             currentState: ctx.currentState,
             streamPublic: ctx.streamState,
+            isSceneRunning: ctx.isSelectedSceneRunning(),
             sceneEditSelection: ctx.sceneEditSelection,
             setSceneEditSelection: ctx.setSceneEditSelection,
             getDirectorState: ctx.getDirectorState,

@@ -27,6 +27,7 @@ import type {
   VisualUpdate,
   VisualMetadataReport,
   VisualState,
+  VirtualOutputSourceSelection,
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
@@ -61,6 +62,7 @@ export class Director extends EventEmitter {
   private visualSequence = 0;
   private audioSourceSequence = 0;
   private outputSequence = 1;
+  private outputSourceSelectionSequence = 0;
   private displayPersistMeta = new Map<DisplayWindowState['id'], Pick<PersistedDisplayConfigV8, 'visualMingle'>>();
 
   constructor(now: () => number = Date.now) {
@@ -88,6 +90,7 @@ export class Director extends EventEmitter {
         assignedVideoIds: [],
         activeAudioSourceIds: [],
       },
+      audioRendererReady: false,
       readiness: {
         ready: false,
         checkedAtWallTimeMs: this.now(),
@@ -481,12 +484,14 @@ export class Director extends EventEmitter {
   }
 
   resetShow(): DirectorState {
+    const preservedAudioRendererReady = this.state.audioRendererReady;
     this.correctionCounts.clear();
     this.lastCorrectionWallTimeMs.clear();
     this.correctionRevision = 0;
     this.visualSequence = 0;
     this.audioSourceSequence = 0;
     this.outputSequence = 1;
+    this.outputSourceSelectionSequence = 0;
     this.displayPersistMeta.clear();
     this.state = {
       paused: true,
@@ -519,7 +524,18 @@ export class Director extends EventEmitter {
         displays: {},
       },
       previews: {},
+      audioRendererReady: preservedAudioRendererReady,
     };
+    this.emitState();
+    return this.getState();
+  }
+
+  /** Called when the dedicated audio renderer process loads (`renderer:ready`, kind `audio`). */
+  markAudioRendererReady(): DirectorState {
+    if (this.state.audioRendererReady) {
+      return this.getState();
+    }
+    this.state.audioRendererReady = true;
     this.emitState();
     return this.getState();
   }
@@ -652,9 +668,11 @@ export class Director extends EventEmitter {
     if (!output) {
       throw new Error(`Unknown virtual output: ${outputId}`);
     }
+    const nextSources = update.sources ? this.normalizeOutputSourceSelections(outputId, update.sources) : output.sources;
     this.state.outputs[outputId] = {
       ...output,
       ...update,
+      sources: nextSources,
       ready: output.ready,
       error: Object.prototype.hasOwnProperty.call(update, 'error') ? update.error : output.error,
     };
@@ -709,6 +727,7 @@ export class Director extends EventEmitter {
     savedAt = new Date().toISOString(),
     streamPersistence: Pick<PersistedShowConfigV8, 'stream'> = getDefaultStreamPersistence(),
   ): PersistedShowConfig {
+    this.normalizeAllOutputSourceSelectionsInState();
     const displays: PersistedDisplayConfigV8[] = Object.values(this.state.displays).map((display) => {
       const mingle = this.displayPersistMeta.get(display.id)?.visualMingle;
       return {
@@ -725,7 +744,9 @@ export class Director extends EventEmitter {
     const patchScene = buildPatchCompatibilityScene(
       this.state.loop,
       displays.map((d) => ({ id: d.id!, layout: d.layout })),
-      Object.fromEntries(Object.values(this.state.outputs).map((o) => [o.id, { id: o.id, sources: o.sources }])),
+      Object.fromEntries(
+        Object.values(this.state.outputs).map((o) => [o.id, { id: o.id, sources: this.normalizeOutputSourceSelections(o.id, o.sources) }]),
+      ),
     );
     return {
       schemaVersion: 8,
@@ -806,7 +827,7 @@ export class Director extends EventEmitter {
           {
             id: output.id,
             label: output.label,
-            sources: structuredClone(output.sources),
+            sources: this.normalizeOutputSourceSelections(output.id, output.sources),
             sinkId: output.sinkId,
             sinkLabel: output.sinkLabel,
             busLevelDb: output.busLevelDb,
@@ -928,10 +949,7 @@ export class Director extends EventEmitter {
         {
           id: output.id,
           label: output.label,
-          sources: output.sources.map((s) => ({
-            ...s,
-            pan: s.pan ?? 0,
-          })),
+          sources: this.normalizeOutputSourceSelections(output.id, output.sources),
           sinkId: output.sinkId,
           sinkLabel: output.sinkLabel,
           busLevelDb: output.busLevelDb,
@@ -1398,7 +1416,7 @@ export class Director extends EventEmitter {
     return {
       id,
       label,
-      sources: sourceId ? [{ audioSourceId: sourceId, levelDb: 0, pan: 0 }] : [],
+      sources: sourceId ? [this.createOutputSourceSelection(id, sourceId)] : [],
       busLevelDb: 0,
       pan: 0,
       outputDelaySeconds: 0,
@@ -1407,6 +1425,44 @@ export class Director extends EventEmitter {
       fallbackAccepted: false,
       fallbackReason: 'none',
     };
+  }
+
+  private createOutputSourceSelection(outputId: string, audioSourceId: string): VirtualOutputSourceSelection {
+    return {
+      id: this.nextOutputSourceSelectionId(outputId),
+      audioSourceId,
+      levelDb: 0,
+      pan: 0,
+    };
+  }
+
+  private normalizeOutputSourceSelections(outputId: string, sources: VirtualOutputSourceSelection[]): VirtualOutputSourceSelection[] {
+    const seen = new Set<string>();
+    return sources.map((source) => {
+      const existingId = typeof source.id === 'string' && source.id.trim() ? source.id : undefined;
+      const id = existingId && !seen.has(existingId) ? existingId : this.nextOutputSourceSelectionId(outputId, seen);
+      seen.add(id);
+      return {
+        ...source,
+        id,
+        pan: source.pan ?? 0,
+      };
+    });
+  }
+
+  private normalizeAllOutputSourceSelectionsInState(): void {
+    for (const output of Object.values(this.state.outputs)) {
+      output.sources = this.normalizeOutputSourceSelections(output.id, output.sources);
+    }
+  }
+
+  private nextOutputSourceSelectionId(outputId: string, reserved: Set<string> = new Set()): string {
+    let id: string;
+    do {
+      this.outputSourceSelectionSequence += 1;
+      id = `${outputId}-source-${this.outputSourceSelectionSequence}`;
+    } while (reserved.has(id));
+    return id;
   }
 
   private updateOutputReadiness(): void {

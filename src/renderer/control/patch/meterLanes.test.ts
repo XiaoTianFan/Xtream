@@ -38,6 +38,7 @@ function testState(output: VirtualOutputState): DirectorState {
     },
     displays: {},
     activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+    audioRendererReady: true,
     readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
     corrections: { displays: {} },
     previews: {},
@@ -59,7 +60,7 @@ describe('deriveOutputMeterLanes', () => {
       outputId: output.id,
       lanes: [
         {
-          id: 'output-main:sourceA:ch-1',
+          id: 'output-main:sourceA@0:ch-1',
           label: 'L',
           audioSourceId: 'sourceA',
           channelIndex: 0,
@@ -67,7 +68,7 @@ describe('deriveOutputMeterLanes', () => {
           clipped: false,
         },
         {
-          id: 'output-main:sourceA:ch-2',
+          id: 'output-main:sourceA@0:ch-2',
           label: 'R',
           audioSourceId: 'sourceA',
           channelIndex: 1,
@@ -81,7 +82,7 @@ describe('deriveOutputMeterLanes', () => {
 
     expect(deriveOutputMeterLanes(output, testState(output), staleReport)).toEqual([
       {
-        id: 'output-main:sourceB:ch-1',
+        id: 'output-main:sourceB@0:ch-1',
         label: 'C1',
         audioSourceId: 'sourceB',
         channelIndex: 0,
@@ -105,7 +106,7 @@ describe('deriveOutputMeterLanes', () => {
       outputId: output.id,
       lanes: [
         {
-          id: 'output-main:sourceA:ch-1',
+          id: 'output-main:sourceA@0:ch-1',
           label: 'L',
           audioSourceId: 'sourceA',
           channelIndex: 0,
@@ -113,7 +114,7 @@ describe('deriveOutputMeterLanes', () => {
           clipped: false,
         },
         {
-          id: 'output-main:sourceA:ch-2',
+          id: 'output-main:sourceA@0:ch-2',
           label: 'R',
           audioSourceId: 'sourceA',
           channelIndex: 1,
@@ -126,8 +127,30 @@ describe('deriveOutputMeterLanes', () => {
     };
 
     expect(deriveOutputMeterLanes(output, testState(output), report).map((lane) => [lane.id, lane.db, lane.clipped])).toEqual([
-      ['output-main:sourceA:ch-1', -9, false],
-      ['output-main:sourceA:ch-2', 0, true],
+      ['output-main:sourceA@0:ch-1', -9, false],
+      ['output-main:sourceA@0:ch-2', 0, true],
+    ]);
+  });
+
+  it('creates distinct lane ids for duplicate source routes with different selection ids', () => {
+    const output: VirtualOutputState = {
+      id: 'output-main',
+      label: 'Main',
+      sources: [
+        { id: 'route-a', audioSourceId: 'sourceA', levelDb: -3 },
+        { id: 'route-b', audioSourceId: 'sourceA', levelDb: -12 },
+      ],
+      busLevelDb: 0,
+      ready: true,
+      physicalRoutingAvailable: true,
+      fallbackReason: 'none',
+    };
+
+    expect(deriveOutputMeterLanes(output, testState(output), undefined).map((lane) => lane.id)).toEqual([
+      'output-main:route-a:ch-1',
+      'output-main:route-a:ch-2',
+      'output-main:route-b:ch-1',
+      'output-main:route-b:ch-2',
     ]);
   });
 });

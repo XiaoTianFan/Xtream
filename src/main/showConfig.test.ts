@@ -115,6 +115,7 @@ function createRuntimeState(): DirectorState {
     outputs: {},
     displays: {},
     activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+    audioRendererReady: false,
     readiness: {
       ready: false,
       checkedAtWallTimeMs: 0,

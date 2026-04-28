@@ -23,13 +23,14 @@ export type SubCueRailDeps = {
   currentState: DirectorState;
   sceneEditSelection: SceneEditSelection;
   setSceneEditSelection: (sel: SceneEditSelection) => void;
+  editsDisabled?: boolean;
   getDirectorState: () => DirectorState | undefined;
   renderDirectorState: (state: DirectorState) => void;
   requestRender: () => void;
 };
 
 export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
-  const { stream, scene, currentState, sceneEditSelection, setSceneEditSelection, getDirectorState, renderDirectorState, requestRender } = deps;
+  const { stream, scene, currentState, sceneEditSelection, setSceneEditSelection, editsDisabled = false, getDirectorState, renderDirectorState, requestRender } = deps;
 
   const rail = document.createElement('div');
   rail.className = 'stream-subcue-rail';
@@ -126,7 +127,7 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
 
     const row = document.createElement('div');
     row.className = 'stream-subcue-rail-row';
-    row.draggable = true;
+    row.draggable = !editsDisabled;
 
     const selected = sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === subCueId;
     const titleWrap = document.createElement('div');
@@ -143,8 +144,13 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
 
     const removeBtn = createButton('', 'secondary icon-button stream-subcue-rail-remove', () => removeSubCue(subCueId));
     decorateIconButton(removeBtn, 'Trash2', 'Remove sub-cue');
+    removeBtn.disabled = editsDisabled;
 
     row.addEventListener('dragstart', (event) => {
+      if (editsDisabled) {
+        event.preventDefault();
+        return;
+      }
       const el = event.target as HTMLElement;
       if (el.closest('.stream-subcue-rail-remove')) {
         event.preventDefault();
@@ -164,9 +170,15 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     });
 
     rowWrap.addEventListener('dragover', (event) => {
+      if (editsDisabled) {
+        return;
+      }
       syncIndicatorForRowDrag(event, row, subCueId);
     });
     rowWrap.addEventListener('drop', (event) => {
+      if (editsDisabled) {
+        return;
+      }
       event.preventDefault();
       const dragged = event.dataTransfer?.getData('text/plain') as SubCueId | undefined;
       const intent = finalizeDropIntent();
@@ -186,6 +198,9 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   endDropTarget.className = 'stream-subcue-rail-end-target';
   endDropTarget.setAttribute('aria-hidden', 'true');
   endDropTarget.addEventListener('dragover', (e) => {
+    if (editsDisabled) {
+      return;
+    }
     if (!draggingSubCueId) {
       return;
     }
@@ -197,6 +212,9 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     showDropLine(lr.left, er.top - 1.5, lr.width);
   });
   endDropTarget.addEventListener('drop', (e) => {
+    if (editsDisabled) {
+      return;
+    }
     e.preventDefault();
     const dragged = e.dataTransfer?.getData('text/plain') as SubCueId | undefined;
     const intent = finalizeDropIntent();
@@ -213,15 +231,25 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   const addSummaryBtn = document.createElement('summary');
   addSummaryBtn.className = 'stream-section-pill phantom stream-subcue-add-summary';
   addSummaryBtn.textContent = 'Add Sub-Cue';
+  if (editsDisabled) {
+    addSummaryBtn.setAttribute('aria-disabled', 'true');
+  }
 
   const menu = document.createElement('div');
   menu.className = 'stream-subcue-add-menu';
-  menu.append(
-    createButton('Audio', 'secondary', () => void addCue('audio')),
-    createButton('Visual', 'secondary', () => void addCue('visual')),
-    createButton('Control', 'secondary', () => void addCue('control')),
-  );
+  const addAudio = createButton('Audio', 'secondary', () => void addCue('audio'));
+  const addVisual = createButton('Visual', 'secondary', () => void addCue('visual'));
+  const addControl = createButton('Control', 'secondary', () => void addCue('control'));
+  addAudio.disabled = editsDisabled;
+  addVisual.disabled = editsDisabled;
+  addControl.disabled = editsDisabled;
+  menu.append(addAudio, addVisual, addControl);
   addDetails.append(addSummaryBtn, menu);
+  addDetails.addEventListener('toggle', () => {
+    if (editsDisabled && addDetails.open) {
+      addDetails.open = false;
+    }
+  });
   addWrap.append(addDetails);
 
   rail.append(endDropTarget, addWrap, dropLine);

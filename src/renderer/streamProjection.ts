@@ -79,6 +79,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
     } as AudioSourceState & RuntimeOffset;
     const selection: VirtualOutputSourceSelection = {
+      id: cloneId,
       audioSourceId: cloneId,
       levelDb: cue.levelDb,
       pan: cue.pan ?? 0,

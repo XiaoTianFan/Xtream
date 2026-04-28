@@ -1,5 +1,5 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
-import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputState } from '../../../shared/types';
+import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputSourceSelection, VirtualOutputState } from '../../../shared/types';
 import { createPlaybackSyncKey, requestMediaPlay, syncTimedMediaElement } from './mediaSync';
 
 type SinkCapableAudioElement = HTMLAudioElement & {
@@ -7,6 +7,7 @@ type SinkCapableAudioElement = HTMLAudioElement & {
 };
 
 type OutputSourceRuntime = {
+  selectionId: string;
   audioSourceId: string;
   element: HTMLMediaElement;
   sourceNode: MediaElementAudioSourceNode;
@@ -81,7 +82,8 @@ export function computeAudioGraphSignature(state: DirectorState): string {
       .map((output) => ({
         id: output.id,
         sinkId: output.sinkId,
-        sources: output.sources.map((selection) => ({
+        sources: output.sources.map((selection, index) => ({
+          selectionId: getOutputSourceSelectionRuntimeId(selection, index),
           id: selection.audioSourceId,
           url: getAudioSourceUrl(selection.audioSourceId, state),
           channelCount: state.audioSources[selection.audioSourceId]?.channelCount,
@@ -149,7 +151,8 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
       transportPlaying: !state.paused,
       envelopeTargetGain: state.paused ? 0 : 1,
     };
-    for (const selection of output.sources) {
+    for (const [selectionIndex, selection] of output.sources.entries()) {
+      const selectionId = getOutputSourceSelectionRuntimeId(selection, selectionIndex);
       const url = getAudioSourceUrl(selection.audioSourceId, state);
       if (!url) {
         continue;
@@ -170,6 +173,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
         context,
         sourcePanner,
         output.id,
+        selectionId,
         selection.audioSourceId,
         state.audioSources[selection.audioSourceId],
       );
@@ -196,7 +200,7 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
           error: element.error?.message ?? 'Audio failed to load.',
         });
       });
-      runtime.sources.push({ audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, sourcePanner, meterLanes });
+      runtime.sources.push({ selectionId, audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, sourcePanner, meterLanes });
     }
     outputRuntimes.set(output.id, runtime);
     await configureOutputRouting(output, context, analyser, runtime);
@@ -220,7 +224,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
     runtime.busPanner.pan.value = clampAudioPan(output.pan);
     const hasSoloedSource = output.sources.some((selection) => selection.solo);
     for (const sourceRuntime of runtime.sources) {
-      const selection = output.sources.find((candidate) => candidate.audioSourceId === sourceRuntime.audioSourceId);
+      const selection = findOutputSourceSelectionForRuntime(output.sources, sourceRuntime.selectionId, sourceRuntime.audioSourceId);
       const source = state.audioSources[sourceRuntime.audioSourceId];
       if (!selection || !source) {
         continue;
@@ -426,6 +430,19 @@ export function getFirstMeteredAudioSource(): { audioSourceId: string; element: 
   return firstRuntime?.sources.find((source) => source.element.readyState >= HTMLMediaElement.HAVE_METADATA);
 }
 
+export function getOutputSourceSelectionRuntimeId(selection: VirtualOutputSourceSelection, index: number): string {
+  return selection.id ?? `${selection.audioSourceId}@${index}`;
+}
+
+export function findOutputSourceSelectionForRuntime(
+  selections: VirtualOutputSourceSelection[],
+  selectionId: string,
+  audioSourceId: string,
+): VirtualOutputSourceSelection | undefined {
+  return selections.find((selection, index) => getOutputSourceSelectionRuntimeId(selection, index) === selectionId)
+    ?? selections.find((selection) => selection.audioSourceId === audioSourceId);
+}
+
 export function playAudioSourcePreview(source: AudioSourceState, state: DirectorState, setStatus: (message: string) => void): void {
   const url =
     source.type === 'external-file'
@@ -585,6 +602,7 @@ function createSourceMeterLanes(
   context: AudioContext,
   tapNode: AudioNode,
   outputId: string,
+  selectionId: string,
   audioSourceId: string,
   source: AudioSourceState | undefined,
 ): SourceMeterLaneRuntime[] {
@@ -597,7 +615,7 @@ function createSourceMeterLanes(
     analyser.fftSize = 1024;
     splitter.connect(analyser, channelIndex);
     lanes.push({
-      id: `${outputId}:${audioSourceId}:ch-${channelIndex + 1}`,
+      id: `${outputId}:${selectionId}:ch-${channelIndex + 1}`,
       label: formatLaneLabel(source, channelIndex, channelCount),
       audioSourceId,
       channelIndex,

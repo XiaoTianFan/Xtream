@@ -23,6 +23,10 @@ export function isLaunchPresentationReady(state: DirectorState, activeSurface: C
     return false;
   }
 
+  if (!state.audioRendererReady) {
+    return false;
+  }
+
   const displays = getActiveDisplays(state.displays);
   for (const display of displays) {
     if (display.health !== 'ready') {

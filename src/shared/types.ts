@@ -182,6 +182,7 @@ export type AudioSourceState =
     };
 
 export type VirtualOutputSourceSelection = {
+  id?: string;
   audioSourceId: AudioSourceId;
   levelDb: number;
   /** Constant-power pan: -1 = full left, 0 = center, 1 = full right. */
@@ -274,6 +275,8 @@ export type DirectorState = {
   /** Visual mingle algorithms per display (persist-only; omitted when empty). Derived from persisted show display config in `Director.getState()`. */
   displayVisualMingle?: Partial<Record<DisplayWindowId, NonNullable<PersistedDisplayConfigV8['visualMingle']>>>;
   activeTimeline: ActiveTimelineState;
+  /** True after the dedicated audio BrowserWindow renderer invokes `renderer:ready` (IPC). Independent of show load. */
+  audioRendererReady: boolean;
   readiness: ShowReadinessState;
   corrections: CorrectionState;
   previews: Record<string, PreviewStatus>;
@@ -448,6 +451,8 @@ export type PersistedAudioSubCueConfig = {
   /** Mirrors virtual output slot mute/solo for Patch routing round-trip through the hidden scene. */
   muted?: boolean;
   solo?: boolean;
+  /** Stable Patch routing row id for round-tripping virtual output source assignments. */
+  outputSourceSelectionId?: string;
   levelAutomation?: CurvePoint[];
   panAutomation?: CurvePoint[];
   playbackRate?: number;

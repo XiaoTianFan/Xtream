@@ -138,6 +138,9 @@ export function buildPatchCompatibilityScene(
         pan: source.pan,
         playbackRate: 1,
       };
+      if (source.id !== undefined) {
+        audioCue.outputSourceSelectionId = source.id;
+      }
       if (source.muted !== undefined) {
         audioCue.muted = source.muted;
       }
@@ -207,6 +210,9 @@ export function applyPatchCompatibilitySceneToPersistedRouting(
           levelDb: cue.levelDb ?? 0,
           pan: cue.pan ?? 0,
         };
+        if (cue.outputSourceSelectionId !== undefined) {
+          sel.id = cue.outputSourceSelectionId;
+        }
         if (cue.muted !== undefined) {
           sel.muted = cue.muted;
         }

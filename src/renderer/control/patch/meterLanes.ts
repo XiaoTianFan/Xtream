@@ -1,4 +1,5 @@
 import type { AudioSourceState, DirectorState, MeterLaneState, OutputMeterReport, VirtualOutputState } from '../../../shared/types';
+import { getOutputSourceSelectionRuntimeId } from '../media/audioRuntime';
 
 export function deriveOutputMeterLanes(
   output: VirtualOutputState,
@@ -7,11 +8,12 @@ export function deriveOutputMeterLanes(
 ): MeterLaneState[] {
   const reportedById = new Map((report?.lanes ?? output.meterLanes ?? []).map((lane) => [lane.id, lane]));
 
-  return output.sources.flatMap((selection) => {
+  return output.sources.flatMap((selection, selectionIndex) => {
     const source = state?.audioSources[selection.audioSourceId];
     const channelCount = getOutputLaneChannelCount(source);
+    const selectionId = getOutputSourceSelectionRuntimeId(selection, selectionIndex);
     return Array.from({ length: channelCount }, (_, channelIndex): MeterLaneState => {
-      const id = `${output.id}:${selection.audioSourceId}:ch-${channelIndex + 1}`;
+      const id = `${output.id}:${selectionId}:ch-${channelIndex + 1}`;
       const reported = reportedById.get(id);
       return {
         id,

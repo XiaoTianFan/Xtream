@@ -39,6 +39,7 @@ describe('deriveDirectorStateForStream', () => {
         d1: { id: 'd1', layout: { type: 'single', visualId: 'patch-visual' }, fullscreen: false, health: 'ready' },
       },
       activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+      audioRendererReady: true,
       readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
       corrections: { displays: {} },
       previews: {},

@@ -115,6 +115,29 @@ describe('Patch compatibility projection', () => {
     expect(routed['output-main']?.sources).toEqual(outputs['output-main'].sources);
   });
 
+  it('round-trips duplicate audio source routes with independent levels via the patch scene', () => {
+    const loop = { enabled: false, startSeconds: 0 };
+    const displays: PersistedDisplayConfigV8[] = [{ id: 'disp-a', layout: { type: 'single' as const }, fullscreen: false }];
+    const outputs = {
+      'output-main': {
+        id: 'output-main',
+        label: 'Main',
+        sources: [
+          { id: 'route-a', audioSourceId: 'a1', levelDb: -3, pan: 0 },
+          { id: 'route-b', audioSourceId: 'a1', levelDb: -18, pan: 0.5 },
+        ],
+        busLevelDb: 0,
+        pan: 0,
+      },
+    };
+    const scene = buildPatchCompatibilityScene(loop, [{ id: 'disp-a', layout: { type: 'single' as const } }], outputs);
+    expect(scene.subCues['patch-aud-output-main-0']).toMatchObject({ outputSourceSelectionId: 'route-a', levelDb: -3 });
+    expect(scene.subCues['patch-aud-output-main-1']).toMatchObject({ outputSourceSelectionId: 'route-b', levelDb: -18 });
+
+    const { outputs: routed } = applyPatchCompatibilitySceneToPersistedRouting(scene, displays, outputs);
+    expect(routed['output-main']?.sources).toEqual(outputs['output-main'].sources);
+  });
+
   it('ignores non-audio/non-visual sub-cues in the patch scene', () => {
     const base = buildPatchCompatibilityScene(
       { enabled: false, startSeconds: 0 },

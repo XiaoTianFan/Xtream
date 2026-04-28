@@ -463,8 +463,10 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     if (output.sources.length === 0) {
       wrapper.append(createHint('No sources selected.'));
     }
-    for (const selection of output.sources) {
+    for (const [selectionIndex, selection] of output.sources.entries()) {
       const source = state.audioSources[selection.audioSourceId];
+      const isSameSelection = (candidate: typeof selection, candidateIndex: number) =>
+        selection.id ? candidate.id === selection.id : candidateIndex === selectionIndex;
       const row = document.createElement('div');
       row.className = 'output-source-row';
 
@@ -479,8 +481,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
 
       const levelControl = createDbFader('Level dB', selection.levelDb, (levelDb) => {
         void window.xtream.outputs.update(output.id, {
-          sources: output.sources.map((candidate) =>
-            candidate.audioSourceId === selection.audioSourceId ? { ...candidate, levelDb } : candidate,
+          sources: output.sources.map((candidate, candidateIndex) =>
+            isSameSelection(candidate, candidateIndex) ? { ...candidate, levelDb } : candidate,
           ),
         });
       });
@@ -492,8 +494,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
         variant: 'row',
         onChange: (pan) => {
           void window.xtream.outputs.update(output.id, {
-            sources: output.sources.map((candidate) =>
-              candidate.audioSourceId === selection.audioSourceId ? { ...candidate, pan } : candidate,
+            sources: output.sources.map((candidate, candidateIndex) =>
+              isSameSelection(candidate, candidateIndex) ? { ...candidate, pan } : candidate,
             ),
           });
         },
@@ -502,7 +504,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
 
       const removeButton = createButton('Remove', 'secondary', async () => {
         await window.xtream.outputs.update(output.id, {
-          sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
+          sources: output.sources.filter((candidate, candidateIndex) => !isSameSelection(candidate, candidateIndex)),
         });
         const nextState = await window.xtream.director.getState();
         options.renderState(nextState);
@@ -510,8 +512,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
       });
       const soloButton = createButton('S', selection.solo ? 'secondary active' : 'secondary', async () => {
         await window.xtream.outputs.update(output.id, {
-          sources: output.sources.map((candidate) =>
-            candidate.audioSourceId === selection.audioSourceId ? { ...candidate, solo: !candidate.solo } : candidate,
+          sources: output.sources.map((candidate, candidateIndex) =>
+            isSameSelection(candidate, candidateIndex) ? { ...candidate, solo: !candidate.solo } : candidate,
           ),
         });
         options.renderState(await window.xtream.director.getState());
@@ -521,8 +523,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
       soloButton.setAttribute('aria-pressed', String(Boolean(selection.solo)));
       const muteButton = createButton('M', selection.muted ? 'secondary active' : 'secondary', async () => {
         await window.xtream.outputs.update(output.id, {
-          sources: output.sources.map((candidate) =>
-            candidate.audioSourceId === selection.audioSourceId ? { ...candidate, muted: !candidate.muted } : candidate,
+          sources: output.sources.map((candidate, candidateIndex) =>
+            isSameSelection(candidate, candidateIndex) ? { ...candidate, muted: !candidate.muted } : candidate,
           ),
         });
         options.renderState(await window.xtream.director.getState());

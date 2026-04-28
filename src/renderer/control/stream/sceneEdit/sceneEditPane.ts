@@ -9,6 +9,7 @@ import { createVisualSubCueForm } from './visualSubCueForm';
 
 export type SceneEditPaneDeps = SubCueRailDeps & {
   streamPublic: StreamEnginePublicState;
+  isSceneRunning: boolean;
   duplicateScene: (sceneId: SceneId) => void;
   removeScene: (sceneId: SceneId) => void;
 };
@@ -19,6 +20,7 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     scene,
     currentState,
     streamPublic,
+    isSceneRunning,
     sceneEditSelection,
     setSceneEditSelection,
     duplicateScene,
@@ -30,6 +32,7 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
 
   const wrap = document.createElement('section');
   wrap.className = 'stream-scene-edit';
+  wrap.classList.toggle('is-locked', isSceneRunning);
 
   if (streamPublic.validationMessages.length > 0) {
     const vb = document.createElement('div');
@@ -44,6 +47,7 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     currentState,
     sceneEditSelection,
     setSceneEditSelection,
+    editsDisabled: isSceneRunning,
     getDirectorState,
     renderDirectorState,
     requestRender,
@@ -99,6 +103,18 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     }
   }
 
+  if (isSceneRunning) {
+    disableEditControls(detail);
+  }
+
   wrap.append(rail, detail);
   return wrap;
+}
+
+function disableEditControls(root: HTMLElement): void {
+  for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(
+    'input, select, textarea, button',
+  )) {
+    control.disabled = true;
+  }
 }

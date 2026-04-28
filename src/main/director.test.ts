@@ -665,4 +665,29 @@ describe('Director', () => {
     expect(director.getState().outputs[out.id].pan).toBe(0.25);
     expect(director.getState().outputs[out.id].sources[0].pan).toBe(-0.4);
   });
+
+  it('backfills stable ids for duplicate virtual output source selections', () => {
+    const director = new Director(() => 1000);
+    const a = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
+    director.updateVirtualOutput('output-main', {
+      sources: [
+        { audioSourceId: a.id, levelDb: -3, pan: 0 },
+        { audioSourceId: a.id, levelDb: -18, pan: 0.5 },
+      ],
+    });
+
+    const sources = director.getState().outputs['output-main'].sources;
+    expect(sources.map((source) => source.levelDb)).toEqual([-3, -18]);
+    expect(new Set(sources.map((source) => source.id)).size).toBe(2);
+
+    const config = director.createShowConfig('2026-04-29T00:00:00.000Z');
+    expect(config.outputs['output-main'].sources.map((source) => source.id)).toEqual(sources.map((source) => source.id));
+    expect(
+      config.patchCompatibility.scene.subCueOrder.map(
+        (id) => config.patchCompatibility.scene.subCues[id]?.kind === 'audio'
+          ? config.patchCompatibility.scene.subCues[id].outputSourceSelectionId
+          : undefined,
+      ),
+    ).toEqual(sources.map((source) => source.id));
+  });
 });

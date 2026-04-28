@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DirectorState } from '../../../shared/types';
-import { clampAudioPan, computeAudioGraphSignature, getEffectiveOutputGain } from './audioRuntime';
+import { clampAudioPan, computeAudioGraphSignature, findOutputSourceSelectionForRuntime, getEffectiveOutputGain } from './audioRuntime';
 
 const output = {
   id: 'output-main',
@@ -48,6 +48,7 @@ function graphTestState(overrides: { outputPan?: number; sourcePan?: number } = 
     },
     displays: {},
     activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+    audioRendererReady: true,
     readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
     corrections: { displays: {} },
     previews: {},
@@ -104,5 +105,16 @@ describe('computeAudioGraphSignature', () => {
       },
     };
     expect(computeAudioGraphSignature(a)).not.toBe(computeAudioGraphSignature(c));
+  });
+});
+
+describe('findOutputSourceSelectionForRuntime', () => {
+  it('matches duplicate audio source routes by selection id', () => {
+    const selections = [
+      { id: 'route-a', audioSourceId: 's1', levelDb: -3, pan: 0 },
+      { id: 'route-b', audioSourceId: 's1', levelDb: -18, pan: 0 },
+    ];
+
+    expect(findOutputSourceSelectionForRuntime(selections, 'route-b', 's1')?.levelDb).toBe(-18);
   });
 });

@@ -1240,6 +1240,7 @@ function registerIpcHandlers(): void {
       return;
     }
     if (report.kind === 'audio') {
+      director.markAudioRendererReady();
       sendSoloOutputIds(audioWindow);
       return;
     }
