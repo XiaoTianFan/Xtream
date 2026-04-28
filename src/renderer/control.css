@@ -3138,6 +3138,85 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   border-style: dashed;
 }
 
+.stream-subcue-rail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--compact);
+  min-width: 0;
+}
+
+.stream-subcue-rail-reorder {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.stream-subcue-rail-reorder .button {
+  padding: 0.2rem 0.35rem;
+  min-width: 1.75rem;
+}
+
+.stream-subcue-add-details {
+  margin-top: var(--compact);
+}
+
+.stream-subcue-add-details .stream-subcue-add-menu {
+  display: grid;
+  gap: var(--compact);
+  margin-top: var(--compact);
+  padding: 0 var(--compact) var(--compact);
+}
+
+.stream-subcue-form {
+  display: grid;
+  gap: var(--gutter);
+}
+
+.stream-subcue-fade-group {
+  padding: var(--compact) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.stream-subcue-fade-group-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: var(--compact);
+}
+
+.stream-subcue-output-checkboxes .stream-checkbox-field,
+.stream-subcue-routing-flags .stream-checkbox-field {
+  display: block;
+  margin: 0.2rem 0;
+}
+
+.stream-visual-target-grid .stream-visual-target-display {
+  font-weight: 600;
+  margin: 0.5rem 0 0.2rem;
+}
+
+.stream-validation-banner.hint {
+  margin-bottom: var(--compact);
+  max-height: 3.25rem;
+  overflow: auto;
+}
+
+.stream-control-warnings.hint {
+  padding: var(--compact) 0 0;
+}
+
+.stream-display-detail-card .mapping-grid {
+  margin-top: var(--gutter);
+}
+
+.stream-display-mingle-trans {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: var(--gutter) 0;
+}
+
 .stream-scene-edit-detail,
 .stream-scene-form {
   min-width: 0;

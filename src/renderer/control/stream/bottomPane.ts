@@ -1,7 +1,8 @@
 import type { DirectorState, SceneId, StreamEnginePublicState } from '../../../shared/types';
+import type { SceneEditSelection } from './streamTypes';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
-import { createButton } from '../shared/dom';
+import { createButton, createHint } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { createSceneEditPane } from './sceneEdit/sceneEditPane';
@@ -28,6 +29,10 @@ export type StreamBottomPaneContext = {
   requestRender: () => void;
   duplicateSelectedScene: (sceneId: SceneId) => void;
   removeSelectedScene: (sceneId: SceneId) => void;
+  sceneEditSelection: SceneEditSelection;
+  setSceneEditSelection: (sel: SceneEditSelection) => void;
+  getDirectorState: () => DirectorState | undefined;
+  renderDirectorState: (state: DirectorState) => void;
 };
 
 export function createStreamBottomTabAction(ctx: StreamBottomPaneContext): HTMLButtonElement | undefined {
@@ -111,14 +116,25 @@ export function renderStreamBottomPane(
   const content = document.createElement('div');
   content.className = 'stream-bottom-content';
   if (ctx.bottomTab === 'scene') {
+    const stream = ctx.streamState.stream;
+    const sid = ctx.selectedSceneId;
+    const scene = sid ? stream.scenes[sid] : undefined;
     content.append(
-      createSceneEditPane({
-        stream: ctx.streamState.stream,
-        selectedSceneId: ctx.selectedSceneId,
-        duplicateScene: ctx.duplicateSelectedScene,
-        removeScene: ctx.removeSelectedScene,
-        currentState: ctx.currentState,
-      }),
+      scene
+        ? createSceneEditPane({
+            stream,
+            scene,
+            currentState: ctx.currentState,
+            streamPublic: ctx.streamState,
+            sceneEditSelection: ctx.sceneEditSelection,
+            setSceneEditSelection: ctx.setSceneEditSelection,
+            getDirectorState: ctx.getDirectorState,
+            renderDirectorState: ctx.renderDirectorState,
+            requestRender: ctx.requestRender,
+            duplicateScene: ctx.duplicateSelectedScene,
+            removeScene: ctx.removeSelectedScene,
+          })
+        : createHint('No scene selected.'),
     );
   } else if (ctx.bottomTab === 'mixer') {
     content.append(renderStreamMixerPane(ctx, outputPanel));

@@ -1184,13 +1184,17 @@ function registerIpcHandlers(): void {
     if (!displayRegistry) {
       throw new Error('Display registry is not initialized.');
     }
+    const { visualMingle, ...rest } = update;
+    if (visualMingle !== undefined) {
+      director.setDisplayVisualMingle(id, visualMingle);
+    }
     const currentDisplay = director.getState().displays[id];
     if (!displayRegistry.get(id) && currentDisplay) {
-      const state = director.updateDisplay({ ...currentDisplay, ...update });
+      const state = director.updateDisplay({ ...currentDisplay, ...rest });
       scheduleShowConfigAutoSave();
       return state.displays[id];
     }
-    const display = displayRegistry.update(id, update);
+    const display = displayRegistry.update(id, rest);
     director.updateDisplay(display);
     scheduleShowConfigAutoSave();
     return display;

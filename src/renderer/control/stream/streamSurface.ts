@@ -3,8 +3,10 @@ import type {
   DirectorState,
   OutputMeterReport,
   PersistedSceneConfig,
+  PersistedStreamConfig,
   SceneId,
   StreamEnginePublicState,
+  SubCueId,
 } from '../../../shared/types';
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
@@ -29,7 +31,7 @@ import {
 } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { renderStreamHeader } from './streamHeader';
-import type { StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
+import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
 
 export type { StreamSurfaceController } from './streamTypes';
@@ -53,6 +55,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let displayRenderSignature = '';
   const expandedListSceneIds = new Set<SceneId>();
   let listDragSceneId: SceneId | undefined;
+  let sceneEditSelection: SceneEditSelection = { kind: 'scene' };
 
   const refs: StreamSurfaceRefs = {};
   const layoutCtl = createStreamLayoutController(refs);
@@ -112,6 +115,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return JSON.stringify({
       stream: streamState,
       selectedSceneId,
+      sceneEditSelection,
       mode,
       bottomTab,
       detailPane,
@@ -169,10 +173,23 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const stream = streamState?.stream;
     if (!stream) {
       selectedSceneId = undefined;
+      sceneEditSelection = { kind: 'scene' };
       return;
     }
     if (!selectedSceneId || !stream.scenes[selectedSceneId]) {
       selectedSceneId = stream.sceneOrder.find((id) => !stream.scenes[id]?.disabled) ?? stream.sceneOrder[0];
+      sceneEditSelection = { kind: 'scene' };
+    }
+    syncSceneEditSelection(stream);
+  }
+
+  function syncSceneEditSelection(stream: PersistedStreamConfig): void {
+    if (sceneEditSelection.kind !== 'subcue') {
+      return;
+    }
+    const sc = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
+    if (!sc || sceneEditSelection.sceneId !== selectedSceneId || !sc.subCues[sceneEditSelection.subCueId]) {
+      sceneEditSelection = { kind: 'scene' };
     }
   }
 
@@ -245,6 +262,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       currentState,
       setSelectedSceneId: (id) => {
         selectedSceneId = id;
+        sceneEditSelection = { kind: 'scene' };
       },
       setBottomTab: (tab) => {
         bottomTab = tab;
@@ -337,6 +355,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       requestRender: renderCurrent,
       duplicateSelectedScene,
       removeSelectedScene,
+      sceneEditSelection,
+      setSceneEditSelection: (sel: SceneEditSelection) => {
+        sceneEditSelection = sel;
+      },
+      getDirectorState: () => currentState,
+      renderDirectorState: options.renderState,
     };
     renderStreamBottomPane(
       panel,
@@ -373,12 +397,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     void window.xtream.stream.edit({ type: 'duplicate-scene', sceneId }).then((state) => {
       const idx = state.stream.sceneOrder.indexOf(sceneId);
       selectedSceneId = state.stream.sceneOrder[idx + 1] ?? sceneId;
+      sceneEditSelection = { kind: 'scene' };
     });
   }
 
   function removeSelectedScene(sceneId: SceneId): void {
     void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((state) => {
       selectedSceneId = state.stream.sceneOrder[0];
+      sceneEditSelection = { kind: 'scene' };
     });
   }
 
@@ -421,6 +447,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       mode,
       bottomTab,
       selectedSceneId,
+      sceneEditSelection:
+        sceneEditSelection.kind === 'subcue'
+          ? { kind: 'subcue', subCueId: sceneEditSelection.subCueId }
+          : { kind: 'scene' },
       expandedListSceneIds: [...expandedListSceneIds],
       layout: readStreamLayoutPrefs(),
       detailPane: detailPane
@@ -450,6 +480,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     if (snapshot.selectedSceneId && streamCfg.scenes[snapshot.selectedSceneId]) {
       selectedSceneId = snapshot.selectedSceneId;
+    }
+    sceneEditSelection = { kind: 'scene' };
+    const seSnap = snapshot.sceneEditSelection;
+    if (selectedSceneId && seSnap?.kind === 'subcue') {
+      const sc = streamCfg.scenes[selectedSceneId];
+      if (sc?.subCues[seSnap.subCueId]) {
+        sceneEditSelection = { kind: 'subcue', sceneId: selectedSceneId, subCueId: seSnap.subCueId as SubCueId };
+      }
     }
     expandedListSceneIds.clear();
     for (const sid of snapshot.expandedListSceneIds ?? []) {

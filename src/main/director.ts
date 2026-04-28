@@ -7,6 +7,7 @@ import type {
   AudioSourceState,
   DirectorState,
   EmbeddedAudioExtractionMode,
+  DisplayWindowId,
   DisplayWindowState,
   DriftReport,
   GlobalStateUpdate,
@@ -111,7 +112,25 @@ export class Director extends EventEmitter {
 
   getState(): DirectorState {
     this.refreshReadiness();
-    return structuredClone(this.state);
+    const clone = structuredClone(this.state);
+    const mingleEntries: NonNullable<DirectorState['displayVisualMingle']> = {};
+    for (const [displayId, meta] of this.displayPersistMeta) {
+      if (meta.visualMingle) {
+        mingleEntries[displayId] = meta.visualMingle;
+      }
+    }
+    return {
+      ...clone,
+      displayVisualMingle: Object.keys(mingleEntries).length > 0 ? mingleEntries : undefined,
+    };
+  }
+
+  setDisplayVisualMingle(displayId: DisplayWindowId, mingle: PersistedDisplayConfigV8['visualMingle'] | undefined): void {
+    if (mingle) {
+      this.displayPersistMeta.set(displayId, { visualMingle: mingle });
+    } else {
+      this.displayPersistMeta.delete(displayId);
+    }
   }
 
   getPlaybackTimeSeconds(atWallTimeMs = this.now()): number {
@@ -997,6 +1016,7 @@ export class Director extends EventEmitter {
   }
 
   removeDisplay(id: string): DirectorState {
+    this.displayPersistMeta.delete(id);
     delete this.state.displays[id];
     delete this.state.corrections.displays[id];
     this.correctionCounts.delete(`display:${id}`);

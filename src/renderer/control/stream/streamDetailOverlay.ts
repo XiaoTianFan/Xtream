@@ -1,4 +1,4 @@
-import type { DirectorState, DisplayWindowState, VirtualOutputState } from '../../../shared/types';
+import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualMingleAlgorithm } from '../../../shared/types';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
 import { createButton, createHint, createSelect } from '../shared/dom';
@@ -39,7 +39,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
     const display = currentState.displays[detailPane.id];
     body.append(
       display
-        ? createStreamDisplayDetailCard(display, options, displayWorkspace, refreshDirector)
+        ? createStreamDisplayDetailCard(display, currentState, options, displayWorkspace, refreshDirector)
         : createHint('Display not found.'),
     );
   } else {
@@ -54,6 +54,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
 
 function createStreamDisplayDetailCard(
   display: DisplayWindowState,
+  state: DirectorState,
   options: StreamSurfaceOptions,
   displayWorkspace: DisplayWorkspaceController | undefined,
   refreshDirector: () => Promise<void>,
@@ -77,10 +78,62 @@ function createStreamDisplayDetailCard(
       window.xtream.displays.update(display.id, { alwaysOnTop: !display.alwaysOnTop }).then(refreshDirector),
     ),
   );
+  const visualIds = Object.keys(state.visuals).sort();
+
+  const minglePersist = state.displayVisualMingle?.[display.id];
+  const mingleAlgo: VisualMingleAlgorithm[] = ['latest', 'alpha-over', 'additive', 'multiply', 'screen', 'lighten', 'darken', 'crossfade'];
+  const mingleSelect = createSelect(
+    'Visual mingle algorithm',
+    mingleAlgo.map((alg): [VisualMingleAlgorithm, string] => [
+      alg,
+      alg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    ]),
+    minglePersist?.algorithm ?? 'latest',
+    (algorithm) =>
+      void window.xtream.displays
+        .update(display.id, {
+          visualMingle: {
+            algorithm: algorithm as VisualMingleAlgorithm,
+            defaultTransitionMs: minglePersist?.defaultTransitionMs,
+          },
+        })
+        .then(refreshDirector),
+  );
+
+  const transWrap = document.createElement('div');
+  transWrap.className = 'detail-field stream-display-mingle-trans';
+  const transLabel = document.createElement('label');
+  transLabel.textContent = 'Crossfade transition (ms)';
+  const transInput = document.createElement('input');
+  transInput.type = 'number';
+  transInput.min = '0';
+  transInput.step = '50';
+  transInput.className = 'label-input';
+  transInput.placeholder = '(optional)';
+  transInput.value = minglePersist?.defaultTransitionMs !== undefined ? String(minglePersist.defaultTransitionMs) : '';
+  transInput.addEventListener('change', () => {
+    const raw = transInput.value.trim();
+    const ms = raw === '' ? undefined : Math.max(0, Number(raw) || 0);
+    void window.xtream.displays
+      .update(display.id, {
+        visualMingle: {
+          algorithm: minglePersist?.algorithm ?? 'latest',
+          ...(ms !== undefined ? { defaultTransitionMs: ms } : {}),
+        },
+      })
+      .then(refreshDirector);
+  });
+  transWrap.append(transLabel, transInput);
+
+  const routing = displayWorkspace?.createMappingControls(display, visualIds, true);
+
   card.append(
     createStreamDetailField('Label', label),
     monitor,
     toolbar,
+    mingleSelect,
+    transWrap,
+    routing ?? createHint('Routing controls unavailable.'),
     createStreamDetailLine('Status', displayWorkspace?.getDisplayStatusLabel(display) ?? 'Display'),
     createStreamDetailLine('Telemetry', displayWorkspace?.getDisplayTelemetry(display) ?? display.id),
   );

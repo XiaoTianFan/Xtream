@@ -271,6 +271,8 @@ export type DirectorState = {
   audioSources: Record<AudioSourceId, AudioSourceState>;
   outputs: Record<VirtualOutputId, VirtualOutputState>;
   displays: Record<DisplayWindowId, DisplayWindowState>;
+  /** Visual mingle algorithms per display (persist-only; omitted when empty). Derived from persisted show display config in `Director.getState()`. */
+  displayVisualMingle?: Partial<Record<DisplayWindowId, NonNullable<PersistedDisplayConfigV8['visualMingle']>>>;
   activeTimeline: ActiveTimelineState;
   readiness: ShowReadinessState;
   corrections: CorrectionState;
@@ -680,7 +682,10 @@ export type DisplayCreateOptions = {
   bounds?: DisplayWindowState['bounds'];
 };
 
-export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'label' | 'layout' | 'fullscreen' | 'alwaysOnTop' | 'displayId'>>;
+export type DisplayUpdate = Partial<Pick<DisplayWindowState, 'label' | 'layout' | 'fullscreen' | 'alwaysOnTop' | 'displayId'>> & {
+  /** Persisted-only field; stripped before applying to Electron display window state. */
+  visualMingle?: PersistedDisplayConfigV8['visualMingle'];
+};
 
 export type DisplayMonitorInfo = {
   id: string;
@@ -806,6 +811,8 @@ export type ControlProjectUiStreamState = {
   mode?: 'list' | 'flow';
   bottomTab?: 'scene' | 'mixer' | 'displays';
   selectedSceneId?: string;
+  /** Selected panel in Scene Edit: scene-level form vs a specific sub-cue (sceneId aligns with selectedSceneId). */
+  sceneEditSelection?: { kind: 'scene' } | { kind: 'subcue'; subCueId: string };
   expandedListSceneIds?: string[];
   layout?: {
     mediaWidthPx?: number;

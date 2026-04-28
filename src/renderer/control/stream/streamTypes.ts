@@ -5,8 +5,15 @@ import type {
   DirectorState,
   DisplayMonitorInfo,
   OutputMeterReport,
+  SceneId,
   StreamEnginePublicState,
+  SubCueId,
 } from '../../../shared/types';
+
+/** Which editor is visible in Scene Edit bottom tab: scene defaults vs one sub-cue. */
+export type SceneEditSelection =
+  | { kind: 'scene' }
+  | { kind: 'subcue'; sceneId: SceneId; subCueId: SubCueId };
 
 export type StreamMode = 'list' | 'flow';
 
