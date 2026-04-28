@@ -314,6 +314,13 @@ body.extraction-blocked .nav-rail {
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.launch-dashboard {
+  background: var(--bg-base);
+}
+
+.extraction-overlay {
   background: color-mix(in srgb, var(--bg-base) 72%, transparent);
 }
 
@@ -331,6 +338,13 @@ body.extraction-blocked .nav-rail {
   box-shadow: 0 18px 60px rgb(0 0 0 / 0.35);
   padding: 16px;
   overflow: hidden;
+}
+
+.launch-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0;
 }
 
 .launch-header,
@@ -393,6 +407,42 @@ body.extraction-blocked .nav-rail {
   to {
     transform: rotate(360deg);
   }
+}
+
+.launch-loading-footer {
+  display: none;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.launch-dashboard[data-phase="loading"] .launch-loading-footer {
+  display: grid;
+}
+
+.launch-loading-status {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  justify-self: end;
+  color: var(--accent-teal);
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.launch-dashboard[data-phase="loading"] .launch-loading-status::before {
+  content: "";
+  grid-row: 2;
+  justify-self: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50% !important;
+  border: 2px solid color-mix(in srgb, var(--accent-teal) 28%, transparent);
+  border-top-color: var(--accent-teal);
+  animation: extraction-spin 0.9s linear infinite;
 }
 
 .extraction-message {
@@ -494,6 +544,7 @@ body.extraction-blocked .nav-rail {
 .launch-recents {
   display: grid;
   gap: 8px;
+  flex: 1;
   margin-top: 14px;
   min-height: 0;
 }

@@ -1,16 +1,25 @@
 import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
+import type { ControlSurface } from '../shared/types';
 import { elements } from './elements';
+import { runLaunchPresentationGate } from './launchPresentationReady';
 
 type LaunchDashboardOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: ShowConfigOperationResult['issues']) => void;
   clearSelection: () => void;
   hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
+  getActiveSurface: () => ControlSurface;
 };
 
 export type LaunchDashboardController = ReturnType<typeof createLaunchDashboardController>;
 
-export function createLaunchDashboardController({ renderState, setShowStatus, clearSelection, hydrateAfterShowLoaded }: LaunchDashboardOptions) {
+export function createLaunchDashboardController({
+  renderState,
+  setShowStatus,
+  clearSelection,
+  hydrateAfterShowLoaded,
+  getActiveSurface,
+}: LaunchDashboardOptions) {
   let visible = true;
 
   const show = (): void => {
@@ -34,6 +43,11 @@ export function createLaunchDashboardController({ renderState, setShowStatus, cl
     renderState(result.state);
     await hydrateAfterShowLoaded?.(result);
     renderState(result.state);
+    await runLaunchPresentationGate({
+      launchDashboardElement: elements.launchDashboard,
+      getActiveSurface,
+      setShowStatus,
+    });
     setShowStatus(message, result.issues);
     hide();
   };

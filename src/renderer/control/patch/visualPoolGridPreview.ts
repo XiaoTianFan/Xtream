@@ -5,6 +5,16 @@ import { getVisualPoolThumbDataUrl, setVisualPoolThumbDataUrl } from './visualPo
 
 const LIVE_POOL_GRID_SNAPSHOT_MS = 2000;
 
+function reportPoolPreviewStatus(visual: VisualState, ready: boolean, error?: string): void {
+  void window.xtream.renderer.reportPreviewStatus({
+    key: `pool:${visual.id}`,
+    visualId: visual.id,
+    ready,
+    error,
+    reportedAtWallTimeMs: Date.now(),
+  });
+}
+
 function tryCacheImageBitmap(visual: VisualState, img: HTMLImageElement): void {
   img.addEventListener(
     'load',
@@ -98,6 +108,20 @@ export function mountVisualPoolGridPreview(
     let intervalId: number | undefined;
     let attachmentCleanup: (() => void) | undefined;
 
+    let poolReported = false;
+    const maybeReportPoolOk = (): void => {
+      if (poolReported) {
+        return;
+      }
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) {
+        return;
+      }
+      poolReported = true;
+      reportPoolPreviewStatus(visual, true);
+    };
+
     const draw = (): void => {
       const w = video.videoWidth;
       const h = video.videoHeight;
@@ -123,6 +147,7 @@ export function mountVisualPoolGridPreview(
         placeholder.remove();
         placeholder = undefined;
       }
+      maybeReportPoolOk();
       try {
         setVisualPoolThumbDataUrl(visual, canvas.toDataURL('image/jpeg', 0.85));
       } catch {
@@ -136,10 +161,12 @@ export function mountVisualPoolGridPreview(
       .then((att) => {
         attachmentCleanup = att.cleanup;
         draw();
+        maybeReportPoolOk();
         intervalId = window.setInterval(draw, LIVE_POOL_GRID_SNAPSHOT_MS);
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : 'Live preview unavailable.';
+        reportPoolPreviewStatus(visual, false, message);
         reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, message);
         const hint = document.createElement('p');
         hint.className = 'visual-pool-card__preview-fallback';
@@ -162,6 +189,14 @@ export function mountVisualPoolGridPreview(
     img.src = cached ?? visual.url;
     img.alt = visual.label;
     applyVisualStyle(img, visual);
+    const settlePoolOk = (): void => reportPoolPreviewStatus(visual, true);
+    const settlePoolErr = (): void => reportPoolPreviewStatus(visual, false, 'Pool image preview failed to load.');
+    if (img.complete && img.naturalHeight > 0) {
+      settlePoolOk();
+    } else {
+      img.addEventListener('load', settlePoolOk, { once: true });
+      img.addEventListener('error', settlePoolErr, { once: true });
+    }
     if (!cached) {
       tryCacheImageBitmap(visual, img);
     }
@@ -176,6 +211,14 @@ export function mountVisualPoolGridPreview(
       img.src = cached;
       img.alt = visual.label;
       applyVisualStyle(img, visual);
+      const settlePoolOk = (): void => reportPoolPreviewStatus(visual, true);
+      const settlePoolErr = (): void => reportPoolPreviewStatus(visual, false, 'Pool cached thumb failed to load.');
+      if (img.complete && img.naturalHeight > 0) {
+        settlePoolOk();
+      } else {
+        img.addEventListener('load', settlePoolOk, { once: true });
+        img.addEventListener('error', settlePoolErr, { once: true });
+      }
       container.append(img);
       return;
     }
@@ -185,12 +228,18 @@ export function mountVisualPoolGridPreview(
     video.preload = 'metadata';
     video.src = visual.url;
     applyVisualStyle(video, visual);
+    video.addEventListener(
+      'error',
+      () => reportPoolPreviewStatus(visual, false, 'Pool video preview failed to load.'),
+      { once: true },
+    );
     const onLoaded = (): void => {
       video.currentTime = 0.05;
     };
     const onSeeked = (): void => {
       video.pause();
       tryCacheVideoFrame(visual, video);
+      reportPoolPreviewStatus(visual, true);
       video.removeEventListener('loadeddata', onLoaded);
       video.removeEventListener('seeked', onSeeked);
     };
@@ -205,6 +254,7 @@ export function mountVisualPoolGridPreview(
     return;
   }
 
+  reportPoolPreviewStatus(visual, true);
   const fallback = document.createElement('p');
   fallback.className = 'visual-pool-card__preview-fallback';
   fallback.textContent = 'No preview';

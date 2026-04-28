@@ -13,6 +13,7 @@ import { createPatchSurfaceController } from './control/patch/patchSurface';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
 import { createLaunchDashboardController } from './control/shell/launchDashboard';
+import { runLaunchPresentationGate } from './control/shell/launchPresentationReady';
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
 import { renderIssues as renderIssueList } from './control/shared/issues';
@@ -78,21 +79,36 @@ function tick(): void {
 /** Replaced after surfaces exist; always called only after full init. */
 let hydrateControlShellAfterShow: (result: ShowConfigOperationResult) => Promise<void> = async () => undefined;
 
+/** Set before launchDashboard init; used so menu-driven open/create can gate on presentation readiness. */
+const launchShellRef: {
+  controller?: ReturnType<typeof createLaunchDashboardController>;
+} = {};
+
 const showActions = createShowActions({
   renderState,
   setShowStatus,
   clearSelection: () => clearPatchSelection(),
   onShowOpened: () => {
-    if (launchDashboard.isVisible()) {
-      launchDashboard.hide();
+    if (launchShellRef.controller?.isVisible()) {
+      launchShellRef.controller.hide();
     }
   },
   onShowCreated: () => {
-    if (launchDashboard.isVisible()) {
-      launchDashboard.hide();
+    if (launchShellRef.controller?.isVisible()) {
+      launchShellRef.controller.hide();
     }
   },
   hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
+  beforeRevealLaunchShell: async () => {
+    if (!launchShellRef.controller?.isVisible()) {
+      return;
+    }
+    await runLaunchPresentationGate({
+      launchDashboardElement: elements.launchDashboard,
+      getActiveSurface: () => surfaceRouter.getActiveSurface(),
+      setShowStatus,
+    });
+  },
 });
 
 const patchSurface = createPatchSurfaceController({
@@ -170,12 +186,14 @@ window.__xtreamGetControlUiSnapshot = (): ControlProjectUiStateV1 | null => {
   return snap;
 };
 
-const launchDashboard = createLaunchDashboardController({
+launchShellRef.controller = createLaunchDashboardController({
   renderState,
   setShowStatus,
   clearSelection: patchSurface.clearSelection,
   hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
+  getActiveSurface: () => surfaceRouter.getActiveSurface(),
 });
+const launchDashboard = launchShellRef.controller;
 
 installInteractionLock(patchElements.visualList);
 installInteractionLock(patchElements.audioPanel);

@@ -7,6 +7,8 @@ type ShowActionsOptions = {
   onShowOpened: () => void;
   onShowCreated: () => void;
   hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
+  /** Runs before hiding launch shell when opening/creating from menus while launch UI is visible. */
+  beforeRevealLaunchShell?: () => Promise<void>;
 };
 
 export type ShowActions = ReturnType<typeof createShowActions>;
@@ -33,6 +35,7 @@ export function createShowActions(options: ShowActionsOptions) {
       await options.hydrateAfterShowLoaded?.(result);
       options.renderState(result.state);
       options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
+      await options.beforeRevealLaunchShell?.();
       options.onShowOpened();
     }
   }
@@ -45,6 +48,7 @@ export function createShowActions(options: ShowActionsOptions) {
       await options.hydrateAfterShowLoaded?.(result);
       options.renderState(result.state);
       options.setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
+      await options.beforeRevealLaunchShell?.();
       options.onShowCreated();
     }
   }
