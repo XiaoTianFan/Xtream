@@ -177,9 +177,12 @@
               <div class="launch-recents-heading">Recent Shows</div>
               <div id="launchRecentList" class="launch-recent-list" aria-live="polite"></div>
             </div>
-            <footer id="launchLoadingFooter" class="launch-loading-footer" aria-live="polite">
-              <div class="launch-loading-status">Loading show…</div>
-            </footer>
+            <div id="launchLoadingOverlay" class="launch-loading-overlay" aria-hidden="true">
+              <div class="launch-loading-overlay-scrim"></div>
+              <div class="launch-loading-overlay-center">
+                <div class="launch-loading-status">Loading show…</div>
+              </div>
+            </div>
           </div>
         </section>
 

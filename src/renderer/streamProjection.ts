@@ -1,0 +1,140 @@
+import type {
+  AudioSourceState,
+  DirectorState,
+  StreamEnginePublicState,
+  VirtualOutputSourceSelection,
+  VisualLayoutProfile,
+  VisualState,
+} from '../shared/types';
+
+type RuntimeOffset = {
+  runtimeOffsetSeconds?: number;
+};
+
+function isStreamRuntimeActive(streamState: StreamEnginePublicState | undefined): boolean {
+  const status = streamState?.runtime?.status;
+  return status === 'running' || status === 'paused' || status === 'preloading';
+}
+
+export function deriveDirectorStateForStream(state: DirectorState, streamState: StreamEnginePublicState | undefined): DirectorState {
+  const runtime = streamState?.runtime;
+  if (!isStreamRuntimeActive(streamState) || !runtime) {
+    return state;
+  }
+
+  const offsetSeconds =
+    runtime.status === 'running'
+      ? (runtime.offsetStreamMs ?? runtime.currentStreamMs ?? 0) / 1000
+      : (runtime.pausedAtStreamMs ?? runtime.currentStreamMs ?? runtime.offsetStreamMs ?? 0) / 1000;
+  const derived: DirectorState = {
+    ...state,
+    paused: runtime.status !== 'running',
+    anchorWallTimeMs: runtime.status === 'running' ? (runtime.originWallTimeMs ?? Date.now()) : Date.now(),
+    offsetSeconds,
+    loop: { enabled: false, startSeconds: 0 },
+    audioSources: { ...state.audioSources },
+    visuals: { ...state.visuals },
+    outputs: Object.fromEntries(
+      Object.entries(state.outputs).map(([id, output]) => [
+        id,
+        {
+          ...output,
+          sources: [],
+        },
+      ]),
+    ),
+    displays: Object.fromEntries(
+      Object.entries(state.displays).map(([id, display]) => [
+        id,
+        {
+          ...display,
+          layout: emptyLayoutFor(display.layout),
+        },
+      ]),
+    ),
+    activeTimeline: {
+      assignedVideoIds: [],
+      activeAudioSourceIds: [],
+      durationSeconds: runtime.expectedDurationMs !== undefined ? runtime.expectedDurationMs / 1000 : undefined,
+      loopRangeLimit: runtime.expectedDurationMs !== undefined ? { startSeconds: 0, endSeconds: runtime.expectedDurationMs / 1000 } : undefined,
+      notice: runtime.timelineNotice,
+    },
+  };
+
+  for (const cue of runtime.activeAudioSubCues ?? []) {
+    const source = state.audioSources[cue.audioSourceId];
+    const output = derived.outputs[cue.outputId];
+    if (!source || !output) {
+      continue;
+    }
+    const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
+    derived.audioSources[cloneId] = {
+      ...source,
+      id: cloneId,
+      label: `${source.label}`,
+      playbackRate: (source.playbackRate ?? 1) * cue.playbackRate,
+      durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : source.durationSeconds,
+      ready: source.ready,
+      error: source.error,
+      runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
+    } as AudioSourceState & RuntimeOffset;
+    const selection: VirtualOutputSourceSelection = {
+      audioSourceId: cloneId,
+      levelDb: cue.levelDb,
+      pan: cue.pan ?? 0,
+    };
+    if (cue.muted !== undefined) {
+      selection.muted = cue.muted;
+    }
+    if (cue.solo !== undefined) {
+      selection.solo = cue.solo;
+    }
+    output.sources.push(selection);
+    derived.activeTimeline.activeAudioSourceIds.push(cloneId);
+  }
+
+  const displaySlots = new Map<string, { single?: string; left?: string; right?: string }>();
+  for (const cue of runtime.activeVisualSubCues ?? []) {
+    const visual = state.visuals[cue.visualId];
+    const display = derived.displays[cue.target.displayId];
+    if (!visual || !display) {
+      continue;
+    }
+    const cloneId = `stream-visual:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
+    derived.visuals[cloneId] = {
+      ...visual,
+      id: cloneId,
+      playbackRate: (visual.playbackRate ?? 1) * cue.playbackRate,
+      durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : visual.durationSeconds,
+      runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
+    } as VisualState & RuntimeOffset;
+    const slots = displaySlots.get(display.id) ?? {};
+    const zone = cue.target.zoneId ?? 'single';
+    if (zone === 'L') {
+      slots.left = cloneId;
+    } else if (zone === 'R') {
+      slots.right = cloneId;
+    } else {
+      slots.single = cloneId;
+    }
+    displaySlots.set(display.id, slots);
+    derived.activeTimeline.assignedVideoIds.push(cloneId);
+  }
+
+  for (const [displayId, slots] of displaySlots) {
+    const display = derived.displays[displayId];
+    if (!display) {
+      continue;
+    }
+    display.layout =
+      slots.left !== undefined || slots.right !== undefined
+        ? { type: 'split', visualIds: [slots.left, slots.right] }
+        : { type: 'single', visualId: slots.single };
+  }
+
+  return derived;
+}
+
+function emptyLayoutFor(layout: VisualLayoutProfile): VisualLayoutProfile {
+  return layout.type === 'split' ? { type: 'split', visualIds: [undefined, undefined] } : { type: 'single' };
+}

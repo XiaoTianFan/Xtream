@@ -283,6 +283,9 @@ export class Director extends EventEmitter {
   }
 
   updateVisualMetadata(report: VisualMetadataReport): DirectorState {
+    if (isStreamRuntimeMediaId(report.visualId)) {
+      return this.getState();
+    }
     this.state.visuals[report.visualId] ??= {
       id: report.visualId,
       kind: 'file',
@@ -609,6 +612,9 @@ export class Director extends EventEmitter {
   }
 
   updateAudioMetadata(report: AudioMetadataReport): DirectorState {
+    if (isStreamRuntimeMediaId(report.audioSourceId)) {
+      return this.getState();
+    }
     const source = this.state.audioSources[report.audioSourceId];
     if (source) {
       const isDerivedMono = source.channelMode === 'left' || source.channelMode === 'right';
@@ -1471,4 +1477,8 @@ export class Director extends EventEmitter {
       revision: ++this.correctionRevision,
     };
   }
+}
+
+function isStreamRuntimeMediaId(id: string): boolean {
+  return id.startsWith('stream-visual:') || id.startsWith('stream-audio:');
 }

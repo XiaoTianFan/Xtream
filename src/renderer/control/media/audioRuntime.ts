@@ -174,6 +174,9 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
         state.audioSources[selection.audioSourceId],
       );
       element.addEventListener('loadedmetadata', () => {
+        if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
+          return;
+        }
         const detectedChannelCount = getSourceChannelCount(state.audioSources[selection.audioSourceId], sourceNode);
         void window.xtream.audioSources.reportMetadata({
           audioSourceId: selection.audioSourceId,
@@ -183,6 +186,9 @@ export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
         });
       });
       element.addEventListener('error', () => {
+        if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
+          return;
+        }
         void window.xtream.audioSources.reportMetadata({
           audioSourceId: selection.audioSourceId,
           durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
@@ -219,7 +225,8 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       if (!selection || !source) {
         continue;
       }
-      const target = getAudioEffectiveTime(directorSeconds * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
+      const runtimeOffsetSeconds = (source as AudioSourceState & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
+      const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
       sourceRuntime.gainNode.gain.value = sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
       sourceRuntime.sourcePanner.pan.value = clampAudioPan(selection.pan);
@@ -362,7 +369,8 @@ function pauseRuntimeAtDirectorTarget(runtime: OutputRuntime, state: DirectorSta
       sourceRuntime.element.pause();
       continue;
     }
-    const target = getAudioEffectiveTime(directorSeconds * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
+    const runtimeOffsetSeconds = (source as AudioSourceState & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
+    const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
     sourceRuntime.element.pause();
     sourceRuntime.element.currentTime = clampElementTime(target.seconds, sourceRuntime.element);
   }
@@ -552,6 +560,10 @@ function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string 
     return source.extractedUrl;
   }
   return state.visuals[source.visualId]?.url ?? '';
+}
+
+function isStreamRuntimeAudioSourceId(audioSourceId: string): boolean {
+  return audioSourceId.startsWith('stream-audio:');
 }
 
 function connectAudioSourceToGain(

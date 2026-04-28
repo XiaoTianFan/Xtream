@@ -65,6 +65,42 @@ describe('streamSchedule', () => {
     expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBe(10_000);
   });
 
+  it('includes sub-cue start offsets in scene duration estimates', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          startOffsetMs: 2500,
+          playbackRate: 1,
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBe(12_500);
+  });
+
+  it('treats infinitely-looped scenes as indefinite even when media duration is known', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          playbackRate: 1,
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBeUndefined();
+  });
+
   it('sums manual scenes for linear stream duration estimate', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'A'),

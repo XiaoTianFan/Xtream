@@ -2,10 +2,19 @@
 import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
-import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
+import type {
+  DirectorState,
+  DisplayWindowState,
+  StreamEnginePublicState,
+  VisualId,
+  VisualLayoutProfile,
+  VisualMetadataReport,
+  VisualState,
+} from '../shared/types';
 import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/media/mediaSync';
 import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
 import { attachLiveVisualStream, reportLiveVisualError } from './control/media/liveCaptureRuntime';
+import { deriveDirectorStateForStream } from './streamProjection';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
@@ -14,6 +23,8 @@ const showDiagnosticsOverlay = params.get('diagnostics') === '1';
 
 let currentRenderSignature = '';
 let currentState: DirectorState | undefined;
+let latestDirectorState: DirectorState | undefined;
+let currentStreamState: StreamEnginePublicState | undefined;
 let currentDirectorSeconds = 0;
 let driftTimer: number | undefined;
 let syncTimer: number | undefined;
@@ -71,11 +82,13 @@ function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId,
 }
 
 function handleState(state: DirectorState): void {
-  currentState = state;
-  currentDirectorSeconds = getDirectorSeconds(state);
-  displayRoot.style.setProperty('--display-blackout-fade', `${Math.max(0, state.globalDisplayBlackoutFadeOutSeconds)}s`);
-  displayRoot.classList.toggle('blacked-out', state.globalDisplayBlackout);
-  const display = state.displays[displayId];
+  latestDirectorState = state;
+  const effectiveState = deriveDirectorStateForStream(state, currentStreamState);
+  currentState = effectiveState;
+  currentDirectorSeconds = getDirectorSeconds(effectiveState);
+  displayRoot.style.setProperty('--display-blackout-fade', `${Math.max(0, effectiveState.globalDisplayBlackoutFadeOutSeconds)}s`);
+  displayRoot.classList.toggle('blacked-out', effectiveState.globalDisplayBlackout);
+  const display = effectiveState.displays[displayId];
   if (!display) {
     displayRoot.replaceChildren();
     const missing = document.createElement('section');
@@ -84,31 +97,44 @@ function handleState(state: DirectorState): void {
     displayRoot.append(missing);
     return;
   }
-  const renderSignature = createRenderSignature(display.layout, state.visuals);
+  const renderSignature = createRenderSignature(display.layout, effectiveState.visuals);
   if (currentRenderSignature !== renderSignature) {
-    renderLayout(display.layout, state.visuals);
+    renderLayout(display.layout, effectiveState.visuals);
     currentRenderSignature = renderSignature;
   }
-  syncVideoElements(display, state);
+  syncVideoElements(display, effectiveState);
+}
+
+function handleStreamState(state: StreamEnginePublicState): void {
+  currentStreamState = state;
+  if (latestDirectorState) {
+    handleState(latestDirectorState);
+  }
 }
 
 function createVisualElement(visualId: VisualId, visual: VisualState | undefined): HTMLElement {
   const visualElement = document.createElement('section');
   visualElement.className = 'display-output';
+  const shouldReportMetadata = !isStreamRuntimeVisualId(visualId);
   if (visual?.kind === 'live') {
     const video = document.createElement('video');
     video.dataset.visualId = visualId;
     applyVisualStyle(video, visual);
     observeVideoFrames(video);
     visualElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(visualId, `live ${visual.capture.source}`)] : []));
-    void attachLiveVisualStream(visual, video, {
-      reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
-    })
+    const metadataOptions = shouldReportMetadata
+      ? { reportMetadata: (report: VisualMetadataReport) => void window.xtream.visuals.reportMetadata(report) }
+      : {};
+    void attachLiveVisualStream(visual, video, metadataOptions)
       .then((attachment) => {
         liveVisualCleanups.set(visualId, attachment.cleanup);
       })
       .catch((error: unknown) => {
-        reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, error instanceof Error ? error.message : 'Live visual capture failed.');
+        reportLiveVisualError(
+          visual,
+          metadataOptions,
+          error instanceof Error ? error.message : 'Live visual capture failed.',
+        );
       });
     return visualElement;
   }
@@ -118,6 +144,9 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
     image.alt = visual.label;
     applyVisualStyle(image, visual);
     image.addEventListener('load', () => {
+      if (!shouldReportMetadata) {
+        return;
+      }
       void window.xtream.visuals.reportMetadata({
         visualId,
         width: image.naturalWidth,
@@ -126,6 +155,9 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
       });
     });
     image.addEventListener('error', () => {
+      if (!shouldReportMetadata) {
+        return;
+      }
       void window.xtream.visuals.reportMetadata({ visualId, ready: false, error: 'Image failed to load.' });
     });
     visualElement.append(image, ...(showDiagnosticsOverlay ? [createOverlay(visualId, 'static image')] : []));
@@ -140,6 +172,9 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
     video.dataset.visualId = visualId;
     applyVisualStyle(video, visual);
     video.addEventListener('loadedmetadata', () => {
+      if (!shouldReportMetadata) {
+        return;
+      }
       void window.xtream.visuals.reportMetadata({
         visualId,
         durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
@@ -150,6 +185,9 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
       });
     });
     video.addEventListener('error', () => {
+      if (!shouldReportMetadata) {
+        return;
+      }
       void window.xtream.visuals.reportMetadata({
         visualId,
         ready: false,
@@ -167,6 +205,10 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
   visualMeta.textContent = 'no visual selected';
   visualElement.append(visualLabel, visualMeta);
   return visualElement;
+}
+
+function isStreamRuntimeVisualId(visualId: string): boolean {
+  return visualId.startsWith('stream-visual:');
 }
 
 function createOverlay(visualId: string, detail: string): HTMLElement {
@@ -211,7 +253,8 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visual = visualId ? state.visuals[visualId] : undefined;
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
-    const effectiveTarget = getMediaEffectiveTime(baseTarget * (visual?.playbackRate ?? 1), visualDuration, state.loop);
+    const runtimeOffsetSeconds = (visual as (VisualState & { runtimeOffsetSeconds?: number }) | undefined)?.runtimeOffsetSeconds ?? 0;
+    const effectiveTarget = getMediaEffectiveTime((baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1), visualDuration, state.loop);
     syncTimedMediaElement(
       video,
       effectiveTarget,
@@ -315,8 +358,10 @@ function summarizeVideoDiagnostics(videos: HTMLVideoElement[]): {
 }
 
 window.xtream.director.onState(handleState);
+window.xtream.stream.onState(handleStreamState);
 void window.xtream.renderer.ready({ kind: 'display', displayId });
 void window.xtream.director.getState().then(handleState);
+void window.xtream.stream.getState().then(handleStreamState);
 
 function sampleFrameRate(): void {
   frameCounter += 1;
@@ -347,7 +392,8 @@ driftTimer = window.setInterval(() => {
           const visualId = video.dataset.visualId;
           const state = currentState!;
           const visual = visualId ? state.visuals[visualId] : undefined;
-          const targetSeconds = getMediaEffectiveTime(directorSeconds * (visual?.playbackRate ?? 1), visual?.durationSeconds, state.loop);
+          const runtimeOffsetSeconds = (visual as (VisualState & { runtimeOffsetSeconds?: number }) | undefined)?.runtimeOffsetSeconds ?? 0;
+          const targetSeconds = getMediaEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1), visual?.durationSeconds, state.loop);
           const drift = video.currentTime - targetSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)

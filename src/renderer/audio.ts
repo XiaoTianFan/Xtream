@@ -1,6 +1,6 @@
 /// <reference path="./global.d.ts" />
 import { getAudioEffectiveTime, getDirectorSeconds } from '../shared/timeline';
-import type { DirectorState, VirtualOutputId } from '../shared/types';
+import type { DirectorState, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
 import {
   getFirstMeteredAudioSource,
   sampleMeters,
@@ -9,16 +9,27 @@ import {
   syncVirtualAudioGraph,
 } from './control/media/audioRuntime';
 import { getMediaSyncState } from './control/media/mediaSync';
+import { deriveDirectorStateForStream } from './streamProjection';
 
 let currentState: DirectorState | undefined;
+let latestDirectorState: DirectorState | undefined;
+let currentStreamState: StreamEnginePublicState | undefined;
 let animationFrame: number | undefined;
 let driftTimer: number | undefined;
 let lastMeterSampleMs = 0;
 const METER_SAMPLE_INTERVAL_MS = 50;
 
 function handleState(state: DirectorState): void {
-  currentState = state;
-  syncVirtualAudioGraph(state);
+  latestDirectorState = state;
+  currentState = deriveDirectorStateForStream(state, currentStreamState);
+  syncVirtualAudioGraph(currentState);
+}
+
+function handleStreamState(state: StreamEnginePublicState): void {
+  currentStreamState = state;
+  if (latestDirectorState) {
+    handleState(latestDirectorState);
+  }
 }
 
 function handleSoloOutputIds(outputIds: VirtualOutputId[]): void {
@@ -41,9 +52,11 @@ function tick(): void {
 }
 
 window.xtream.director.onState(handleState);
+window.xtream.stream.onState(handleStreamState);
 window.xtream.audioRuntime.onSoloOutputIds(handleSoloOutputIds);
 void window.xtream.renderer.ready({ kind: 'audio' });
 void window.xtream.director.getState().then(handleState);
+void window.xtream.stream.getState().then(handleStreamState);
 
 animationFrame = window.requestAnimationFrame(tick);
 driftTimer = window.setInterval(() => {
@@ -60,7 +73,8 @@ driftTimer = window.setInterval(() => {
   }
   const sourceRate = source.playbackRate ?? 1;
   const directorSeconds = getDirectorSeconds(currentState);
-  const target = getAudioEffectiveTime(directorSeconds * sourceRate, source.durationSeconds, currentState.loop);
+  const runtimeOffsetSeconds = (source as typeof source & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
+  const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * sourceRate, source.durationSeconds, currentState.loop);
   if (!target.audible) {
     return;
   }

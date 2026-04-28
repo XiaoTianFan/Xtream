@@ -303,7 +303,7 @@ function subCueEffectiveDurationMs(
   if (sub.durationOverrideMs !== undefined) {
     base = Math.min(base, sub.durationOverrideMs);
   }
-  return base;
+  return (sub.startOffsetMs ?? 0) + base;
 }
 
 /** Longest sub-cue effective duration; undefined if any contributing sub-cue duration is unknown. */

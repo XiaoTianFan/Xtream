@@ -14,6 +14,7 @@ export const elements = {
   launchCreateShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchCreateShowButton'), 'launchCreateShowButton'),
   launchOpenDefaultButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenDefaultButton'), 'launchOpenDefaultButton'),
   launchRecentList: assertElement(document.querySelector<HTMLDivElement>('#launchRecentList'), 'launchRecentList'),
+  launchLoadingOverlay: assertElement(document.querySelector<HTMLElement>('#launchLoadingOverlay'), 'launchLoadingOverlay'),
   extractionOverlay: assertElement(document.querySelector<HTMLElement>('#extractionOverlay'), 'extractionOverlay'),
   extractionOverlayHeading: assertElement(document.querySelector<HTMLHeadingElement>('#extractionOverlayHeading'), 'extractionOverlayHeading'),
   extractionOverlayStatus: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayStatus'), 'extractionOverlayStatus'),

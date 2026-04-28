@@ -1,11 +1,13 @@
 import { formatTimecode } from '../../../shared/timeline';
-import { resolveFollowsSceneId } from '../../../shared/streamSchedule';
+import { estimateSceneDurationMs, resolveFollowsSceneId } from '../../../shared/streamSchedule';
 import type {
+  AudioSourceId,
   DirectorState,
   PersistedSceneConfig,
   PersistedStreamConfig,
   PersistedSubCueConfig,
   SceneRuntimeState,
+  VisualId,
 } from '../../../shared/types';
 
 export function formatTriggerSummary(stream: PersistedStreamConfig, scene: PersistedSceneConfig): string {
@@ -31,14 +33,11 @@ export function formatTriggerSummary(stream: PersistedStreamConfig, scene: Persi
 }
 
 export function formatSceneDuration(state: DirectorState | undefined, scene: PersistedSceneConfig): string {
-  const durations = scene.subCueOrder
-    .map((id) => scene.subCues[id])
-    .map((sub) => getSubCueDurationSeconds(state, sub))
-    .filter((value): value is number => value !== undefined);
-  if (durations.length === 0) {
+  if (!state || scene.subCueOrder.length === 0) {
     return '--';
   }
-  return formatTimecode(Math.max(...durations));
+  const durationMs = estimateSceneDurationMs(scene, getVisualDurationMap(state), getAudioDurationMap(state));
+  return durationMs === undefined ? '-- / live' : formatTimecode(durationMs / 1000);
 }
 
 export function getSubCueDurationSeconds(state: DirectorState | undefined, sub: PersistedSubCueConfig | undefined): number | undefined {
@@ -72,4 +71,16 @@ export function formatSceneStateLabel(runtimeState: SceneRuntimeState | undefine
     return runtimeState.status;
   }
   return 'ready';
+}
+
+function getVisualDurationMap(state: DirectorState): Record<VisualId, number> {
+  return Object.fromEntries(
+    Object.values(state.visuals).flatMap((visual) => (visual.durationSeconds !== undefined ? [[visual.id, visual.durationSeconds]] : [])),
+  );
+}
+
+function getAudioDurationMap(state: DirectorState): Record<AudioSourceId, number> {
+  return Object.fromEntries(
+    Object.values(state.audioSources).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds]] : [])),
+  );
 }

@@ -30,7 +30,7 @@ import {
   createStreamShellLayout,
 } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
-import { renderStreamHeader } from './streamHeader';
+import { renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
 
@@ -89,9 +89,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     window.addEventListener('resize', layoutCtl.syncSplitterAria);
     layoutCtl.syncSplitterAria();
     unsubscribeStreamState = window.xtream.stream.onState((state) => {
+      const previous = streamState;
       streamState = state;
       syncSelectedScene();
-      renderCurrent();
+      if (canSyncRuntimeOnly(previous, state)) {
+        syncRuntimeDom();
+      } else {
+        renderCurrent();
+      }
     });
     void window.xtream.stream.getState().then((state) => {
       streamState = state;
@@ -112,17 +117,18 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function createRenderSignature(state: DirectorState): string {
+    const signatureState = stripRuntimeMediaFromState(state);
     return JSON.stringify({
-      stream: streamState,
+      stream: createStableStreamRenderModel(streamState),
       selectedSceneId,
       sceneEditSelection,
       mode,
       bottomTab,
       detailPane,
       headerEditField,
-      mediaPool: mediaPool?.createRenderSignature(state),
+      mediaPool: mediaPool?.createRenderSignature(signatureState),
       director: {
-        visuals: Object.values(state.visuals).map((visual) => ({
+        visuals: Object.values(signatureState.visuals).map((visual) => ({
           id: visual.id,
           label: visual.label,
           ready: visual.ready,
@@ -131,7 +137,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           kind: visual.kind,
           url: visual.kind === 'file' ? visual.url : undefined,
         })),
-        audioSources: Object.values(state.audioSources).map((source) => ({
+        audioSources: Object.values(signatureState.audioSources).map((source) => ({
           id: source.id,
           label: source.label,
           ready: source.ready,
@@ -142,6 +148,71 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         displays: Object.values(state.displays).map((display) => ({ ...display, lastDriftSeconds: undefined })),
       },
     });
+  }
+
+  function createStableStreamRenderModel(state: StreamEnginePublicState | undefined): unknown {
+    if (!state) {
+      return undefined;
+    }
+    return {
+      stream: state.stream,
+      validationMessages: state.validationMessages,
+      runtime: state.runtime ? createStableRuntimeRenderModel(state.runtime) : null,
+    };
+  }
+
+  function createStableRuntimeRenderModel(runtime: NonNullable<StreamEnginePublicState['runtime']>): unknown {
+    return {
+      status: runtime.status,
+      cursorSceneId: runtime.cursorSceneId,
+      expectedDurationMs: runtime.expectedDurationMs,
+      timelineNotice: runtime.timelineNotice,
+      sceneStates: Object.fromEntries(
+        Object.entries(runtime.sceneStates).map(([id, scene]) => [
+          id,
+          {
+            status: scene.status,
+            scheduledStartMs: scene.scheduledStartMs,
+            startedAtStreamMs: scene.startedAtStreamMs,
+            endedAtStreamMs: scene.endedAtStreamMs,
+            error: scene.error,
+          },
+        ]),
+      ),
+      activeAudioSubCues: runtime.activeAudioSubCues?.map((cue) => ({
+        sceneId: cue.sceneId,
+        subCueId: cue.subCueId,
+        outputId: cue.outputId,
+        audioSourceId: cue.audioSourceId,
+      })),
+      activeVisualSubCues: runtime.activeVisualSubCues?.map((cue) => ({
+        sceneId: cue.sceneId,
+        subCueId: cue.subCueId,
+        visualId: cue.visualId,
+        target: cue.target,
+      })),
+    };
+  }
+
+  function stripRuntimeMediaFromState(state: DirectorState): DirectorState {
+    const visualEntries = Object.entries(state.visuals).filter(([id]) => !isStreamRuntimeVisualId(id));
+    const audioSourceEntries = Object.entries(state.audioSources).filter(([id]) => !isStreamRuntimeAudioSourceId(id));
+    if (visualEntries.length === Object.keys(state.visuals).length && audioSourceEntries.length === Object.keys(state.audioSources).length) {
+      return state;
+    }
+    return {
+      ...state,
+      visuals: Object.fromEntries(visualEntries),
+      audioSources: Object.fromEntries(audioSourceEntries),
+    };
+  }
+
+  function isStreamRuntimeVisualId(id: string): boolean {
+    return id.startsWith('stream-visual:');
+  }
+
+  function isStreamRuntimeAudioSourceId(id: string): boolean {
+    return id.startsWith('stream-audio:');
   }
 
   function render(state: DirectorState): void {
@@ -160,14 +231,57 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (mixerPanel?.pruneSoloOutputIds(currentState)) {
       mixerRenderSignature = '';
     }
+    const mediaState = stripRuntimeMediaFromState(currentState);
     renderHeader();
-    mediaPool?.render(currentState);
-    mediaPool?.syncPoolSelectionHighlight(currentState);
-    assetPreview?.render(currentState, selectedEntity);
+    mediaPool?.render(mediaState);
+    mediaPool?.syncPoolSelectionHighlight(mediaState);
+    assetPreview?.render(mediaState, selectedEntity);
     renderWorkspacePane();
     renderBottomPane();
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
+  }
+
+  function canSyncRuntimeOnly(previous: StreamEnginePublicState | undefined, next: StreamEnginePublicState): boolean {
+    if (!previous || !previous.runtime || !next.runtime) {
+      return false;
+    }
+    return createNonVolatileStreamSignature(previous) === createNonVolatileStreamSignature(next);
+  }
+
+  function createNonVolatileStreamSignature(state: StreamEnginePublicState): string {
+    return JSON.stringify(createStableStreamRenderModel(state));
+  }
+
+  function syncRuntimeDom(): void {
+    if (!mounted || !currentState || !streamState) {
+      return;
+    }
+    syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, currentState);
+    syncListRuntimeProgress(requireRef('workspace'), streamState);
+  }
+
+  function syncListRuntimeProgress(root: HTMLElement, state: StreamEnginePublicState): void {
+    const runtime = state.runtime;
+    if (!runtime) {
+      return;
+    }
+    for (const wrap of root.querySelectorAll<HTMLElement>('[data-scene-id]')) {
+      const sceneId = wrap.dataset.sceneId;
+      if (!sceneId) {
+        continue;
+      }
+      const runtimeState = runtime.sceneStates[sceneId];
+      if (!runtimeState || runtimeState.status !== 'running') {
+        continue;
+      }
+      const progress = runtimeState.progress;
+      const bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
+      if (!bar || progress === undefined || !Number.isFinite(progress)) {
+        continue;
+      }
+      bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+    }
   }
 
   function syncSelectedScene(): void {

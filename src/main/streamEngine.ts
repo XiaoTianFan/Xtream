@@ -2,34 +2,65 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type { Director } from './director';
 import type {
+  PersistedControlSubCueConfig,
   PersistedSceneConfig,
   PersistedShowConfigV8,
   PersistedStreamConfig,
+  PersistedSubCueConfig,
   SceneId,
   SceneRuntimeState,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
-  StreamId,
+  StreamRuntimeAudioSubCue,
   StreamRuntimeState,
+  StreamRuntimeVisualSubCue,
   SubCueId,
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
 import {
   estimateLinearManualStreamDurationMs,
+  estimateSceneDurationMs,
+  resolveFollowsSceneId,
   validateStreamContent,
   validateStreamStructure,
   validateTriggerReferences,
 } from '../shared/streamSchedule';
 
+type SceneScheduleEntry = {
+  sceneId: SceneId;
+  startMs?: number;
+  durationMs?: number;
+  endMs?: number;
+  triggerKnown: boolean;
+};
+
+type StreamSchedule = {
+  entries: Record<SceneId, SceneScheduleEntry>;
+  expectedDurationMs?: number;
+  notice?: string;
+};
+
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString('hex')}`;
+}
+
+function clampNonNegative(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function isRunningStatus(status: StreamRuntimeState['status']): boolean {
+  return status === 'running' || status === 'preloading';
 }
 
 export class StreamEngine extends EventEmitter {
   private stream: PersistedStreamConfig = getDefaultStreamPersistence().stream;
   private runtime: StreamRuntimeState | null = null;
   private validationMessages: string[] = [];
+  private tickTimer: NodeJS.Timeout | undefined;
+  private dispatchedControlSubCues = new Set<string>();
+  private manuallyCompletedSceneIds = new Set<SceneId>();
+  private skippedAtTimecodeSceneIds = new Set<SceneId>();
 
   constructor(private readonly director: Director) {
     super();
@@ -40,8 +71,12 @@ export class StreamEngine extends EventEmitter {
   }
 
   loadFromShow(config: { stream: PersistedStreamConfig }): void {
+    this.stopTicking();
     this.stream = structuredClone(config.stream);
     this.runtime = null;
+    this.dispatchedControlSubCues.clear();
+    this.manuallyCompletedSceneIds.clear();
+    this.skippedAtTimecodeSceneIds.clear();
     this.revalidate();
     this.emitState();
   }
@@ -81,11 +116,7 @@ export class StreamEngine extends EventEmitter {
         }
         if (command.afterSceneId !== undefined) {
           const idx = this.stream.sceneOrder.indexOf(command.afterSceneId);
-          if (idx >= 0) {
-            this.stream.sceneOrder.splice(idx + 1, 0, sceneId);
-          } else {
-            this.stream.sceneOrder.push(sceneId);
-          }
+          this.stream.sceneOrder.splice(idx >= 0 ? idx + 1 : this.stream.sceneOrder.length, 0, sceneId);
         } else {
           this.stream.sceneOrder.push(sceneId);
         }
@@ -132,11 +163,7 @@ export class StreamEngine extends EventEmitter {
           subCues,
         };
         const idx = this.stream.sceneOrder.indexOf(command.sceneId);
-        if (idx >= 0) {
-          this.stream.sceneOrder.splice(idx + 1, 0, sceneId);
-        } else {
-          this.stream.sceneOrder.push(sceneId);
-        }
+        this.stream.sceneOrder.splice(idx >= 0 ? idx + 1 : this.stream.sceneOrder.length, 0, sceneId);
         this.stream.scenes[sceneId] = copy;
         break;
       }
@@ -162,6 +189,9 @@ export class StreamEngine extends EventEmitter {
         break;
     }
     this.revalidate();
+    if (this.runtime) {
+      this.recomputeRuntime();
+    }
     this.emitState();
     return this.getPublicState();
   }
@@ -176,35 +206,22 @@ export class StreamEngine extends EventEmitter {
         this.handleGo(command.sceneId);
         break;
       case 'pause':
-        if (this.runtime) {
-          this.runtime.status = 'paused';
-          for (const id of Object.keys(this.runtime.sceneStates)) {
-            const st = this.runtime.sceneStates[id];
-            if (st?.status === 'running') {
-              st.status = 'paused';
-            }
-          }
-        }
+        this.pause();
         break;
       case 'resume':
-        if (this.runtime && this.runtime.status === 'paused') {
-          this.runtime.status = 'running';
-          for (const id of Object.keys(this.runtime.sceneStates)) {
-            const st = this.runtime.sceneStates[id];
-            if (st?.status === 'paused') {
-              st.status = 'running';
-            }
-          }
-        }
+        this.resume();
         break;
       case 'stop':
-        this.runtime = null;
+        this.stop();
         break;
       case 'jump-next':
         this.handleJumpNext();
         break;
       case 'back-to-first':
         this.handleBackToFirst();
+        break;
+      case 'seek':
+        this.seek(command.timeMs);
         break;
       default:
         break;
@@ -220,55 +237,122 @@ export class StreamEngine extends EventEmitter {
         ? sceneId
         : this.stream.sceneOrder.find((id) => !this.stream.scenes[id]?.disabled);
     if (!target) {
-      this.runtime = {
-        status: 'complete',
-        sceneStates: {},
-      };
+      this.stopTicking();
+      this.runtime = { status: 'complete', sceneStates: {} };
       return;
     }
 
-    const sceneStates: Record<SceneId, SceneRuntimeState> = {};
-    for (const id of this.stream.sceneOrder) {
-      const sc = this.stream.scenes[id];
-      if (!sc || sc.disabled) {
-        sceneStates[id] = { sceneId: id, status: 'disabled' };
-      } else if (id === target) {
-        sceneStates[id] = { sceneId: id, status: 'running', startedAtStreamMs: 0 };
-      } else {
-        sceneStates[id] = { sceneId: id, status: 'ready' };
-      }
-    }
-
-    const wall = Date.now();
+    const schedule = this.buildSchedule(target);
     this.runtime = {
       status: 'running',
-      originWallTimeMs: wall,
+      originWallTimeMs: Date.now(),
+      startedWallTimeMs: Date.now(),
+      offsetStreamMs: 0,
+      currentStreamMs: 0,
       cursorSceneId: target,
-      sceneStates,
-      expectedDurationMs: estimateLinearManualStreamDurationMs(this.stream, ...this.getDurationMaps()) ?? undefined,
+      sceneStates: this.createInitialSceneStates(schedule),
+      expectedDurationMs: schedule.expectedDurationMs,
+      timelineNotice: schedule.notice,
     };
+    this.dispatchedControlSubCues.clear();
+    this.manuallyCompletedSceneIds.clear();
+    this.skippedAtTimecodeSceneIds.clear();
+    this.recomputeRuntime();
+    this.startTicking();
+  }
+
+  private pause(): void {
+    if (!this.runtime || this.runtime.status !== 'running') {
+      return;
+    }
+    const current = this.getRuntimeStreamMs();
+    this.runtime.status = 'paused';
+    this.runtime.pausedAtStreamMs = current;
+    this.runtime.currentStreamMs = current;
+    this.runtime.offsetStreamMs = current;
+    this.runtime.originWallTimeMs = undefined;
+    this.runtime.startedWallTimeMs = undefined;
+    this.recomputeRuntime();
+    this.stopTicking();
+  }
+
+  private resume(): void {
+    if (!this.runtime || this.runtime.status !== 'paused') {
+      return;
+    }
+    const current = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+    const now = Date.now();
+    this.runtime.status = 'running';
+    this.runtime.offsetStreamMs = current;
+    this.runtime.currentStreamMs = current;
+    this.runtime.originWallTimeMs = now;
+    this.runtime.startedWallTimeMs = now;
+    this.runtime.pausedAtStreamMs = undefined;
+    this.recomputeRuntime();
+    this.startTicking();
+  }
+
+  private stop(): void {
+    this.stopTicking();
+    this.runtime = null;
+    this.dispatchedControlSubCues.clear();
+    this.manuallyCompletedSceneIds.clear();
+    this.skippedAtTimecodeSceneIds.clear();
+  }
+
+  private seek(timeMs: number): void {
+    if (!this.runtime) {
+      this.handleBackToFirst();
+    }
+    if (!this.runtime) {
+      return;
+    }
+    const schedule = this.buildSchedule(this.runtime.cursorSceneId);
+    const max = schedule.expectedDurationMs;
+    const nextMs = max === undefined ? clampNonNegative(timeMs) : Math.min(max, clampNonNegative(timeMs));
+    this.runtime.offsetStreamMs = nextMs;
+    this.runtime.currentStreamMs = nextMs;
+    this.runtime.pausedAtStreamMs = this.runtime.status === 'paused' ? nextMs : undefined;
+    if (isRunningStatus(this.runtime.status)) {
+      const now = Date.now();
+      this.runtime.originWallTimeMs = now;
+      this.runtime.startedWallTimeMs = now;
+      this.startTicking();
+    }
+    this.dispatchedControlSubCues.clear();
+    this.manuallyCompletedSceneIds.clear();
+    this.skippedAtTimecodeSceneIds.clear();
+    for (const sceneId of this.stream.sceneOrder) {
+      const scene = this.stream.scenes[sceneId];
+      if (scene?.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < nextMs) {
+        this.skippedAtTimecodeSceneIds.add(sceneId);
+      }
+    }
+    this.recomputeRuntime();
   }
 
   private handleBackToFirst(): void {
     const target = this.stream.sceneOrder.find((id) => !this.stream.scenes[id]?.disabled);
-    const sceneStates: Record<SceneId, SceneRuntimeState> = {};
-    for (const id of this.stream.sceneOrder) {
-      const sc = this.stream.scenes[id];
-      sceneStates[id] = {
-        sceneId: id,
-        status: !sc || sc.disabled ? 'disabled' : 'ready',
-      };
-    }
+    const schedule = this.buildSchedule(target);
+    this.stopTicking();
     this.runtime = {
       status: target ? 'idle' : 'complete',
       cursorSceneId: target,
-      sceneStates,
-      expectedDurationMs: estimateLinearManualStreamDurationMs(this.stream, ...this.getDurationMaps()) ?? undefined,
+      sceneStates: this.createInitialSceneStates(schedule),
+      expectedDurationMs: schedule.expectedDurationMs,
+      offsetStreamMs: 0,
+      currentStreamMs: 0,
+      pausedAtStreamMs: 0,
+      timelineNotice: schedule.notice,
     };
+    this.dispatchedControlSubCues.clear();
+    this.manuallyCompletedSceneIds.clear();
+    this.skippedAtTimecodeSceneIds.clear();
+    this.recomputeRuntime();
   }
 
   private handleJumpNext(): void {
-    if (!this.runtime || !this.runtime.cursorSceneId) {
+    if (!this.runtime?.cursorSceneId) {
       return;
     }
     const cur = this.runtime.cursorSceneId;
@@ -276,23 +360,401 @@ export class StreamEngine extends EventEmitter {
     if (idx < 0) {
       return;
     }
-    const curState = this.runtime.sceneStates[cur];
-    if (curState) {
-      curState.status = 'complete';
-      curState.endedAtStreamMs = 0;
-    }
     const next = this.stream.sceneOrder.slice(idx + 1).find((id) => !this.stream.scenes[id]?.disabled);
+    const schedule = this.buildSchedule(cur);
+    const curEntry = schedule.entries[cur];
+    const nextEntry = next ? schedule.entries[next] : undefined;
     if (!next) {
-      this.runtime.status = 'complete';
-      this.runtime.cursorSceneId = undefined;
+      this.manuallyCompletedSceneIds.add(cur);
+      const end = curEntry?.endMs ?? this.getRuntimeStreamMs();
+      this.seek(end);
+      this.manuallyCompletedSceneIds.add(cur);
+      this.recomputeRuntime();
+      if (this.runtime) {
+        this.runtime.status = 'complete';
+        this.runtime.cursorSceneId = undefined;
+      }
+      this.stopTicking();
       return;
     }
+    this.manuallyCompletedSceneIds.add(cur);
+    const jumpTarget = nextEntry?.startMs ?? this.getRuntimeStreamMs();
     this.runtime.cursorSceneId = next;
-    const ns = this.runtime.sceneStates[next];
-    if (ns) {
-      ns.status = 'running';
-      ns.startedAtStreamMs = 0;
+    this.seek(jumpTarget);
+    this.manuallyCompletedSceneIds.add(cur);
+    this.recomputeRuntime();
+    if (this.runtime && this.runtime.status === 'idle') {
+      this.runtime.status = 'running';
+      const now = Date.now();
+      this.runtime.originWallTimeMs = now;
+      this.runtime.startedWallTimeMs = now;
+      this.startTicking();
     }
+  }
+
+  private createInitialSceneStates(schedule: StreamSchedule): Record<SceneId, SceneRuntimeState> {
+    const sceneStates: Record<SceneId, SceneRuntimeState> = {};
+    for (const id of this.stream.sceneOrder) {
+      const sc = this.stream.scenes[id];
+      const entry = schedule.entries[id];
+      sceneStates[id] = {
+        sceneId: id,
+        status: !sc || sc.disabled ? 'disabled' : entry?.startMs !== undefined ? 'ready' : 'ready',
+        scheduledStartMs: entry?.startMs,
+      };
+    }
+    return sceneStates;
+  }
+
+  private recomputeRuntime(): void {
+    if (!this.runtime) {
+      return;
+    }
+    const schedule = this.buildSchedule(this.runtime.cursorSceneId);
+    const currentMs = this.getRuntimeStreamMs();
+    this.runtime.currentStreamMs = currentMs;
+    this.runtime.expectedDurationMs = schedule.expectedDurationMs;
+    this.runtime.timelineNotice = schedule.notice;
+
+    const sceneStates: Record<SceneId, SceneRuntimeState> = {};
+    const activeAudio: StreamRuntimeAudioSubCue[] = [];
+    const activeVisual: StreamRuntimeVisualSubCue[] = [];
+
+    for (const sceneId of this.stream.sceneOrder) {
+      const scene = this.stream.scenes[sceneId];
+      const entry = schedule.entries[sceneId];
+      if (!scene || scene.disabled) {
+        sceneStates[sceneId] = { sceneId, status: 'disabled' };
+        continue;
+      }
+      if (this.skippedAtTimecodeSceneIds.has(sceneId)) {
+        sceneStates[sceneId] = {
+          sceneId,
+          status: 'skipped',
+          scheduledStartMs: entry?.startMs,
+        };
+        continue;
+      }
+      if (this.manuallyCompletedSceneIds.has(sceneId)) {
+        sceneStates[sceneId] = {
+          sceneId,
+          status: 'complete',
+          scheduledStartMs: entry?.startMs,
+          startedAtStreamMs: entry?.startMs,
+          endedAtStreamMs: currentMs,
+          progress: 1,
+        };
+        continue;
+      }
+      const start = entry?.startMs;
+      const end = entry?.endMs;
+      const previous = this.runtime.sceneStates[sceneId];
+      let status: SceneRuntimeState['status'] = 'ready';
+      let progress: number | undefined;
+      if (start === undefined) {
+        status = scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < currentMs ? 'skipped' : 'ready';
+      } else if (currentMs < start) {
+        status = this.shouldPreload(sceneId, schedule, currentMs) ? 'ready-to-start' : 'ready';
+      } else if (end !== undefined && currentMs >= end) {
+        status = 'complete';
+        progress = 1;
+      } else if (this.runtime.status === 'paused') {
+        status = 'paused';
+      } else if (this.runtime.status === 'idle') {
+        status = start === 0 ? 'ready-to-start' : 'ready';
+      } else {
+        status = 'running';
+      }
+      if ((status === 'running' || status === 'paused') && start !== undefined) {
+        progress = entry.durationMs && entry.durationMs > 0 ? Math.min(1, Math.max(0, (currentMs - start) / entry.durationMs)) : undefined;
+        this.collectActiveSubCues(scene, start, currentMs, activeAudio, activeVisual);
+        if (status === 'running') {
+          this.dispatchControlSubCues(scene, start, currentMs);
+        }
+      }
+      sceneStates[sceneId] = {
+        sceneId,
+        status,
+        scheduledStartMs: start,
+        startedAtStreamMs: start !== undefined && currentMs >= start ? start : previous?.startedAtStreamMs,
+        endedAtStreamMs: status === 'complete' ? end ?? previous?.endedAtStreamMs : previous?.endedAtStreamMs,
+        progress,
+        error: previous?.error,
+      };
+    }
+
+    const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
+    if (runningEntries.length > 0) {
+      this.runtime.cursorSceneId = runningEntries[0].sceneId;
+    }
+    if (
+      this.runtime.status === 'running' &&
+      schedule.expectedDurationMs !== undefined &&
+      currentMs >= schedule.expectedDurationMs &&
+      runningEntries.length === 0
+    ) {
+      this.runtime.status = 'complete';
+      this.runtime.cursorSceneId = undefined;
+      this.stopTicking();
+    }
+    this.runtime.sceneStates = sceneStates;
+    this.runtime.activeAudioSubCues = activeAudio;
+    this.runtime.activeVisualSubCues = activeVisual;
+  }
+
+  private getRuntimeStreamMs(): number {
+    if (!this.runtime) {
+      return 0;
+    }
+    if (this.runtime.status === 'running' || this.runtime.status === 'preloading') {
+      const rate = this.getGlobalRate();
+      const anchor = this.runtime.originWallTimeMs ?? Date.now();
+      return (this.runtime.offsetStreamMs ?? 0) + (Date.now() - anchor) * rate;
+    }
+    return this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+  }
+
+  private getGlobalRate(): number {
+    const getState = (this.director as unknown as { getState?: Director['getState'] }).getState;
+    const rate = getState?.call(this.director)?.rate;
+    return rate && rate > 0 ? rate : 1;
+  }
+
+  private buildSchedule(anchorSceneId?: SceneId): StreamSchedule {
+    const [visualDurations, audioDurations] = this.getDurationMaps();
+    const entries: Record<SceneId, SceneScheduleEntry> = {};
+    const enabledIds = this.stream.sceneOrder.filter((id) => {
+      const scene = this.stream.scenes[id];
+      return scene && !scene.disabled;
+    });
+    const allManual = enabledIds.every((id) => this.stream.scenes[id]?.trigger.type === 'manual');
+    let expectedDurationMs: number | undefined;
+    let notice: string | undefined;
+
+    for (const id of this.stream.sceneOrder) {
+      const scene = this.stream.scenes[id];
+      entries[id] = {
+        sceneId: id,
+        durationMs: scene && scene.subCueOrder.length > 0 ? estimateSceneDurationMs(scene, visualDurations, audioDurations) : undefined,
+        triggerKnown: false,
+      };
+    }
+
+    if (allManual) {
+      let cursor = 0;
+      const startIndex = anchorSceneId && enabledIds.includes(anchorSceneId) ? enabledIds.indexOf(anchorSceneId) : 0;
+      for (const id of enabledIds.slice(startIndex)) {
+        const entry = entries[id];
+        entry.startMs = cursor;
+        entry.triggerKnown = true;
+        if (entry.durationMs === undefined) {
+          notice = 'Stream timeline is unknown after a live or indefinite manual scene.';
+          break;
+        }
+        entry.endMs = cursor + entry.durationMs;
+        cursor = entry.endMs;
+      }
+      expectedDurationMs = notice ? undefined : estimateLinearManualStreamDurationMs(this.stream, visualDurations, audioDurations);
+      return { entries, expectedDurationMs, notice };
+    }
+
+    const anchor = anchorSceneId && enabledIds.includes(anchorSceneId) ? anchorSceneId : enabledIds[0];
+    if (anchor) {
+      entries[anchor].startMs = 0;
+      entries[anchor].triggerKnown = true;
+    }
+    for (const id of enabledIds) {
+      const scene = this.stream.scenes[id];
+      if (scene?.trigger.type === 'at-timecode') {
+        entries[id].startMs = scene.trigger.timecodeMs;
+        entries[id].triggerKnown = true;
+      }
+    }
+
+    let changed = true;
+    for (let guard = 0; guard < this.stream.sceneOrder.length * 3 && changed; guard += 1) {
+      changed = false;
+      for (const id of enabledIds) {
+        const scene = this.stream.scenes[id];
+        const entry = entries[id];
+        if (!scene || entry.startMs !== undefined || scene.trigger.type === 'manual' || scene.trigger.type === 'at-timecode') {
+          continue;
+        }
+        const pred = resolveFollowsSceneId(this.stream, id, scene.trigger);
+        const predEntry = pred ? entries[pred] : undefined;
+        if (!predEntry || predEntry.startMs === undefined) {
+          continue;
+        }
+        let start: number | undefined;
+        if (scene.trigger.type === 'simultaneous-start') {
+          start = predEntry.startMs;
+        } else if (scene.trigger.type === 'time-offset') {
+          start = predEntry.startMs + scene.trigger.offsetMs;
+        } else if (scene.trigger.type === 'follow-end' && predEntry.durationMs !== undefined) {
+          start = predEntry.startMs + predEntry.durationMs;
+        }
+        if (start !== undefined) {
+          entry.startMs = start;
+          entry.triggerKnown = true;
+          changed = true;
+        }
+      }
+    }
+
+    let maxEnd = 0;
+    let unknown = false;
+    for (const id of enabledIds) {
+      const entry = entries[id];
+      if (entry.startMs === undefined) {
+        if (this.stream.scenes[id]?.trigger.type !== 'manual') {
+          unknown = true;
+        }
+        continue;
+      }
+      if (entry.durationMs === undefined) {
+        unknown = true;
+        continue;
+      }
+      entry.endMs = entry.startMs + entry.durationMs;
+      maxEnd = Math.max(maxEnd, entry.endMs);
+    }
+    expectedDurationMs = unknown ? undefined : maxEnd;
+    notice = unknown ? 'Stream timeline includes manual breaks, live media, or indefinite loops.' : undefined;
+    return { entries, expectedDurationMs, notice };
+  }
+
+  private shouldPreload(sceneId: SceneId, schedule: StreamSchedule, currentMs: number): boolean {
+    const scene = this.stream.scenes[sceneId];
+    const entry = schedule.entries[sceneId];
+    if (!scene || entry.startMs === undefined) {
+      return false;
+    }
+    const idx = this.stream.sceneOrder.indexOf(sceneId);
+    const runningIdx = this.stream.sceneOrder.findIndex((id) => {
+      const e = schedule.entries[id];
+      return e.startMs !== undefined && currentMs >= e.startMs && (e.endMs === undefined || currentMs < e.endMs);
+    });
+    if (idx === runningIdx || idx === runningIdx + 1) {
+      return true;
+    }
+    if (scene.preload.enabled && entry.startMs - currentMs <= (scene.preload.leadTimeMs ?? 0)) {
+      return true;
+    }
+    const pred = resolveFollowsSceneId(this.stream, sceneId, scene.trigger);
+    return pred !== undefined && schedule.entries[pred]?.startMs !== undefined && currentMs >= schedule.entries[pred].startMs!;
+  }
+
+  private collectActiveSubCues(
+    scene: PersistedSceneConfig,
+    sceneStartMs: number,
+    currentMs: number,
+    activeAudio: StreamRuntimeAudioSubCue[],
+    activeVisual: StreamRuntimeVisualSubCue[],
+  ): void {
+    for (const subCueId of scene.subCueOrder) {
+      const sub = scene.subCues[subCueId];
+      if (!sub || sub.kind === 'control') {
+        continue;
+      }
+      const localStartMs = sub.startOffsetMs ?? 0;
+      if (currentMs < sceneStartMs + localStartMs) {
+        continue;
+      }
+      const localEndMs = this.getSubCueDurationMs(sub);
+      if (localEndMs !== undefined && currentMs >= sceneStartMs + localStartMs + localEndMs) {
+        continue;
+      }
+      if (sub.kind === 'audio') {
+        for (const outputId of sub.outputIds) {
+          activeAudio.push({
+            sceneId: scene.id,
+            subCueId,
+            audioSourceId: sub.audioSourceId,
+            outputId,
+            streamStartMs: sceneStartMs,
+            localStartMs,
+            localEndMs,
+            levelDb: sub.levelDb ?? 0,
+            pan: sub.pan ?? 0,
+            muted: sub.muted,
+            solo: sub.solo,
+            playbackRate: sub.playbackRate ?? 1,
+          });
+        }
+      } else {
+        for (const target of sub.targets) {
+          activeVisual.push({
+            sceneId: scene.id,
+            subCueId,
+            visualId: sub.visualId,
+            target,
+            streamStartMs: sceneStartMs,
+            localStartMs,
+            localEndMs,
+            playbackRate: sub.playbackRate ?? 1,
+          });
+        }
+      }
+    }
+  }
+
+  private dispatchControlSubCues(scene: PersistedSceneConfig, sceneStartMs: number, currentMs: number): void {
+    for (const subCueId of scene.subCueOrder) {
+      const sub = scene.subCues[subCueId];
+      if (!sub || sub.kind !== 'control') {
+        continue;
+      }
+      const start = sceneStartMs + (sub.startOffsetMs ?? 0);
+      const key = `${scene.id}:${subCueId}`;
+      if (currentMs < start || this.dispatchedControlSubCues.has(key)) {
+        continue;
+      }
+      this.dispatchedControlSubCues.add(key);
+      this.applyControlSubCue(sub);
+    }
+  }
+
+  private applyControlSubCue(sub: PersistedControlSubCueConfig): void {
+    const action = sub.action;
+    if (action.type === 'set-global-audio-muted') {
+      this.director.updateGlobalState({ globalAudioMuted: action.muted });
+    } else if (action.type === 'set-global-display-blackout') {
+      this.director.updateGlobalState({ globalDisplayBlackout: action.blackout });
+    } else if (action.type === 'pause-scene') {
+      const st = this.runtime?.sceneStates[action.sceneId];
+      if (st?.status === 'running') {
+        st.status = 'paused';
+      }
+    } else if (action.type === 'resume-scene') {
+      const st = this.runtime?.sceneStates[action.sceneId];
+      if (st?.status === 'paused') {
+        st.status = 'running';
+      }
+    } else if (action.type === 'stop-scene') {
+      const st = this.runtime?.sceneStates[action.sceneId];
+      if (st) {
+        st.status = 'complete';
+        st.endedAtStreamMs = this.getRuntimeStreamMs();
+      }
+    }
+  }
+
+  private getSubCueDurationMs(sub: PersistedSubCueConfig): number | undefined {
+    const [visualDurations, audioDurations] = this.getDurationMaps();
+    let base: number | undefined;
+    if (sub.kind === 'visual') {
+      const d = visualDurations[sub.visualId];
+      base = d === undefined ? undefined : (d * 1000) / (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
+    } else if (sub.kind === 'audio') {
+      const d = audioDurations[sub.audioSourceId];
+      base = d === undefined ? undefined : (d * 1000) / (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
+    } else {
+      return 0;
+    }
+    if (sub.durationOverrideMs !== undefined && base !== undefined) {
+      return Math.min(base, sub.durationOverrideMs);
+    }
+    return sub.durationOverrideMs ?? base;
   }
 
   private revalidate(): void {
@@ -310,9 +772,9 @@ export class StreamEngine extends EventEmitter {
     }
     const state = getState.call(this.director);
     return [
-      Object.fromEntries(Object.values(state.visuals).flatMap((visual) => (visual.durationSeconds !== undefined ? [[visual.id, visual.durationSeconds]] : []))),
+      Object.fromEntries(Object.values(state.visuals ?? {}).flatMap((visual) => (visual.durationSeconds !== undefined ? [[visual.id, visual.durationSeconds]] : []))),
       Object.fromEntries(
-        Object.values(state.audioSources).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds]] : [])),
+        Object.values(state.audioSources ?? {}).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds]] : [])),
       ),
     ];
   }
@@ -324,18 +786,40 @@ export class StreamEngine extends EventEmitter {
     }
     const state = getState.call(this.director);
     return {
-      visuals: new Set(Object.keys(state.visuals)),
-      audioSources: new Set(Object.keys(state.audioSources)),
-      outputs: new Set(Object.keys(state.outputs)),
+      visuals: new Set(Object.keys(state.visuals ?? {})),
+      audioSources: new Set(Object.keys(state.audioSources ?? {})),
+      outputs: new Set(Object.keys(state.outputs ?? {})),
       displayZones: new Map(
-        Object.values(state.displays).map((display) => [
+        Object.values(state.displays ?? {}).map((display) => [
           display.id,
-          new Set(display.layout.type === 'split' ? ['L', 'R'] : ['single']),
+          new Set(display.layout.type === 'split' ? (['L', 'R'] as const) : (['single'] as const)),
         ]),
       ),
-      audioSourceLabels: new Map(Object.values(state.audioSources).map((s) => [s.id, s.label])),
-      visualLabels: new Map(Object.values(state.visuals).map((v) => [v.id, v.label])),
+      audioSourceLabels: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, s.label])),
+      visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
     };
+  }
+
+  private startTicking(): void {
+    if (this.tickTimer) {
+      return;
+    }
+    this.tickTimer = setInterval(() => {
+      if (!this.runtime || this.runtime.status !== 'running') {
+        this.stopTicking();
+        return;
+      }
+      this.recomputeRuntime();
+      this.emitState();
+    }, 100);
+    this.tickTimer.unref?.();
+  }
+
+  private stopTicking(): void {
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = undefined;
+    }
   }
 
   private emitState(): void {

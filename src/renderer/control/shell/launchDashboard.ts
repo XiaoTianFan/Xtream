@@ -1,7 +1,18 @@
 import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
 import type { ControlSurface } from '../shared/types';
 import { elements } from './elements';
-import { runLaunchPresentationGate } from './launchPresentationReady';
+import { waitForLaunchPresentationReady } from './launchPresentationReady';
+
+/** Shows centered loading overlay + scrim on the launch modal (immediate, synchronous). */
+export function setLaunchDashboardLoadingUi(active: boolean): void {
+  if (active) {
+    elements.launchDashboard.dataset.phase = 'loading';
+    elements.launchLoadingOverlay.setAttribute('aria-hidden', 'false');
+  } else {
+    delete elements.launchDashboard.dataset.phase;
+    elements.launchLoadingOverlay.setAttribute('aria-hidden', 'true');
+  }
+}
 
 type LaunchDashboardOptions = {
   renderState: (state: DirectorState) => void;
@@ -39,15 +50,19 @@ export function createLaunchDashboardController({
   };
 
   const complete = async (result: ShowConfigOperationResult, message: string): Promise<void> => {
-    clearSelection();
-    renderState(result.state);
-    await hydrateAfterShowLoaded?.(result);
-    renderState(result.state);
-    await runLaunchPresentationGate({
-      launchDashboardElement: elements.launchDashboard,
-      getActiveSurface,
-      setShowStatus,
-    });
+    setLaunchDashboardLoadingUi(true);
+    try {
+      clearSelection();
+      renderState(result.state);
+      await hydrateAfterShowLoaded?.(result);
+      renderState(result.state);
+      await waitForLaunchPresentationReady({
+        getActiveSurface,
+        setShowStatus,
+      });
+    } finally {
+      setLaunchDashboardLoadingUi(false);
+    }
     setShowStatus(message, result.issues);
     hide();
   };
@@ -79,13 +94,20 @@ export function createLaunchDashboardController({
     filePath.textContent = entry.filePath;
     row.replaceChildren(name, filePath);
     row.addEventListener('click', async () => {
-      const result = await window.xtream.show.openRecent(entry.filePath);
-      if (result) {
-        await complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
-        return;
+      setLaunchDashboardLoadingUi(true);
+      try {
+        const result = await window.xtream.show.openRecent(entry.filePath);
+        if (result) {
+          await complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
+          return;
+        }
+        setLaunchDashboardLoadingUi(false);
+        setShowStatus(`Recent show is no longer available: ${entry.filePath}`);
+        await load();
+      } catch (error) {
+        setLaunchDashboardLoadingUi(false);
+        throw error;
       }
-      setShowStatus(`Recent show is no longer available: ${entry.filePath}`);
-      await load();
     });
     return row;
   };

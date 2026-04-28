@@ -470,6 +470,8 @@ export type PersistedVisualSubCueConfig = {
 export type PersistedControlSubCueConfig = {
   id: SubCueId;
   kind: 'control';
+  startOffsetMs?: number;
+  durationOverrideMs?: number;
   action:
     | { type: 'stop-scene'; sceneId: SceneId; fadeOutMs?: number }
     | { type: 'pause-scene'; sceneId: SceneId }
@@ -581,7 +583,7 @@ export type PersistedShowConfig = PersistedShowConfigV8;
 
 export type SceneRuntimeState = {
   sceneId: SceneId;
-  status: 'disabled' | 'ready' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
+  status: 'disabled' | 'ready' | 'preloading' | 'ready-to-start' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
   scheduledStartMs?: number;
   startedAtStreamMs?: number;
   endedAtStreamMs?: number;
@@ -589,12 +591,45 @@ export type SceneRuntimeState = {
   error?: string;
 };
 
+export type StreamRuntimeAudioSubCue = {
+  sceneId: SceneId;
+  subCueId: SubCueId;
+  audioSourceId: AudioSourceId;
+  outputId: VirtualOutputId;
+  streamStartMs: number;
+  localStartMs: number;
+  localEndMs?: number;
+  levelDb: number;
+  pan?: number;
+  muted?: boolean;
+  solo?: boolean;
+  playbackRate: number;
+};
+
+export type StreamRuntimeVisualSubCue = {
+  sceneId: SceneId;
+  subCueId: SubCueId;
+  visualId: VisualId;
+  target: VisualDisplayTarget;
+  streamStartMs: number;
+  localStartMs: number;
+  localEndMs?: number;
+  playbackRate: number;
+};
+
 export type StreamRuntimeState = {
   status: 'idle' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed';
   originWallTimeMs?: number;
+  startedWallTimeMs?: number;
+  offsetStreamMs?: number;
+  pausedAtStreamMs?: number;
+  currentStreamMs?: number;
   cursorSceneId?: SceneId;
   sceneStates: Record<SceneId, SceneRuntimeState>;
   expectedDurationMs?: number;
+  activeAudioSubCues?: StreamRuntimeAudioSubCue[];
+  activeVisualSubCues?: StreamRuntimeVisualSubCue[];
+  timelineNotice?: string;
 };
 
 export type StreamCommand =
@@ -603,7 +638,8 @@ export type StreamCommand =
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'jump-next' }
-  | { type: 'back-to-first' };
+  | { type: 'back-to-first' }
+  | { type: 'seek'; timeMs: number };
 
 export type StreamEditCommand =
   | { type: 'update-stream'; label?: string }

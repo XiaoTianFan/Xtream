@@ -108,21 +108,3 @@ export async function waitForLaunchPresentationReady(options: {
     }, timeoutMs);
   });
 }
-
-export async function runLaunchPresentationGate(options: {
-  launchDashboardElement: HTMLElement;
-  getActiveSurface: () => ControlSurface;
-  setShowStatus?: (message: string) => void;
-  timeoutMs?: number;
-}): Promise<void> {
-  options.launchDashboardElement.dataset.phase = 'loading';
-  try {
-    await waitForLaunchPresentationReady({
-      getActiveSurface: options.getActiveSurface,
-      setShowStatus: options.setShowStatus,
-      timeoutMs: options.timeoutMs,
-    });
-  } finally {
-    delete options.launchDashboardElement.dataset.phase;
-  }
-}

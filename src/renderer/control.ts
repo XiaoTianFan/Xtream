@@ -12,8 +12,8 @@ import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
-import { createLaunchDashboardController } from './control/shell/launchDashboard';
-import { runLaunchPresentationGate } from './control/shell/launchPresentationReady';
+import { createLaunchDashboardController, setLaunchDashboardLoadingUi } from './control/shell/launchDashboard';
+import { waitForLaunchPresentationReady } from './control/shell/launchPresentationReady';
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
 import { renderIssues as renderIssueList } from './control/shared/issues';
@@ -99,15 +99,19 @@ const showActions = createShowActions({
     }
   },
   hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
-  beforeRevealLaunchShell: async () => {
-    if (!launchShellRef.controller?.isVisible()) {
-      return;
+  beginLaunchPresentationLoad: () => {
+    if (launchShellRef.controller?.isVisible()) {
+      setLaunchDashboardLoadingUi(true);
     }
-    await runLaunchPresentationGate({
-      launchDashboardElement: elements.launchDashboard,
+  },
+  awaitLaunchPresentationReady: async () => {
+    await waitForLaunchPresentationReady({
       getActiveSurface: () => surfaceRouter.getActiveSurface(),
       setShowStatus,
     });
+  },
+  clearLaunchPresentationLoading: () => {
+    setLaunchDashboardLoadingUi(false);
   },
 });
 
@@ -214,28 +218,49 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('scroll', patchSurface.dismissContextMenu, true);
 installRailNavigation(surfaceRouter.setActiveSurface);
 elements.launchOpenShowButton.addEventListener('click', async () => {
-  const result = await window.xtream.show.open();
-  if (result) {
-    await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
-    return;
+  setLaunchDashboardLoadingUi(true);
+  try {
+    const result = await window.xtream.show.open();
+    if (result) {
+      await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
+      return;
+    }
+    setLaunchDashboardLoadingUi(false);
+    await launchDashboard.load();
+  } catch (error) {
+    setLaunchDashboardLoadingUi(false);
+    throw error;
   }
-  await launchDashboard.load();
 });
 elements.launchCreateShowButton.addEventListener('click', async () => {
-  const result = await window.xtream.show.createProject();
-  if (result) {
-    await launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
-    return;
+  setLaunchDashboardLoadingUi(true);
+  try {
+    const result = await window.xtream.show.createProject();
+    if (result) {
+      await launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
+      return;
+    }
+    setLaunchDashboardLoadingUi(false);
+    await launchDashboard.load();
+  } catch (error) {
+    setLaunchDashboardLoadingUi(false);
+    throw error;
   }
-  await launchDashboard.load();
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
-  const result = await window.xtream.show.openDefault();
-  if (!result) {
-    await launchDashboard.load();
-    return;
+  setLaunchDashboardLoadingUi(true);
+  try {
+    const result = await window.xtream.show.openDefault();
+    if (!result) {
+      setLaunchDashboardLoadingUi(false);
+      await launchDashboard.load();
+      return;
+    }
+    await launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
+  } catch (error) {
+    setLaunchDashboardLoadingUi(false);
+    throw error;
   }
-  await launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
 });
 patchElements.refreshOutputsButton.addEventListener('click', async () => {
   await loadAudioDevices();

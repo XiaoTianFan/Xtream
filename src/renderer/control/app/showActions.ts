@@ -7,8 +7,12 @@ type ShowActionsOptions = {
   onShowOpened: () => void;
   onShowCreated: () => void;
   hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
-  /** Runs before hiding launch shell when opening/creating from menus while launch UI is visible. */
-  beforeRevealLaunchShell?: () => Promise<void>;
+  /** Sync: show launch loading overlay before hydrate when opening from menus while launch UI is visible. */
+  beginLaunchPresentationLoad?: () => void;
+  /** Wait for presentation-ready (after hydrate); loading overlay must already be visible when applicable. */
+  awaitLaunchPresentationReady?: () => Promise<void>;
+  /** Clear launch loading overlay before hiding launch shell. */
+  clearLaunchPresentationLoading?: () => void;
 };
 
 export type ShowActions = ReturnType<typeof createShowActions>;
@@ -29,28 +33,42 @@ export function createShowActions(options: ShowActionsOptions) {
   }
 
   async function openShow(): Promise<void> {
+    options.beginLaunchPresentationLoad?.();
     const result = await window.xtream.show.open();
-    if (result) {
+    if (!result) {
+      options.clearLaunchPresentationLoading?.();
+      return;
+    }
+    try {
       options.renderState(result.state);
       await options.hydrateAfterShowLoaded?.(result);
       options.renderState(result.state);
       options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
-      await options.beforeRevealLaunchShell?.();
-      options.onShowOpened();
+      await options.awaitLaunchPresentationReady?.();
+    } finally {
+      options.clearLaunchPresentationLoading?.();
     }
+    options.onShowOpened();
   }
 
   async function createShow(): Promise<void> {
+    options.beginLaunchPresentationLoad?.();
     const result = await window.xtream.show.createProject();
-    if (result) {
+    if (!result) {
+      options.clearLaunchPresentationLoading?.();
+      return;
+    }
+    try {
       options.clearSelection();
       options.renderState(result.state);
       await options.hydrateAfterShowLoaded?.(result);
       options.renderState(result.state);
       options.setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
-      await options.beforeRevealLaunchShell?.();
-      options.onShowCreated();
+      await options.awaitLaunchPresentationReady?.();
+    } finally {
+      options.clearLaunchPresentationLoading?.();
     }
+    options.onShowCreated();
   }
 
   return {
