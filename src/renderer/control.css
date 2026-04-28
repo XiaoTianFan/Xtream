@@ -43,6 +43,8 @@
   --header-height: 64px;
   --utility-button-height: 2rem;
   --transport-button-height: clamp(2.75rem, 4vw, 3.25rem);
+  /* Matches ~longest Patch header timeline / loop-limit lines (0.75rem copy) */
+  --header-text-stack-width: 22rem;
   --status-chip-width: 8rem;
   --operator-footer-height: 220px;
   --status-footer-height: 28px;
@@ -568,10 +570,43 @@ body.extraction-blocked .nav-rail {
 
 .top-bar-main {
   display: grid;
-  grid-template-columns: minmax(12rem, 18rem) auto minmax(0, 1fr) auto;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   align-items: center;
   gap: var(--gutter);
   min-width: 0;
+}
+
+.patch-header-center {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gutter);
+  min-width: 0;
+  max-width: 100%;
+  justify-self: center;
+}
+
+.patch-timecode {
+  white-space: nowrap;
+}
+
+.patch-timeline-meta {
+  align-items: start;
+  text-align: left;
+  min-width: 0;
+}
+
+.patch-top-bar .patch-header-utilities button {
+  height: var(--utility-button-height);
+  min-height: var(--utility-button-height);
+}
+
+.patch-top-bar .patch-transport.transport-cluster {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
 }
 
 .top-bar-main .transport-cluster {
@@ -2521,12 +2556,29 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .stream-header {
   display: grid;
-  grid-template-columns: max-content max-content minmax(18rem, 1fr) max-content;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: var(--gutter);
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
   padding: calc(var(--gutter) + var(--compact)) var(--pane-padding) var(--compact);
+}
+
+.stream-header-center {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gutter);
+  min-width: 0;
+  max-width: 100%;
+  justify-self: center;
+}
+
+.stream-header .stream-transport.transport-cluster {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
 .stream-timecode {
@@ -2564,9 +2616,15 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .stream-scene-title-stack {
   display: grid;
   align-content: center;
+  align-items: start;
+  justify-items: start;
   gap: 0.1rem;
+  box-sizing: border-box;
+  width: var(--header-text-stack-width);
+  max-width: 100%;
   min-width: 0;
   line-height: 1.1;
+  text-align: left;
 }
 
 .stream-header-editable,
@@ -3112,6 +3170,17 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
   .stream-header {
     align-items: stretch;
+  }
+
+  .stream-header-center {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .stream-scene-title-stack {
+    width: 100%;
+    max-width: 100%;
   }
 
   .stream-middle {

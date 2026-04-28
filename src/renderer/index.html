@@ -22,16 +22,17 @@
       <div class="app-frame">
         <section id="surfaceMount" class="surface-mount" aria-label="Active surface">
           <section id="patchSurface" class="patch-surface" aria-label="Patch surface">
-          <header class="top-bar">
+          <header class="top-bar patch-top-bar">
             <div class="top-bar-main">
-              <div class="timecode" id="timecode">00:00.000</div>
-              <div class="transport-cluster" aria-label="Transport controls">
-                <button id="playButton" type="button">Play</button>
-                <button id="pauseButton" type="button">Pause</button>
-                <button id="stopButton" type="button">Stop</button>
-                <div class="loop-control">
-                  <button id="loopToggleButton" type="button">Loop</button>
-                  <div id="loopPopover" class="loop-popover" hidden role="dialog" aria-label="Loop range">
+              <div class="timecode patch-timecode" id="timecode">00:00.000</div>
+              <div class="patch-header-center">
+                <div class="patch-transport transport-cluster" aria-label="Transport controls">
+                  <button id="playButton" type="button" class="icon-button">Play</button>
+                  <button id="pauseButton" type="button" class="icon-button secondary">Pause</button>
+                  <button id="stopButton" type="button" class="icon-button secondary">Stop</button>
+                  <div class="loop-control">
+                    <button id="loopToggleButton" type="button" class="icon-button secondary">Loop</button>
+                    <div id="loopPopover" class="loop-popover" hidden role="dialog" aria-label="Loop range">
                     <div class="loop-popover-row">
                       <label class="loop-field">
                         <span class="loop-field-label">Loop start</span>
@@ -45,15 +46,16 @@
                         Activate
                       </button>
                     </div>
+                    </div>
                   </div>
+                  <button id="rateDisplayButton" type="button">1.0x</button>
                 </div>
-                <button id="rateDisplayButton" type="button">1.0x</button>
+                <div class="timeline-meta patch-timeline-meta" aria-live="polite">
+                  <div id="timelineSummaryPrimary" class="timeline-summary-primary">No active timeline duration</div>
+                  <div id="timelineLoopLimitLine" class="timeline-summary-loop" hidden></div>
+                </div>
               </div>
-              <div class="timeline-meta" aria-live="polite">
-                <div id="timelineSummaryPrimary" class="timeline-summary-primary">No active timeline duration</div>
-                <div id="timelineLoopLimitLine" class="timeline-summary-loop" hidden></div>
-              </div>
-              <div class="utility-cluster" aria-label="Show utilities">
+              <div class="utility-cluster patch-header-utilities" aria-label="Show utilities">
                 <button id="saveShowButton" type="button">Save</button>
                 <button id="saveShowAsButton" type="button">Save As</button>
                 <button id="openShowButton" type="button">Open</button>

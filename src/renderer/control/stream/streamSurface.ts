@@ -422,7 +422,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     decorateIconButton(create, 'Plus', 'Create new show');
     actions.append(save, saveAs, open, create);
 
-    header.replaceChildren(timecode, transport, titleStack, actions);
+    const headerCenter = document.createElement('div');
+    headerCenter.className = 'stream-header-center';
+    headerCenter.append(transport, titleStack);
+    header.replaceChildren(timecode, headerCenter, actions);
   }
 
   function createHeaderEditableText({

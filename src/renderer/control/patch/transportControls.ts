@@ -25,7 +25,12 @@ export function createTransportController({ getState, getSoloOutputCount, render
   const isTimelineScrubDraftActive = (): boolean => timelineScrubPointerActive || performance.now() < timelineScrubDraftUntil;
 
   const syncTransportInputs = (state: DirectorState): void => {
-    elements.playButton.disabled = !state.readiness.ready;
+    const ready = state.readiness.ready;
+    const seconds = getDirectorSeconds(state);
+    elements.playButton.disabled = !ready || !state.paused;
+    elements.pauseButton.disabled = !ready || state.paused;
+    elements.stopButton.disabled = !ready || (state.paused && seconds <= 0.001);
+    elements.rateDisplayButton.disabled = !ready;
     elements.rateDisplayButton.textContent = `${state.rate.toFixed(2)}x`;
     const liveState = getLiveStateLabel(state);
     elements.liveState.textContent = liveState;
