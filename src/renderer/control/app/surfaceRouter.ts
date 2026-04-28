@@ -76,7 +76,7 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
   function syncRailState(): void {
     const railButtons: Record<ControlSurface, HTMLButtonElement> = {
       patch: elements.patchRailButton,
-      cue: elements.cueRailButton,
+      stream: elements.streamRailButton,
       performance: elements.performanceRailButton,
       config: elements.configRailButton,
       logs: elements.logsRailButton,

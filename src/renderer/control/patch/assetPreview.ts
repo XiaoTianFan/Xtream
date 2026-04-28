@@ -3,6 +3,7 @@ import { applyVisualStyle } from './displayPreview';
 import { createButton, createHint, createSlider, syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
 import type { SelectedEntity } from '../shared/types';
+import { attachLiveVisualStream, reportLiveVisualError } from '../media/liveCaptureRuntime';
 
 export type AssetPreviewController = {
   render: (state: DirectorState, selectedEntity: SelectedEntity | undefined) => void;
@@ -65,6 +66,24 @@ export function createAssetPreviewController(options: AssetPreviewControllerOpti
     const shell = document.createElement('div');
     shell.className = 'asset-preview-shell';
     const title = createAssetPreviewTitle(visual.label);
+    if (visual.kind === 'live') {
+      const video = document.createElement('video');
+      applyVisualStyle(video, visual);
+      shell.append(title, video);
+      elements.assetPreview.replaceChildren(shell);
+      void attachLiveVisualStream(visual, video, {
+        reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
+      })
+        .then((attachment) => {
+          localPreviewCleanup = attachment.cleanup;
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Live preview failed.';
+          reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, message);
+          shell.append(createHint(message));
+        });
+      return;
+    }
     if (!visual.url) {
       shell.append(title, createHint('No playable URL for this visual.'));
       elements.assetPreview.replaceChildren(shell);

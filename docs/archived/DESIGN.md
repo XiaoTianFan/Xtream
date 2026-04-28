@@ -141,7 +141,7 @@ The application is structured as a single-page Electron interface with a persist
     *   Minimalist playback progress bar, effective refactor the current progress slider feature for drag-based manual seek.
 *   **Left Navigation Rail:**
     *   **Patch:** Media asset management and preview. (All current features)
-    *   **Cue:** Sequential show control and triggering (QLab-like, Planned for future).
+    *   **Stream:** Sequential show control and triggering (QLab-like, Planned for future).
     *   **Performance:** Live execution and monitoring view (StageCue-like, Planned for future).
     *   **Config/Logs:** System-level settings and debugging.
 *   **Status Footer:** Fixed bottom bar showing engine version, global mutes (Only audios), global blackouts (Both audios and displays), and meter resets.

@@ -306,7 +306,7 @@ describe('Director', () => {
   it('defaults fade durations to one second when a show file omits them', () => {
     const director = new Director(() => 1000);
     const minimal: PersistedShowConfig = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       savedAt: '2026-01-01T00:00:00.000Z',
       audioExtractionFormat: 'm4a',
       loop: { enabled: false, startSeconds: 0 },
@@ -502,7 +502,7 @@ describe('Director', () => {
     expect(director.getState().displays['display-1'].layout).toEqual({ type: 'single', visualId: 'visual-b' });
   });
 
-  it('serializes runtime state into schema v6 with pan on outputs', () => {
+  it('serializes runtime state into schema v7 with pan on outputs', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-a', 10);
     director.registerDisplay({
@@ -512,9 +512,9 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       audioExtractionFormat: 'm4a',
-      visuals: { 'visual-a': { id: 'visual-a', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
+      visuals: { 'visual-a': { id: 'visual-a', kind: 'file', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
       outputs: {
         'output-main': {
@@ -522,6 +522,41 @@ describe('Director', () => {
         },
       },
     });
+  });
+
+  it('creates live visuals as indefinite video sources and excludes them from timeline duration', () => {
+    const director = new Director(() => 1000);
+    const live = director.addLiveVisual('Camera 1', { source: 'webcam', deviceId: 'camera-a', label: 'Camera A' });
+    director.registerDisplay({
+      id: 'display-0',
+      fullscreen: false,
+      layout: { type: 'single', visualId: live.id },
+      health: 'ready',
+    });
+    const state = director.getState();
+    expect(state.visuals[live.id]).toMatchObject({ kind: 'live', type: 'video', ready: false });
+    expect(state.activeTimeline.durationSeconds).toBeUndefined();
+    expect(state.activeTimeline.assignedVideoIds).toEqual([]);
+    expect(state.readiness.issues).toContainEqual(expect.objectContaining({ target: `visual:${live.id}` }));
+  });
+
+  it('persists and restores live visuals without file URLs', () => {
+    const director = new Director(() => 1000);
+    const live = director.addLiveVisual('Screen 1', { source: 'screen', sourceId: 'screen:1:0', label: 'Screen 1' });
+    const config = director.createShowConfig('2026-04-26T00:00:00.000Z');
+    expect(config.visuals[live.id]).toMatchObject({
+      kind: 'live',
+      capture: { source: 'screen', sourceId: 'screen:1:0' },
+    });
+    const restored = new Director(() => 2000);
+    restored.restoreShowConfig(config, { visuals: {}, audioSources: {} });
+    const restoredLive = restored.getState().visuals[live.id];
+    expect(restoredLive).toMatchObject({
+      kind: 'live',
+      ready: false,
+    });
+    expect(restoredLive.url).toBeUndefined();
+    expect(restoredLive.path).toBeUndefined();
   });
 
   it('defaults new virtual output and show-restored output pan to 0 and preserves source pan on partial updates', () => {

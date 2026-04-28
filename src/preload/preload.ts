@@ -16,6 +16,9 @@ import type {
   DriftReport,
   EmbeddedAudioImportChoice,
   GlobalStateUpdate,
+  LiveCaptureCreate,
+  LiveDesktopSourceSummary,
+  LiveVisualCaptureConfig,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
@@ -64,6 +67,16 @@ const api = {
     clear: (visualId: VisualId): Promise<VisualState> => ipcRenderer.invoke('visual:clear', visualId),
     remove: (visualId: VisualId): Promise<boolean> => ipcRenderer.invoke('visual:remove', visualId),
     reportMetadata: (report: VisualMetadataReport): Promise<DirectorState> => ipcRenderer.invoke('visual:metadata', report),
+  },
+  liveCapture: {
+    listDesktopSources: (): Promise<LiveDesktopSourceSummary[]> => ipcRenderer.invoke('live-capture:list-desktop-sources'),
+    create: (request: LiveCaptureCreate): Promise<VisualState> => ipcRenderer.invoke('live-capture:create', request),
+    update: (visualId: VisualId, capture: LiveVisualCaptureConfig): Promise<VisualState> =>
+      ipcRenderer.invoke('live-capture:update', visualId, capture),
+    prepareDisplayStream: (visualId: VisualId, sourceId?: string): Promise<boolean> =>
+      ipcRenderer.invoke('live-capture:prepare-display-stream', visualId, sourceId),
+    releaseDisplayStream: (visualId: VisualId): Promise<void> => ipcRenderer.invoke('live-capture:release-display-stream', visualId),
+    permissionStatus: (): Promise<Record<string, string>> => ipcRenderer.invoke('live-capture:permission-status'),
   },
   audioSources: {
     addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),

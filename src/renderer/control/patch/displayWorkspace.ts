@@ -134,11 +134,11 @@ export function createDisplayWorkspaceController(options: DisplayWorkspaceContro
     if (display.health === 'closed') {
       return 'Closed';
     }
-    if (display.health === 'ready' && getPreviewVisualIds(display.layout).length > 0) {
-      return options.getState()?.paused ? 'Standby' : 'Ready';
-    }
     if (display.health === 'degraded' || display.health === 'stale') {
       return 'Degraded';
+    }
+    if (getPreviewVisualIds(display.layout).length > 0) {
+      return options.getState()?.paused ? 'Standby' : 'Ready';
     }
     return 'No Signal';
   }
@@ -263,6 +263,11 @@ export function createDisplayWorkspaceController(options: DisplayWorkspaceContro
   }
 
   async function updateDisplayLayout(displayId: string, layout: VisualLayoutProfile): Promise<void> {
+    const currentState = options.getState();
+    const currentDisplay = currentState?.displays[displayId];
+    if (currentDisplay) {
+      syncCardSummaries(Object.values({ ...currentState.displays, [displayId]: { ...currentDisplay, layout } }));
+    }
     await window.xtream.displays.update(displayId, { layout });
     options.renderState(await window.xtream.director.getState());
   }

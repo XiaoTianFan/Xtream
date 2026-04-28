@@ -14,6 +14,7 @@ import {
   migrateV3ToV4,
   migrateV4ToV5,
   migrateV5ToV6,
+  migrateV6ToV7,
   readRecentShows,
   readShowConfig,
   validateRuntimeState,
@@ -26,7 +27,7 @@ import type { DirectorState, PersistedShowConfig, PersistedShowConfigV5 } from '
 import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 
 const config: PersistedShowConfig = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   savedAt: '2026-04-26T00:00:00.000Z',
   rate: 1,
   audioExtractionFormat: 'm4a',
@@ -37,6 +38,7 @@ const config: PersistedShowConfig = {
     'visual-a': {
       id: 'visual-a',
       label: 'Visual A',
+      kind: 'file',
       type: 'video',
       path: 'F:\\media\\a.mp4',
       opacity: 0.9,
@@ -122,9 +124,9 @@ function createRuntimeState(): DirectorState {
 }
 
 describe('show config persistence helpers', () => {
-  it('validates schema v6 config shape and rejects older versions', () => {
+  it('validates schema v7 config shape and rejects older versions', () => {
     expect(assertShowConfig(config)).toEqual(config);
-    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3 through 6/i);
+    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3 through 7/i);
   });
 
   it('migrates schema v5 outputs to v6 with centered pan for bus and each source', () => {
@@ -157,6 +159,30 @@ describe('show config persistence helpers', () => {
         { audioSourceId: 'a', levelDb: -3, pan: 0 },
         { audioSourceId: 'b', levelDb: 0, pan: 0 },
       ],
+    });
+  });
+
+  it('migrates schema v6 visuals to schema v7 file visuals', () => {
+    const v6 = {
+      ...config,
+      schemaVersion: 6,
+      visuals: {
+        'visual-a': {
+          id: 'visual-a',
+          label: 'Visual A',
+          type: 'video',
+          path: 'F:\\media\\a.mp4',
+        },
+      },
+    } as const;
+    expect(migrateV6ToV7(v6)).toMatchObject({
+      schemaVersion: 7,
+      visuals: {
+        'visual-a': {
+          kind: 'file',
+          path: 'F:\\media\\a.mp4',
+        },
+      },
     });
   });
 
@@ -236,6 +262,39 @@ describe('show config persistence helpers', () => {
     });
   });
 
+  it('does not build file URLs or file-missing warnings for live visuals', () => {
+    const liveConfig: PersistedShowConfig = {
+      ...config,
+      visuals: {
+        camera: {
+          id: 'camera',
+          label: 'Camera',
+          kind: 'live',
+          type: 'video',
+          capture: { source: 'webcam', deviceId: 'camera-a', label: 'Camera A' },
+          opacity: 1,
+          brightness: 1,
+          contrast: 1,
+          playbackRate: 1,
+        },
+      },
+    };
+    expect(buildMediaUrls(liveConfig).visuals.camera).toBeUndefined();
+    expect(validateRuntimeState({
+      ...createRuntimeState(),
+      visuals: {
+        camera: {
+          id: 'camera',
+          label: 'Camera',
+          kind: 'live',
+          type: 'video',
+          capture: { source: 'webcam', deviceId: 'camera-a', label: 'Camera A' },
+          ready: false,
+        },
+      },
+    })).not.toContainEqual(expect.objectContaining({ message: expect.stringContaining('Visual file is missing') }));
+  });
+
   it('builds URLs and validation warnings for extracted embedded audio files', () => {
     const extractedConfig: PersistedShowConfig = {
       ...config,
@@ -299,6 +358,7 @@ describe('show config persistence helpers', () => {
     state.visuals['visual-a'] = {
       id: 'visual-a',
       label: 'Visual A',
+      kind: 'file',
       type: 'video',
       path: 'F:\\missing\\a.mp4',
       ready: false,

@@ -162,16 +162,18 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     toolbarStart.append(createDetailField('Label', label));
     const toolbarActions = document.createElement('div');
     toolbarActions.className = 'detail-toolbar-actions button-row';
-    toolbarActions.append(
-      createButton('Replace', 'secondary', async () => {
+    if (visual.kind === 'file') {
+      toolbarActions.append(
+        createButton('Replace', 'secondary', async () => {
         const replaced = await window.xtream.visuals.replace(visual.id);
         if (replaced) {
           options.queueEmbeddedAudioImportPrompt([replaced]);
           options.probeVisualMetadata(replaced);
         }
         options.renderState(await window.xtream.director.getState());
-      }),
-    );
+        }),
+      );
+    }
     const removeFromPool = createButton('Remove', 'secondary', async () => {
       if (!options.confirmPoolRecordRemoval(visual.label)) {
         return;
@@ -185,12 +187,19 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     toolbar.append(toolbarStart, toolbarActions);
     card.append(
       toolbar,
-      createDetailLine('Type', visual.type),
-      createDetailLine('Path', visual.path ?? '--'),
+      createDetailLine('Type', visual.kind === 'live' ? `live ${visual.capture.source}` : visual.type),
+      createDetailLine('Path', visual.kind === 'file' ? visual.path ?? '--' : '--'),
       createDetailLine('Duration', formatDuration(visual.durationSeconds)),
       createDetailLine('Dimensions', visual.width && visual.height ? `${visual.width}x${visual.height}` : '--'),
-      createDetailLine('File Size', formatBytes(visual.fileSizeBytes)),
-      createDetailLine('Embedded Audio', visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'),
+      ...(visual.kind === 'live'
+        ? [
+            createDetailLine('Source', visual.capture.label ?? visual.capture.source),
+            createDetailLine('Readiness', visual.ready ? 'ready' : visual.error ?? 'standby'),
+          ]
+        : [
+            createDetailLine('File Size', formatBytes(visual.fileSizeBytes)),
+            createDetailLine('Embedded Audio', visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'),
+          ]),
       createNumberDetailControl('Opacity', visual.opacity ?? 1, 0, 1, 0.01, (opacity) => window.xtream.visuals.update(visual.id, { opacity })),
       createNumberDetailControl('Brightness', visual.brightness ?? 1, 0, 2, 0.01, (brightness) => window.xtream.visuals.update(visual.id, { brightness })),
       createNumberDetailControl('Contrast', visual.contrast ?? 1, 0, 2, 0.01, (contrast) => window.xtream.visuals.update(visual.id, { contrast })),

@@ -3,6 +3,7 @@ import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, 
 import { createPreviewLabel } from '../shared/dom';
 import { patchElements as elements } from './elements';
 import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
+import { attachLiveVisualStream, reportLiveVisualError } from '../media/liveCaptureRuntime';
 import type { DisplayPreviewProgressEdge } from '../shared/types';
 
 const DISPLAY_PREVIEW_MAX_WIDTH = 854;
@@ -10,6 +11,7 @@ const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
 const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 15;
 const DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS = 0.05;
 const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
+const livePreviewCleanups = new Map<HTMLVideoElement, () => void>();
 
 export function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
   element.style.opacity = String(visual.opacity ?? 1);
@@ -37,7 +39,33 @@ export function createDisplayPreview(display: DisplayWindowState, state: Directo
     pane.className = 'display-preview-pane';
     pane.dataset.visualId = visualId;
     if (!visual?.url) {
+      if (visual?.kind === 'live') {
+        const video = document.createElement('video');
+        video.dataset.visualId = visualId;
+        video.dataset.livePreviewVideo = 'true';
+        applyVisualStyle(video, visual);
+        void attachLiveVisualStream(visual, video, {
+          reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
+        })
+          .then((attachment) => {
+            livePreviewCleanups.set(video, attachment.cleanup);
+            reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id);
+          })
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'Live preview failed.';
+            reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, message);
+            reportPreviewStatus(
+              `display:${display.id}:${visualId}`,
+              visualId,
+              false,
+              message,
+              display.id,
+            );
+          });
+        pane.append(video);
+      } else {
       pane.append(createPreviewLabel(visual?.label ?? visualId, 'No visual selected'));
+      }
     } else if (visual.type === 'image') {
       const image = document.createElement('img');
       image.src = visual.url;
@@ -174,6 +202,7 @@ export function getPreviewVisualIds(layout: VisualLayoutProfile): VisualId[] {
 }
 
 export function syncPreviewElements(state: DirectorState): void {
+  cleanupDisconnectedLivePreviews();
   syncDisplayPreviewProgressEdges(state);
   if (state.performanceMode) {
     document.querySelectorAll<HTMLVideoElement>('video[data-preview-video="true"]').forEach((video) => video.pause());
@@ -197,6 +226,16 @@ export function syncPreviewElements(state: DirectorState): void {
     }
     syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
     drawDisplayPreviewFrame(video);
+  }
+}
+
+function cleanupDisconnectedLivePreviews(): void {
+  for (const [video, cleanup] of livePreviewCleanups) {
+    if (video.isConnected) {
+      continue;
+    }
+    cleanup();
+    livePreviewCleanups.delete(video);
   }
 }
 

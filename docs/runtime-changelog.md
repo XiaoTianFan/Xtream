@@ -1,14 +1,24 @@
 # Xtream Runtime Changelog
 
+## v0.0.8
+
+- Added live visual sources so operators can add webcams, screens, or application windows to the visual pool and route them to display windows like other visuals.
+- Added a live-capture picker with source previews, including webcam preview tiles and desktop/window thumbnails before adding a stream.
+- Made live visuals persist in show files with schema v7, while existing schema v3-v6 show files continue to migrate forward as file-based visuals.
+- Improved live display playback by preparing trusted screen/window capture grants, cleaning up capture streams when layouts change, and reporting live preview/display readiness back into the show state.
+- Added live visual details and preview support, including capture source information and live-stream rendering in the asset preview and display windows.
+- Improved embedded-audio extraction feedback with a dedicated extraction overlay and clearer long-video extraction choices.
+- Renamed the planned Cue workspace to Stream across the control shell so the navigation matches the current product language.
+
 ## v0.0.7
 
-- Reworked the control console into dedicated Patch, Cue, Performance, Config, and Logs surfaces so each workflow has a clearer home while keeping the live patch controls immediately available.
+- Reworked the control console into dedicated Patch, Stream, Performance, Config, and Logs surfaces so each workflow has a clearer home while keeping the live patch controls immediately available.
 - Improved the Patch surface structure with focused controllers for media preview, display windows, mixer controls, details, layout preferences, embedded-audio import, and transport controls.
 - Kept timeline scrubbing responsive while live state updates continue in the background, reducing jumpy scrubber feedback during seeks.
 - Made show save, save-as, open, and create actions consistent between the Patch surface, launch dashboard, and Config surface.
 - Refined the control shell and Patch surface icon wiring so navigation, show actions, transport controls, media import, display creation, and mixer actions render from their own surface-specific controls.
 - Relaxed media drift correction slightly so playback sync is less likely to over-correct during normal timing variation.
-- Reorganized the renderer control code into clearer app, shell, patch, media, meter, shared, config, cue, performance, and logs modules, reducing the size and responsibility of the main control entrypoint.
+- Reorganized the renderer control code into clearer app, shell, patch, media, meter, shared, config, stream, performance, and logs modules, reducing the size and responsibility of the main control entrypoint.
 
 ## v0.0.6
 
@@ -41,4 +51,3 @@
 - Added global audio mute and display blackout controls for live operation. These are session controls and are intentionally not saved into show files.
 - Added runtime-version reporting to diagnostics alongside the packaged app version.
 - Added automatic embedded-audio source creation when imported videos report an embedded audio track.
-

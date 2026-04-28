@@ -51,12 +51,65 @@ export type DisplayWindowState = {
   degradationReason?: string;
 };
 
-export type VisualState = {
+export type CaptureCropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type LiveVisualCaptureConfig =
+  | {
+      source: 'webcam';
+      deviceId?: string;
+      groupId?: string;
+      facingMode?: string;
+      label?: string;
+      includeAudio?: boolean;
+      audioDeviceId?: string;
+      revision?: number;
+    }
+  | {
+      source: 'screen';
+      sourceId?: string;
+      displayId?: string;
+      label?: string;
+      revision?: number;
+    }
+  | {
+      source: 'screen-region';
+      sourceId?: string;
+      displayId?: string;
+      label?: string;
+      crop: CaptureCropRect;
+      revision?: number;
+    }
+  | {
+      source: 'window';
+      sourceId?: string;
+      appName?: string;
+      windowName?: string;
+      label?: string;
+      revision?: number;
+    };
+
+export type LiveDesktopSourceSummary = {
+  id: string;
+  name: string;
+  kind: 'screen' | 'window';
+  displayId?: string;
+  thumbnailDataUrl?: string;
+  appIconDataUrl?: string;
+};
+
+export type LiveCaptureCreate = {
+  label?: string;
+  capture: LiveVisualCaptureConfig;
+};
+
+type BaseVisualState = {
   id: VisualId;
   label: string;
-  type: VisualMediaType;
-  path?: string;
-  url?: string;
   durationSeconds?: number;
   width?: number;
   height?: number;
@@ -70,6 +123,25 @@ export type VisualState = {
   ready: boolean;
   error?: string;
 };
+
+export type FileVisualState = BaseVisualState & {
+  kind: 'file';
+  type: VisualMediaType;
+  path?: string;
+  url?: string;
+};
+
+export type LiveVisualState = BaseVisualState & {
+  kind: 'live';
+  type: 'video';
+  capture: LiveVisualCaptureConfig;
+  linkedAudioSourceId?: AudioSourceId;
+  durationSeconds?: undefined;
+  path?: undefined;
+  url?: undefined;
+};
+
+export type VisualState = FileVisualState | LiveVisualState;
 
 export type AudioSourceState =
   | {
@@ -233,10 +305,17 @@ export type CorrectionState = {
   displays: Record<DisplayWindowId, RailCorrection>;
 };
 
-export type PersistedVisualConfig = Pick<
-  VisualState,
+export type PersistedFileVisualConfig = Pick<
+  FileVisualState,
   'id' | 'label' | 'type' | 'path' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate' | 'fileSizeBytes'
+> & { kind?: 'file' };
+
+export type PersistedLiveVisualConfig = Pick<
+  LiveVisualState,
+  'id' | 'label' | 'kind' | 'type' | 'capture' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate' | 'linkedAudioSourceId'
 >;
+
+export type PersistedVisualConfig = PersistedFileVisualConfig | PersistedLiveVisualConfig;
 
 export type PersistedAudioSourceConfig =
   | {
@@ -317,7 +396,11 @@ export type PersistedShowConfigV6 = Omit<PersistedShowConfigV5, 'schemaVersion'>
   schemaVersion: 6;
 };
 
-export type PersistedShowConfig = PersistedShowConfigV6;
+export type PersistedShowConfigV7 = Omit<PersistedShowConfigV6, 'schemaVersion'> & {
+  schemaVersion: 7;
+};
+
+export type PersistedShowConfig = PersistedShowConfigV7;
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -496,6 +579,12 @@ export type IpcChannels = {
   'visual:clear': (visualId: VisualId) => VisualState;
   'visual:remove': (visualId: VisualId) => boolean;
   'visual:metadata': (report: VisualMetadataReport) => DirectorState;
+  'live-capture:list-desktop-sources': () => LiveDesktopSourceSummary[];
+  'live-capture:create': (request: LiveCaptureCreate) => VisualState;
+  'live-capture:update': (visualId: VisualId, capture: LiveVisualCaptureConfig) => VisualState;
+  'live-capture:prepare-display-stream': (visualId: VisualId, sourceId?: string) => boolean;
+  'live-capture:release-display-stream': (visualId: VisualId) => void;
+  'live-capture:permission-status': () => Record<string, string>;
   'audio-source:add-file': () => AudioSourceCreateResult;
   'audio-source:add-dropped': (filePaths: string[]) => AudioSourceState[];
   'audio-source:add-embedded': (visualId: VisualId, mode?: EmbeddedAudioExtractionMode) => AudioSourceState;

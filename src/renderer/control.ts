@@ -6,7 +6,7 @@ import { installInteractionLock, isPanelInteractionActive } from './control/app/
 import { createShowActions } from './control/app/showActions';
 import { createSurfaceRouter } from './control/app/surfaceRouter';
 import { createConfigSurfaceController } from './control/config/configSurface';
-import { createCueSurfaceController } from './control/cue/cueSurface';
+import { createStreamSurfaceController } from './control/stream/streamSurface';
 import { createLogsSurfaceController } from './control/logs/logsSurface';
 import { patchElements } from './control/patch/elements';
 import { installPatchIcons } from './control/patch/patchIcons';
@@ -90,7 +90,7 @@ const surfaceRouter = createSurfaceRouter({
   getCurrentState: () => currentState,
   surfaces: [
     patchSurface,
-    createCueSurfaceController(),
+    createStreamSurfaceController(),
     createPerformanceSurfaceController(),
     createConfigSurfaceController({ renderState, setShowStatus, showActions }),
     createLogsSurfaceController({

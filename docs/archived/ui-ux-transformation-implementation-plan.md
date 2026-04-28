@@ -13,7 +13,7 @@ The key finding is that the underlying MVP has already moved well beyond the ori
 - `docs/DESIGN.md`: Morandi-Technical visual system, single-page shell, patch view, footer mixer/detail pane, resizable panes, icon-first transport, and future navigation surfaces.
 - `docs/static-ui-prototype.html`: concrete static layout for the nav rail, top app bar, patch workspace, display cards, audio mixer strip, dynamic detail pane, and status footer.
 - `docs/electron-cross-platform-player-prd.md`: functional MVP requirements for Visual Pool, Audio Pool, Virtual Outputs, display mapping, live previews, active timeline, mixed-duration media, persistence, readiness, diagnostics, and tests.
-- `docs/show-cue-system-long-term-roadmap.md`: future Cue and Performance surfaces, cue list foundation, adapter strategy, and long-term operator/authoring separation.
+- `docs/show-cue-system-long-term-roadmap.md`: future Stream and Performance surfaces, cue list foundation, adapter strategy, and long-term operator/authoring separation.
 - Current implementation in `src/main`, `src/renderer`, `src/shared`, and `src/preload`.
 - Current web interface guidance: accessibility, focus states, content overflow handling, semantic controls, icon button labels, dark theming, and performance constraints for large lists.
 
@@ -69,7 +69,7 @@ The design direction is well aligned with the product:
 
 - High-density layout matches live operator needs better than the current stacked panels.
 - Persistent top transport reduces travel time for play, pause, stop, rate, loop, seek, save/open, diagnostics, and readiness.
-- Left navigation rail provides a home for future Cue, Performance, Config, and Logs surfaces without complicating the MVP Patch view.
+- Left navigation rail provides a home for future Stream, Performance, Config, and Logs surfaces without complicating the MVP Patch view.
 - Middle split workspace maps cleanly to the existing Visual Pool and Display Windows concepts.
 - Footer mixer and dynamic detail pane are the right structure for virtual outputs and contextual editing.
 - Square geometry, restrained color, and data-focused typography reinforce a professional tool rather than a marketing UI.
@@ -100,7 +100,7 @@ The design direction is well aligned with the product:
 
 The design expects a fixed application shell:
 
-- Left rail: Patch, Cue, Performance, Config/Logs.
+- Left rail: Patch, Stream, Performance, Config/Logs.
 - Top bar: timecode, transport, rate, utilities, readiness/live state, progress line.
 - Main patch workspace: media pool and display windows.
 - Footer: audio mixer and dynamic details.
@@ -305,7 +305,7 @@ Every icon-only button must have an `aria-label` and visible tooltip or title.
 +--------------------------------------------------------------------+
 ```
 
-The Patch view is the first implemented surface. Cue, Performance, Config, and Logs should render lightweight placeholder surfaces that do not imply unfinished production behavior.
+The Patch view is the first implemented surface. Stream, Performance, Config, and Logs should render lightweight placeholder surfaces that do not imply unfinished production behavior.
 
 ### 8.2 Header Behavior
 
@@ -327,12 +327,12 @@ The Patch view is the first implemented surface. Cue, Performance, Config, and L
 Initial rails:
 
 - Patch: implemented, active by default.
-- Cue: placeholder linked to roadmap.
+- Stream: placeholder linked to roadmap.
 - Performance: placeholder linked to roadmap.
 - Config: basic diagnostics/settings surface or placeholder.
 - Logs: diagnostics/issues surface if easy to expose.
 
-Do not wire unfinished controls that can alter show state. Placeholder rail items should clearly communicate that the surface is planned and should not expose fake cue/performance controls.
+Do not wire unfinished controls that can alter show state. Placeholder rail items should clearly communicate that the surface is planned and should not expose fake stream/performance controls.
 
 ### 8.4 Media Pool
 
@@ -694,7 +694,7 @@ Tasks:
 - Add reset meters.
 - Add a Config/Logs surface for readiness issues, diagnostics export, physical output refresh, and Director State.
 - Add or update a runtime changelog so release-facing engine changes can be tracked separately from package metadata.
-- Keep Cue and Performance as placeholders unless active implementation begins.
+- Keep Stream and Performance as placeholders unless active implementation begins.
 
 Acceptance:
 
@@ -929,7 +929,7 @@ Resolved decisions:
 - Visual opacity, brightness, and contrast apply globally to that visual everywhere it is used.
 - Visual playback rate and audio-source playback rate are media-record properties, and global playback rate multiplies on top of them.
 - File size is refreshed when media metadata is revalidated.
-- Cue and Performance rail items should be placeholders until implementation begins.
+- Stream and Performance rail items should be placeholders until implementation begins.
 - Tailwind is mandatory for the control UI refactor.
 - Xtream maintains a separate engine/runtime version and changelog. The starting runtime version is `v0.0.4`.
 

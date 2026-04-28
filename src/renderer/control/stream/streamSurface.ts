@@ -3,16 +3,16 @@ import { createHint } from '../shared/dom';
 import { createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
 import { elements } from '../shell/elements';
 
-export function createCueSurfaceController(): SurfaceController {
+export function createStreamSurfaceController(): SurfaceController {
   return {
-    id: 'cue',
-    createRenderSignature: () => 'cue:placeholder',
+    id: 'stream',
+    createRenderSignature: () => 'stream:placeholder',
     render: () => renderPlaceholderSurface(),
   };
 }
 
 function renderPlaceholderSurface(): void {
-  const card = createSurfaceCard('Cue');
-  card.append(createHint('Sequential cue control is planned for the cue-system roadmap. This placeholder does not alter show state.'));
+  const card = createSurfaceCard('Stream');
+  card.append(createHint('Stream control is planned for the workspace roadmap. This placeholder does not alter show state.'));
   elements.surfacePanel.replaceChildren(wrapSurfaceGrid(card));
 }

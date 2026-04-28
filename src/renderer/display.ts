@@ -5,6 +5,7 @@ import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
 import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/media/mediaSync';
 import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
+import { attachLiveVisualStream, reportLiveVisualError } from './control/media/liveCaptureRuntime';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
@@ -24,6 +25,7 @@ let mediaSeekFallbackCount = 0;
 let lastMediaSeekDurationMs: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
 const videoElements = new Map<VisualId, HTMLVideoElement>();
+const liveVisualCleanups = new Map<VisualId, () => void>();
 const videoFrameStats = new WeakMap<HTMLVideoElement, VideoFrameStats>();
 const DISPLAY_SYNC_INTERVAL_MS = 500;
 const DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS = 0.5;
@@ -57,6 +59,10 @@ const displayRoot = root;
 
 function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): void {
   displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
+  for (const cleanup of liveVisualCleanups.values()) {
+    cleanup();
+  }
+  liveVisualCleanups.clear();
   displayRoot.replaceChildren();
   videoElements.clear();
   for (const visualId of getLayoutVisualIds(layout)) {
@@ -89,6 +95,23 @@ function handleState(state: DirectorState): void {
 function createVisualElement(visualId: VisualId, visual: VisualState | undefined): HTMLElement {
   const visualElement = document.createElement('section');
   visualElement.className = 'display-output';
+  if (visual?.kind === 'live') {
+    const video = document.createElement('video');
+    video.dataset.visualId = visualId;
+    applyVisualStyle(video, visual);
+    observeVideoFrames(video);
+    visualElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(visualId, `live ${visual.capture.source}`)] : []));
+    void attachLiveVisualStream(visual, video, {
+      reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
+    })
+      .then((attachment) => {
+        liveVisualCleanups.set(visualId, attachment.cleanup);
+      })
+      .catch((error: unknown) => {
+        reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, error instanceof Error ? error.message : 'Live visual capture failed.');
+      });
+    return visualElement;
+  }
   if (visual?.type === 'image' && visual.url) {
     const image = document.createElement('img');
     image.src = visual.url;
@@ -162,7 +185,9 @@ function createTextSpan(text: string): HTMLSpanElement {
 function createRenderSignature(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): string {
   const visualParts = getLayoutVisualIds(layout).map((visualId) => {
     const visual = visualsById[visualId];
-    return `${visualId}:${visual?.url ?? 'empty'}:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}:${visual?.opacity ?? 1}:${
+    return `${visualId}:${visual?.kind ?? 'file'}:${visual?.url ?? 'empty'}:${
+      visual?.kind === 'live' ? JSON.stringify(visual.capture) : ''
+    }:${visual?.ready ? 'ready' : 'not-ready'}:${visual?.error ?? ''}:${visual?.opacity ?? 1}:${
       visual?.brightness ?? 1
     }:${visual?.contrast ?? 1}:${visual?.playbackRate ?? 1}`;
   });
@@ -356,6 +381,10 @@ syncTimer = window.setInterval(() => {
 }, DISPLAY_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {
+  for (const cleanup of liveVisualCleanups.values()) {
+    cleanup();
+  }
+  liveVisualCleanups.clear();
   if (driftTimer !== undefined) {
     window.clearInterval(driftTimer);
   }

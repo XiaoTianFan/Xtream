@@ -6,7 +6,7 @@ export const elements = {
   patchSurface: assertElement(document.querySelector<HTMLElement>('#patchSurface'), 'patchSurface'),
   surfacePanel: assertElement(document.querySelector<HTMLElement>('#surfacePanel'), 'surfacePanel'),
   patchRailButton: assertElement(document.querySelector<HTMLButtonElement>('#patchRailButton'), 'patchRailButton'),
-  cueRailButton: assertElement(document.querySelector<HTMLButtonElement>('#cueRailButton'), 'cueRailButton'),
+  streamRailButton: assertElement(document.querySelector<HTMLButtonElement>('#streamRailButton'), 'streamRailButton'),
   performanceRailButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceRailButton'), 'performanceRailButton'),
   configRailButton: assertElement(document.querySelector<HTMLButtonElement>('#configRailButton'), 'configRailButton'),
   logsRailButton: assertElement(document.querySelector<HTMLButtonElement>('#logsRailButton'), 'logsRailButton'),

@@ -10,6 +10,7 @@ import type {
   DisplayWindowState,
   DriftReport,
   GlobalStateUpdate,
+  LiveVisualCaptureConfig,
   ShowSettingsUpdate,
   PersistedShowConfig,
   PreviewStatus,
@@ -103,6 +104,7 @@ export class Director extends EventEmitter {
       const id = item.id ?? this.createVisualId();
       this.state.visuals[id] = {
         id,
+        kind: 'file',
         label: item.label ?? `Visual ${Object.keys(this.state.visuals).length + 1}`,
         type: item.type,
         path: item.path,
@@ -121,10 +123,33 @@ export class Director extends EventEmitter {
     return added;
   }
 
+  addLiveVisual(label: string | undefined, capture: LiveVisualCaptureConfig): VisualState {
+    const id = this.createVisualId();
+    this.state.visuals[id] = {
+      id,
+      kind: 'live',
+      label: label ?? capture.label ?? this.createLiveVisualLabel(capture),
+      type: 'video',
+      capture: {
+        ...capture,
+        revision: capture.revision ?? 1,
+      } as LiveVisualCaptureConfig,
+      opacity: 1,
+      brightness: 1,
+      contrast: 1,
+      playbackRate: 1,
+      ready: false,
+    };
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.visuals[id]);
+  }
+
   replaceVisual(visualId: string, item: VisualImportItem): VisualState {
     const previous = this.state.visuals[visualId];
     this.state.visuals[visualId] = {
       id: visualId,
+      kind: 'file',
       label: previous?.label ?? item.label ?? visualId,
       type: item.type,
       path: item.path,
@@ -151,10 +176,34 @@ export class Director extends EventEmitter {
     return structuredClone(this.state.visuals[visualId]);
   }
 
+  updateLiveVisualCapture(visualId: string, capture: LiveVisualCaptureConfig): VisualState {
+    const visual = this.state.visuals[visualId];
+    if (!visual) {
+      throw new Error(`Unknown visual: ${visualId}`);
+    }
+    if (visual.kind !== 'live') {
+      throw new Error(`${visual.label} is not a live visual.`);
+    }
+    this.state.visuals[visualId] = {
+      ...visual,
+      capture: {
+        ...capture,
+        revision: capture.revision ?? (visual.capture.revision ?? 0) + 1,
+      } as LiveVisualCaptureConfig,
+      ready: false,
+      error: undefined,
+    };
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.visuals[visualId]);
+  }
+
+
   clearVisual(visualId: string): VisualState {
     const previous = this.state.visuals[visualId];
     this.state.visuals[visualId] = {
       id: visualId,
+      kind: 'file',
       label: previous?.label ?? visualId,
       type: previous?.type ?? 'video',
       opacity: previous?.opacity ?? 1,
@@ -197,20 +246,21 @@ export class Director extends EventEmitter {
   updateVisualMetadata(report: VisualMetadataReport): DirectorState {
     this.state.visuals[report.visualId] ??= {
       id: report.visualId,
+      kind: 'file',
       label: report.visualId,
       type: 'video',
       ready: false,
     };
     this.state.visuals[report.visualId] = {
       ...this.state.visuals[report.visualId],
-      durationSeconds: report.durationSeconds,
-      width: report.width,
-      height: report.height,
-      hasEmbeddedAudio: report.hasEmbeddedAudio,
+      durationSeconds: report.durationSeconds ?? this.state.visuals[report.visualId].durationSeconds,
+      width: report.width ?? this.state.visuals[report.visualId].width,
+      height: report.height ?? this.state.visuals[report.visualId].height,
+      hasEmbeddedAudio: report.hasEmbeddedAudio ?? this.state.visuals[report.visualId].hasEmbeddedAudio,
       fileSizeBytes: this.getFileSizeBytes(this.state.visuals[report.visualId].path),
       ready: report.ready,
       error: report.error,
-    };
+    } as VisualState;
     for (const source of Object.values(this.state.audioSources)) {
       if (source.type === 'embedded-visual' && source.visualId === report.visualId) {
         source.durationSeconds = report.durationSeconds;
@@ -611,7 +661,7 @@ export class Director extends EventEmitter {
 
   createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
     return {
-      schemaVersion: 6,
+      schemaVersion: 7,
       savedAt,
       rate: this.state.rate,
       audioExtractionFormat: this.state.audioExtractionFormat,
@@ -621,17 +671,31 @@ export class Director extends EventEmitter {
       visuals: Object.fromEntries(
         Object.values(this.state.visuals).map((visual) => [
           visual.id,
-          {
-            id: visual.id,
-            label: visual.label,
-            type: visual.type,
-            path: visual.path,
-            opacity: visual.opacity ?? 1,
-            brightness: visual.brightness ?? 1,
-            contrast: visual.contrast ?? 1,
-            playbackRate: visual.playbackRate ?? 1,
-            fileSizeBytes: visual.fileSizeBytes,
-          },
+          visual.kind === 'live'
+            ? {
+                id: visual.id,
+                label: visual.label,
+                kind: 'live',
+                type: visual.type,
+                capture: structuredClone(visual.capture),
+                linkedAudioSourceId: visual.linkedAudioSourceId,
+                opacity: visual.opacity ?? 1,
+                brightness: visual.brightness ?? 1,
+                contrast: visual.contrast ?? 1,
+                playbackRate: visual.playbackRate ?? 1,
+              }
+            : {
+                id: visual.id,
+                label: visual.label,
+                kind: 'file',
+                type: visual.type,
+                path: visual.path,
+                opacity: visual.opacity ?? 1,
+                brightness: visual.brightness ?? 1,
+                contrast: visual.contrast ?? 1,
+                playbackRate: visual.playbackRate ?? 1,
+                fileSizeBytes: visual.fileSizeBytes,
+              },
         ]),
       ),
       audioSources: Object.fromEntries(
@@ -718,19 +782,34 @@ export class Director extends EventEmitter {
     this.state.visuals = Object.fromEntries(
       Object.values(config.visuals).map((visual) => [
         visual.id,
-        {
-          id: visual.id,
-          label: visual.label,
-          type: visual.type,
-          path: visual.path,
-          url: urls.visuals[visual.id],
-          opacity: visual.opacity ?? 1,
-          brightness: visual.brightness ?? 1,
-          contrast: visual.contrast ?? 1,
-          playbackRate: visual.playbackRate ?? 1,
-          fileSizeBytes: visual.fileSizeBytes,
-          ready: false,
-        } satisfies VisualState,
+        visual.kind === 'live'
+          ? ({
+              id: visual.id,
+              label: visual.label,
+              kind: 'live',
+              type: 'video',
+              capture: structuredClone(visual.capture),
+              linkedAudioSourceId: visual.linkedAudioSourceId,
+              opacity: visual.opacity ?? 1,
+              brightness: visual.brightness ?? 1,
+              contrast: visual.contrast ?? 1,
+              playbackRate: visual.playbackRate ?? 1,
+              ready: false,
+            } satisfies VisualState)
+          : ({
+              id: visual.id,
+              label: visual.label,
+              kind: 'file',
+              type: visual.type,
+              path: visual.path,
+              url: urls.visuals[visual.id],
+              opacity: visual.opacity ?? 1,
+              brightness: visual.brightness ?? 1,
+              contrast: visual.contrast ?? 1,
+              playbackRate: visual.playbackRate ?? 1,
+              fileSizeBytes: visual.fileSizeBytes,
+              ready: false,
+            } satisfies VisualState),
       ]),
     );
     this.state.audioSources = Object.fromEntries(
@@ -1046,7 +1125,9 @@ export class Director extends EventEmitter {
       }
       for (const visualId of getLayoutVisualIds(display.layout)) {
         const visual = this.state.visuals[visualId];
-        if (!visual?.path) {
+        if (!visual) {
+          issues.push({ severity: 'error', target: `visual:${visualId}`, message: `Visual ${visualId} is missing.` });
+        } else if (visual.kind === 'file' && !visual.path) {
           issues.push({ severity: 'error', target: `visual:${visualId}`, message: `Visual ${visualId} has no media selected.` });
         } else if (!visual.ready) {
           issues.push({ severity: 'error', target: `visual:${visualId}`, message: visual.error ?? `${visual.label} is not ready.` });
@@ -1111,6 +1192,16 @@ export class Director extends EventEmitter {
       id = `visual-${this.visualSequence}`;
     } while (this.state.visuals[id]);
     return id;
+  }
+
+  private createLiveVisualLabel(capture: LiveVisualCaptureConfig): string {
+    const sourceLabels: Record<LiveVisualCaptureConfig['source'], string> = {
+      webcam: 'Webcam',
+      screen: 'Screen',
+      'screen-region': 'Screen Region',
+      window: 'Window',
+    };
+    return `${sourceLabels[capture.source]} ${Object.keys(this.state.visuals).length + 1}`;
   }
 
   private createAudioSourceId(): string {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, systemPreferences, webContents as electronWebContents } from 'electron';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -35,6 +35,9 @@ import type {
   EmbeddedAudioImportChoice,
   EmbeddedAudioImportCandidate,
   EmbeddedAudioExtractionMode,
+  LiveCaptureCreate,
+  LiveDesktopSourceSummary,
+  LiveVisualCaptureConfig,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
@@ -63,6 +66,8 @@ let autoSaveTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
 let soloOutputIds: VirtualOutputId[] = [];
 let hasShowChanges = false;
+type PendingDisplayMediaGrant = { visualId: string; sourceId?: string; createdAtWallTimeMs: number };
+const pendingDisplayMediaGrants = new Map<number, PendingDisplayMediaGrant[]>();
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
@@ -153,6 +158,123 @@ function sendSoloOutputIds(window: BrowserWindow | undefined): void {
     return;
   }
   window.webContents.send('audio:solo-output-ids', soloOutputIds);
+}
+
+function isTrustedWebContents(contents: Electron.WebContents | undefined | null): boolean {
+  if (!contents || contents.isDestroyed()) {
+    return false;
+  }
+  return (
+    contents.id === controlWindow?.webContents.id ||
+    contents.id === audioWindow?.webContents.id ||
+    Boolean(displayRegistry?.getAllWindows().some((window) => window.webContents.id === contents.id))
+  );
+}
+
+function isTrustedOrigin(origin: string): boolean {
+  return origin.startsWith('file://') || (isDevelopment && process.env.VITE_DEV_SERVER_URL !== undefined && origin === new URL(process.env.VITE_DEV_SERVER_URL).origin);
+}
+
+function getDisplayMediaRequester(request: { frame: Electron.WebFrameMain | null }): Electron.WebContents | undefined {
+  return request.frame ? electronWebContents.fromFrame(request.frame) : undefined;
+}
+
+function consumePendingDisplayMediaGrant(contentsId: number | undefined): PendingDisplayMediaGrant | undefined {
+  if (contentsId !== undefined) {
+    const grants = pendingDisplayMediaGrants.get(contentsId);
+    const grant = grants?.shift();
+    if (grants && grants.length === 0) {
+      pendingDisplayMediaGrants.delete(contentsId);
+    }
+    if (grant) {
+      return grant;
+    }
+  }
+  if (pendingDisplayMediaGrants.size === 1) {
+    const [fallbackContentsId, fallbackGrants] = Array.from(pendingDisplayMediaGrants.entries())[0];
+    const grant = fallbackGrants.shift();
+    if (fallbackGrants.length === 0) {
+      pendingDisplayMediaGrants.delete(fallbackContentsId);
+    }
+    return grant;
+  }
+  return undefined;
+}
+
+function queuePendingDisplayMediaGrant(contentsId: number, grant: Omit<PendingDisplayMediaGrant, 'createdAtWallTimeMs'>): void {
+  const grants = pendingDisplayMediaGrants.get(contentsId) ?? [];
+  grants.push({ ...grant, createdAtWallTimeMs: Date.now() });
+  pendingDisplayMediaGrants.set(contentsId, grants.slice(-8));
+}
+
+function releasePendingDisplayMediaGrant(contentsId: number, visualId: string): void {
+  const grants = pendingDisplayMediaGrants.get(contentsId);
+  if (!grants) {
+    return;
+  }
+  const remaining = grants.filter((grant) => grant.visualId !== visualId);
+  if (remaining.length === 0) {
+    pendingDisplayMediaGrants.delete(contentsId);
+  } else {
+    pendingDisplayMediaGrants.set(contentsId, remaining);
+  }
+}
+
+function installCapturePermissionHandlers(): void {
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (!isTrustedWebContents(webContents)) {
+      return false;
+    }
+    return permission === 'media' || (permission as string) === 'display-capture';
+  });
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(isTrustedWebContents(webContents) && (permission === 'media' || (permission as string) === 'display-capture'));
+  });
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    const requester = getDisplayMediaRequester(request);
+    if (!isTrustedOrigin(request.securityOrigin) || !isTrustedWebContents(requester)) {
+      return;
+    }
+    const grant = consumePendingDisplayMediaGrant(requester?.id);
+    if (!grant) {
+      console.warn('Display media request had no pending Xtream grant.', { requesterId: requester?.id, origin: request.securityOrigin });
+      return;
+    }
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 640, height: 360 }, fetchWindowIcons: true });
+      const source = grant.sourceId ? sources.find((candidate) => candidate.id === grant.sourceId) : sources[0];
+      if (source) {
+        callback({ video: source });
+      } else {
+        console.warn('Requested live capture source was not found.', { visualId: grant.visualId, sourceId: grant.sourceId });
+      }
+    } catch (error: unknown) {
+      console.error('Failed to grant live display media source.', error);
+    }
+  });
+}
+
+async function listDesktopCaptureSources(): Promise<LiveDesktopSourceSummary[]> {
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true });
+  return sources.map((source) => ({
+    id: source.id,
+    name: source.name,
+    kind: source.id.startsWith('screen:') ? 'screen' : 'window',
+    displayId: source.display_id,
+    thumbnailDataUrl: source.thumbnail.isEmpty() ? undefined : source.thumbnail.toDataURL(),
+    appIconDataUrl: source.appIcon?.isEmpty() ? undefined : source.appIcon?.toDataURL(),
+  }));
+}
+
+function getLivePermissionStatus(): Record<string, string> {
+  if (process.platform !== 'darwin') {
+    return {};
+  }
+  return {
+    camera: systemPreferences.getMediaAccessStatus('camera'),
+    microphone: systemPreferences.getMediaAccessStatus('microphone'),
+    screen: systemPreferences.getMediaAccessStatus('screen'),
+  };
 }
 
 function setSoloOutputIds(outputIds: VirtualOutputId[]): void {
@@ -552,6 +674,34 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('visual:metadata', (_event, report: VisualMetadataReport) => director.updateVisualMetadata(report));
 
+  ipcMain.handle('live-capture:list-desktop-sources', () => listDesktopCaptureSources());
+
+  ipcMain.handle('live-capture:create', (_event, request: LiveCaptureCreate) => {
+    const visual = director.addLiveVisual(request.label, request.capture);
+    scheduleShowConfigAutoSave();
+    return visual;
+  });
+
+  ipcMain.handle('live-capture:update', (_event, visualId: string, capture: LiveVisualCaptureConfig) => {
+    const visual = director.updateLiveVisualCapture(visualId, capture);
+    scheduleShowConfigAutoSave();
+    return visual;
+  });
+
+  ipcMain.handle('live-capture:prepare-display-stream', (event, visualId: string, sourceId?: string) => {
+    if (!isTrustedWebContents(event.sender)) {
+      return false;
+    }
+    queuePendingDisplayMediaGrant(event.sender.id, { visualId, sourceId });
+    return true;
+  });
+
+  ipcMain.handle('live-capture:release-display-stream', (event, visualId: string) => {
+    releasePendingDisplayMediaGrant(event.sender.id, visualId);
+  });
+
+  ipcMain.handle('live-capture:permission-status', () => getLivePermissionStatus());
+
   ipcMain.handle('audio-source:add-file', async () => {
     const result = await showOpenDialog({
       title: 'Add audio source',
@@ -914,6 +1064,7 @@ app.whenReady().then(() => {
   );
 
   registerIpcHandlers();
+  installCapturePermissionHandlers();
   director.on('state', (state) => broadcastDirectorState(state));
 
   controlWindow = createControlWindow();

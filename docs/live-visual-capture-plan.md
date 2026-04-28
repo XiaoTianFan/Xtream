@@ -18,24 +18,35 @@ The target UX is:
 
 ## Current Architecture Findings
 
-Relevant files:
+The refactor split the former monolithic control renderer into a patch surface with smaller controllers. Relevant files now are:
 
-- `src/renderer/index.html` owns the media pool shell and `#addVisualsButton`.
-- `src/renderer/control.ts` handles tab state, add button clicks, drag-drop import, asset rows, previews, and details.
-- `src/main/main.ts` owns file dialogs and IPC handlers such as `visual:add`, `visual:add-dropped`, `visual:replace`, and `visual:metadata`.
-- `src/main/director.ts` owns authoritative `DirectorState`, visual records, readiness, timeline calculation, persistence projection, and restore.
-- `src/shared/types.ts` defines serializable state and IPC contracts.
-- `src/renderer/display.ts` renders assigned visuals in output windows from serialized `DirectorState`.
-- `src/main/displayRegistry.ts` creates output `BrowserWindow`s and broadcasts director state to them.
-- `src/main/showConfig.ts` persists file-backed media paths and rebuilds renderer file URLs on load.
+- `src/renderer/control.ts` is the control-window bootstrap and surface router wiring. It owns app-level state subscription, display monitor/audio-device loading, periodic preview sync, and lifecycle hooks, but no longer owns media-pool behavior directly.
+- `src/renderer/control/patch/patchSurface.ts` composes the Patch surface. It wires media pool, asset preview, display workspace, details pane, mixer panel, patch header, embedded-audio import, and shared selection state.
+- `src/renderer/control/patch/mediaPool.ts` owns the Visuals/Audio pool tabs, `#addVisualsButton`, add/import/drop behavior, pool rows, pool filtering/sorting, and pool context menus.
+- `src/renderer/control/patch/assetPreview.ts` owns the selected visual/audio source preview panel and its cleanup lifecycle.
+- `src/renderer/control/patch/displayPreview.ts` renders display-card previews and runs their periodic video/canvas sync through `syncPreviewElements`.
+- `src/renderer/control/patch/displayWorkspace.ts` owns display cards and display mapping controls.
+- `src/renderer/control/patch/detailsPane.ts` owns selected visual/audio/display/output details, including replace/remove controls and display mapping detail UI.
+- `src/renderer/control/media/mediaSync.ts` contains reusable timed media synchronization for display output, display-card previews, and the audio engine.
+- `src/renderer/control/media/audioRuntime.ts` owns renderer-side virtual output audio graph behavior and will need changes for live audio inputs.
+- `src/renderer/display.ts` renders assigned visuals in output windows from serialized `DirectorState`, owns output video elements, drift reporting, and timed media correction.
+- `src/renderer/audio.ts` hosts the hidden audio engine renderer and delegates to `audioRuntime`.
+- `src/preload/preload.ts` exposes the typed `window.xtream` API. New live-capture IPC must be added here as well as to `IpcChannels`.
+- `src/main/main.ts` owns application windows, file dialogs, show project save/open/autosave, IPC registration, FFmpeg extraction, and current `visual:*`/`audio-source:*` handlers. A live capture broker can start here but should be split out once it has nontrivial state.
+- `src/main/director.ts` owns authoritative `DirectorState`, visual/audio records, readiness, timeline calculation, persistence projection, restore, transport, display health, preview status, and diagnostics state.
+- `src/main/showConfig.ts` owns show config validation/migration, media URL rebuilding, file-missing validation, recent shows, and diagnostics report creation.
+- `src/main/displayRegistry.ts` creates and updates display `BrowserWindow`s and lists monitor metadata.
+- `src/shared/types.ts` defines serializable state, persisted schema types, update payloads, and IPC contracts.
 
 Important constraints:
 
 - `DirectorState` is broadcast through IPC and must stay serializable. `MediaStream`, `MediaStreamTrack`, `HTMLVideoElement`, and `DesktopCapturerSource` objects cannot be stored in it.
 - Display windows render independently. Any live source assigned to two displays needs each display renderer to acquire and own its own stream, or a future compositor needs to distribute frames through a different channel.
 - Current visual playback assumes finite media for timeline sync. Live sources should be treated as indefinite video rails with no duration and no seek/loop behavior.
-- Current embedded audio detection auto-creates audio sources for file videos with audio. Live camera audio should also become an audio source, but it must not be routed automatically and every routing action should warn about feedback risk.
-- Current show config schema is `schemaVersion: 4`; adding live sources should be a schema migration, not a loose optional field layered onto v4.
+- Current embedded audio detection lives in `src/renderer/control/patch/embeddedAudioImport.ts` and can auto-create embedded audio sources for file videos with audio. Live camera audio should become a separate live-input audio source, not an embedded-visual source, and it must not be routed automatically. Every routing action should warn about feedback risk.
+- Current show config schema is `schemaVersion: 6`; adding live sources should become `PersistedShowConfigV7`, not a loose optional field layered onto v6.
+- The current visual type is still a flat file-oriented `VisualState` with optional `path` and `url`. Readiness currently treats an active mapped visual without `path` as an error, so live visuals need explicit readiness branching.
+- Display-card previews are already decoupled from real display windows. This is useful for operator live-source confidence, but live previews need their own stream cleanup because `displayPreview.ts` currently creates file-backed hidden videos and canvas snapshots.
 
 ## Recommended Source Model
 
@@ -71,7 +82,7 @@ type LiveVisualCaptureConfig =
   | { source: 'window'; sourceId?: string; appName?: string; windowName?: string; label?: string };
 ```
 
-Persist this as `PersistedShowConfigV5`. For file visuals, migrate v4 records to `kind: 'file'`. For live visuals, persist user intent and labels, but treat operating-system source IDs as hints because screen/window IDs are not guaranteed to survive app restarts.
+Persist this as `PersistedShowConfigV7`. For existing file visuals, migrate v6 records to `kind: 'file'`. For live visuals, persist user intent and labels, but treat operating-system source IDs as hints because screen/window IDs are not guaranteed to survive app restarts.
 
 Recommended live metadata:
 
@@ -83,7 +94,7 @@ Recommended live metadata:
 
 ## Main Process Capture Broker
 
-Add a small live capture broker in main, either inside `src/main/main.ts` initially or as `src/main/liveCapture.ts` once it grows.
+Add a small live capture broker in main, either inside `src/main/main.ts` initially or as `src/main/liveCapture.ts` once it grows. Because `main.ts` is already responsible for all IPC registration, show autosave, and `Director` mutation, the broker should keep capture permission/source-selection state close to IPC but expose serializable values only.
 
 Responsibilities:
 
@@ -96,12 +107,15 @@ Responsibilities:
   - `session.defaultSession.setDisplayMediaRequestHandler(...)`
 - Only grant `media` and `display-capture` permissions to Xtream-controlled windows.
 - For `getDisplayMedia`, consume a pending grant keyed by requesting `webContents.id`.
+- Add every new IPC contract to `src/shared/types.ts`, `src/preload/preload.ts`, and `src/main/main.ts` together so the typed `window.xtream` API remains the single renderer entry point.
+- Schedule show-config autosave after creating, updating, reselecting, or removing live visuals, just like the current `visual:*`, `audio-source:*`, and `display:*` handlers.
 
 The pending grant handshake is important because `setDisplayMediaRequestHandler` receives the requesting frame, but not Xtream's `visualId`.
 
 Proposed IPC:
 
 - `live-capture:list-desktop-sources`: returns serializable source summaries with `id`, `name`, `displayId`, `thumbnailDataUrl`, `appIconDataUrl`, and `kind`.
+- `live-capture:list-webcam-devices`: optional helper if webcam enumeration moves behind the preload API; otherwise the control renderer can enumerate devices directly after media permission.
 - `live-capture:create`: creates a live visual record in `Director`.
 - `live-capture:update`: updates capture config or crop.
 - `live-capture:prepare-display-stream`: called by a renderer immediately before `navigator.mediaDevices.getDisplayMedia()`. Main records `{ webContentsId, visualId, sourceId }`.
@@ -133,7 +147,7 @@ Recommendation:
 
 ## Renderer Runtime
 
-Create `src/renderer/control/liveCaptureRuntime.ts` or `src/renderer/liveCaptureRuntime.ts` to avoid duplicating live stream handling in `control.ts` and `display.ts`.
+Create `src/renderer/control/media/liveCaptureRuntime.ts` to sit beside `mediaSync.ts`, `mediaMetadata.ts`, and `audioRuntime.ts`. This avoids duplicating live stream handling between `assetPreview.ts`, `displayPreview.ts`, `display.ts`, and any future details-pane reselect/crop preview.
 
 Responsibilities:
 
@@ -145,6 +159,8 @@ Responsibilities:
 - Report dimensions from `video.videoWidth/videoHeight` or track settings.
 - Apply region crop presentation where needed.
 - Treat live visuals as independent indefinite image-like sources, not timed transport media.
+- Expose separate helpers for "attach live visual to video element" and "dispose live visual stream" so controller-level cleanup remains explicit.
+- Keep a per-consumer acquisition model for MVP: asset preview, display-card preview, and real display output each own and stop their own stream.
 
 Display renderer changes:
 
@@ -153,15 +169,18 @@ Display renderer changes:
 - `syncVideoElements` skips seek/currentTime sync for live visuals but still applies opacity, brightness, contrast, global blackout, and display health reporting.
 - `createRenderSignature` includes live capture config and revision.
 - Loop, seek, playback rate, and stop-to-zero behavior never mutate live stream playback. A live visual in a display behaves like an indefinitely running image rail.
+- Drift reporting must ignore live videos when calculating timed-media drift. Live output can still report frame-rate/quality diagnostics if available.
 
 Control renderer changes:
 
-- Replace the direct `window.xtream.visuals.add()` click path with an add menu when `activePoolTab === 'visuals'`.
+- In `src/renderer/control/patch/mediaPool.ts`, replace the direct `window.xtream.visuals.add()` click path with an add menu when `activePoolTab === 'visuals'`.
 - Reuse the existing `.context-menu` visual language for the menu.
 - Keep audio-tab behavior unchanged: `Add Media` still calls `audioSources.addFile()`.
 - Add live visual rows with metadata such as `live | webcam | 1920x1080` and a live status indicator.
-- Update asset preview to render live streams through the same runtime helper.
-- Add details controls to reselect device/source and, later, edit crop.
+- Update `assetPreview.ts` to render live streams through the runtime helper and stop tracks on selection change/performance mode/unload.
+- Update `displayPreview.ts` so display-card previews can create live preview videos without file-backed canvas timing assumptions.
+- Update `detailsPane.ts` to show live-specific fields, reselect controls, and later crop controls. File-only controls such as `Replace` should become source-aware.
+- Update `createVisualRenderSignature` in `mediaPool.ts`, `createDetailsSignature` in `detailsPane.ts`, and display/render signatures wherever live capture config or revision affects the rendered result.
 
 ## Preview And Transport Semantics
 
@@ -369,13 +388,17 @@ Packaging gaps to resolve:
 
 ## Persistence And Restore
 
-Introduce `PersistedShowConfigV5`:
+Introduce `PersistedShowConfigV7`:
 
-- Existing v4 file visuals migrate to `kind: 'file'`.
+- Existing v6 file visuals migrate to `kind: 'file'`.
 - Live visuals persist capture intent, labels, crop settings, and last known source hints.
 - On show open, live visuals restore as `ready: false` until a renderer reacquires a stream.
 - If a persisted screen/window source cannot be matched, keep the visual in the pool with `ready: false` and show "Reselect source".
 - Do not mark missing live sources as file-missing warnings; use live-specific warnings.
+- Update `assertShowConfig` to accept schemas 3 through 7, then migrate v3 -> v4 -> v5 -> v6 -> v7.
+- Update `buildMediaUrls` so only file visuals receive `toRendererFileUrl(path)`.
+- Update `validateShowConfigMedia` and `validateRuntimeState` so live visuals do not produce file-missing warnings when `path` is intentionally absent.
+- Update `Director.createShowConfig()` and `Director.restoreShowConfig()` to preserve live capture config while continuing to rebuild file URLs only for file-backed sources.
 
 ## Readiness, Loop, And Timeline Behavior
 
@@ -393,26 +416,31 @@ Readiness rules:
 - A mapped live visual is blocking if permission is denied or no active stream track exists.
 - A live visual in the pool but not assigned to an active display should be a warning or standby state, not a show-blocking error.
 - If a live stream track ends while mapped, mark the relevant display degraded or the visual blocked until reacquired.
+- In `Director.evaluateReadinessIssues()`, replace the current active-display `!visual.path` check with source-aware logic: file visuals require a path and readiness; live visuals require a valid capture config and renderer-reported readiness only when actively mapped.
 
 ## Implementation Phases
 
 ### Phase 1: UX Menu And Data Shape
 
-- Add the add-media dropdown in `control.ts` and style it with existing `.context-menu` classes.
+- Add the add-media dropdown in `src/renderer/control/patch/mediaPool.ts` and style it with existing `.context-menu` classes.
 - Keep `Local static files` wired to the existing `visual:add`.
-- Add shared live capture types and v5 persistence shape.
+- Add shared live capture types and the v7 persistence shape in `src/shared/types.ts`.
+- Add typed live-capture APIs to `IpcChannels`, `src/preload/preload.ts`, and renderer `window.xtream`.
 - Add `Director.addLiveVisual()` and tests for creation, persistence, restore, remove, and timeline exclusion.
 - Add loop/timeline tests proving live visuals are ignored by duration and loop calculations.
+- Update `Director.createShowConfig()`, `Director.restoreShowConfig()`, `showConfig` migrations, `buildMediaUrls`, and media validation for file/live discrimination.
+- Update media-pool, details, and display/render signatures so live changes rerender predictably.
 
 ### Phase 2: Webcam
 
 - Add permission handlers for `media`.
-- Add a webcam picker using `enumerateDevices`.
-- Implement renderer live runtime for `getUserMedia`.
-- Render webcam streams in asset preview and display windows.
+- Add a webcam picker from the Visuals add menu using `enumerateDevices`, either directly in the control renderer or through a preload-backed `live-capture:list-webcam-devices` helper.
+- Implement `src/renderer/control/media/liveCaptureRuntime.ts` for `getUserMedia`.
+- Render webcam streams in `assetPreview.ts`, `displayPreview.ts`, and `display.ts`.
 - Create a linked live audio source for webcam audio, muted/unrouted by default.
 - Warn before routing live microphone audio to outputs.
 - Report metadata and stream-ended errors.
+- Update `audioRuntime.ts`, `audio.ts`, mixer/output source controls, and audio source details for live-input sources.
 
 ### Phase 3: Screen Capture
 
@@ -421,6 +449,7 @@ Readiness rules:
 - Implement screen source picker with thumbnails.
 - Render screen streams in previews and display windows.
 - Add macOS Screen Recording guidance and diagnostics.
+- Add source reselect behavior in `detailsPane.ts`.
 
 ### Phase 4: Window Capture
 
@@ -443,9 +472,11 @@ Unit tests:
 - Live visuals are excluded from finite timeline duration.
 - Loop controls do not seek or mutate live displays.
 - Mixed finite/live layouts loop finite media only.
-- v4 show configs migrate to file visuals.
-- v5 live configs restore without file URLs.
+- v6 show configs migrate to file visuals.
+- v7 live configs restore without file URLs.
 - Removing a live visual clears display mappings like file visuals.
+- Active mapped live visuals use live-specific readiness errors instead of file-path errors.
+- `showConfig` media validation ignores missing paths for live visuals while preserving file-missing warnings for file visuals.
 
 Manual tests:
 

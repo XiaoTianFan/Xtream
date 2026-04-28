@@ -11,6 +11,7 @@ import type {
   PersistedShowConfigV4,
   PersistedShowConfigV5,
   PersistedShowConfigV6,
+  PersistedShowConfigV7,
   RecentShowEntry,
 } from '../shared/types';
 
@@ -136,9 +137,15 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!value || typeof value !== 'object') {
     throw new Error('Show config must be a JSON object.');
   }
-  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6>;
-  if (candidate.schemaVersion !== 3 && candidate.schemaVersion !== 4 && candidate.schemaVersion !== 5 && candidate.schemaVersion !== 6) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 6 only.');
+  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7>;
+  if (
+    candidate.schemaVersion !== 3 &&
+    candidate.schemaVersion !== 4 &&
+    candidate.schemaVersion !== 5 &&
+    candidate.schemaVersion !== 6 &&
+    candidate.schemaVersion !== 7
+  ) {
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 7 only.');
   }
   if (!candidate.visuals || typeof candidate.visuals !== 'object') {
     throw new Error('Show config is missing visuals.');
@@ -153,15 +160,18 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     throw new Error('Show config is missing display mappings.');
   }
   if (candidate.schemaVersion === 3) {
-    return migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3)));
+    return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3))));
   }
   if (candidate.schemaVersion === 4) {
-    return migrateV5ToV6(migrateV4ToV5(candidate as PersistedShowConfigV4));
+    return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(candidate as PersistedShowConfigV4)));
   }
   if (candidate.schemaVersion === 5) {
-    return migrateV5ToV6(candidate as PersistedShowConfigV5);
+    return migrateV6ToV7(migrateV5ToV6(candidate as PersistedShowConfigV5));
   }
-  return candidate as PersistedShowConfigV6;
+  if (candidate.schemaVersion === 6) {
+    return migrateV6ToV7(candidate as PersistedShowConfigV6);
+  }
+  return candidate as PersistedShowConfigV7;
 }
 
 export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfigV4 {
@@ -234,6 +244,30 @@ export function migrateV5ToV6(config: PersistedShowConfigV5): PersistedShowConfi
   };
 }
 
+export function migrateV6ToV7(config: PersistedShowConfigV6): PersistedShowConfigV7 {
+  return {
+    ...config,
+    schemaVersion: 7,
+    visuals: Object.fromEntries(
+      Object.values(config.visuals).map((visual) => [
+        visual.id,
+        {
+          id: visual.id,
+          label: visual.label,
+          kind: 'file',
+          type: visual.type,
+          path: visual.kind === 'live' ? undefined : visual.path,
+          opacity: visual.opacity,
+          brightness: visual.brightness,
+          contrast: visual.contrast,
+          playbackRate: visual.playbackRate,
+          fileSizeBytes: visual.kind === 'live' ? undefined : visual.fileSizeBytes,
+        },
+      ]),
+    ),
+  };
+}
+
 export function buildMediaUrls(config: PersistedShowConfig): {
   visuals: Record<string, string | undefined>;
   audioSources: Record<string, string | undefined>;
@@ -242,7 +276,7 @@ export function buildMediaUrls(config: PersistedShowConfig): {
     visuals: Object.fromEntries(
       Object.values(config.visuals).map((visual) => [
         visual.id,
-        visual.path ? toRendererFileUrl(visual.path) : undefined,
+        visual.kind !== 'live' && visual.path ? toRendererFileUrl(visual.path) : undefined,
       ]),
     ),
     audioSources: Object.fromEntries(
@@ -261,7 +295,7 @@ export function buildMediaUrls(config: PersistedShowConfig): {
 export function validateShowConfigMedia(config: PersistedShowConfig): MediaValidationIssue[] {
   const issues: MediaValidationIssue[] = [];
   for (const visual of Object.values(config.visuals)) {
-    if (visual.path && !fs.existsSync(visual.path)) {
+    if (visual.kind !== 'live' && visual.path && !fs.existsSync(visual.path)) {
       issues.push({
         severity: 'warning',
         target: `visual:${visual.id}`,
@@ -291,7 +325,7 @@ export function validateShowConfigMedia(config: PersistedShowConfig): MediaValid
 export function validateRuntimeState(state: DirectorState): MediaValidationIssue[] {
   const issues: MediaValidationIssue[] = [];
   for (const visual of Object.values(state.visuals)) {
-    if (visual.path && !fs.existsSync(visual.path)) {
+    if (visual.kind !== 'live' && visual.path && !fs.existsSync(visual.path)) {
       issues.push({
         severity: 'warning',
         target: `visual:${visual.id}`,
