@@ -1,6 +1,6 @@
 import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../../shared/types';
 import { createButton, createHint } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';

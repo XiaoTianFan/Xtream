@@ -1,7 +1,8 @@
 import { formatTimecode, getDirectorSeconds } from '../../../shared/timeline';
 import type { DirectorState } from '../../../shared/types';
+import type { ShowActions } from '../app/showActions';
 import { syncSliderProgress } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { createTransportController } from './transportControls';
 
 type PatchHeaderControllerOptions = {
@@ -9,9 +10,7 @@ type PatchHeaderControllerOptions = {
   getSoloOutputCount: () => number;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: DirectorState['readiness']['issues']) => void;
-  clearSelection: () => void;
-  onShowOpened: () => void;
-  onShowCreated: () => void;
+  showActions: ShowActions;
 };
 
 export type PatchHeaderController = ReturnType<typeof createPatchHeaderController>;
@@ -47,9 +46,21 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     elements.playButton.addEventListener('click', () => void transport.sendTransport({ type: 'play' }));
     elements.pauseButton.addEventListener('click', () => void transport.sendTransport({ type: 'pause' }));
     elements.stopButton.addEventListener('click', () => void transport.sendTransport({ type: 'stop' }));
-    elements.timelineScrubber.addEventListener('input', () => syncSliderProgress(elements.timelineScrubber));
+    elements.timelineScrubber.addEventListener('pointerdown', () => {
+      transport.beginTimelineScrub();
+    });
+    elements.timelineScrubber.addEventListener('pointerup', () => {
+      transport.finishTimelineScrub();
+      transport.holdTimelineScrubDraft();
+    });
+    elements.timelineScrubber.addEventListener('pointercancel', transport.finishTimelineScrub);
+    elements.timelineScrubber.addEventListener('input', () => {
+      transport.holdTimelineScrubDraft();
+      syncSliderProgress(elements.timelineScrubber);
+    });
     elements.timelineScrubber.addEventListener('change', () => {
-      void transport.sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 });
+      transport.holdTimelineScrubDraft(1000);
+      void transport.sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 }).finally(transport.finishTimelineScrub);
     });
     elements.loopActivateButton.addEventListener('click', () => {
       const state = options.getState();
@@ -62,35 +73,10 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
       input.addEventListener('input', () => transport.markTransportDraft(input));
       input.addEventListener('change', () => void transport.commitLoopDraft());
     }
-    elements.saveShowButton.addEventListener('click', async () => {
-      const result = await window.xtream.show.save();
-      options.renderState(result.state);
-      options.setShowStatus(`Saved show config: ${result.filePath ?? 'default location'}`, result.issues);
-    });
-    elements.saveShowAsButton.addEventListener('click', async () => {
-      const result = await window.xtream.show.saveAs();
-      if (result) {
-        options.renderState(result.state);
-        options.setShowStatus(`Saved show config: ${result.filePath ?? 'selected location'}`, result.issues);
-      }
-    });
-    elements.openShowButton.addEventListener('click', async () => {
-      const result = await window.xtream.show.open();
-      if (result) {
-        options.renderState(result.state);
-        options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
-        options.onShowOpened();
-      }
-    });
-    elements.createShowButton.addEventListener('click', async () => {
-      const result = await window.xtream.show.createProject();
-      if (result) {
-        options.clearSelection();
-        options.renderState(result.state);
-        options.setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
-        options.onShowCreated();
-      }
-    });
+    elements.saveShowButton.addEventListener('click', () => void options.showActions.saveShow());
+    elements.saveShowAsButton.addEventListener('click', () => void options.showActions.saveShowAs());
+    elements.openShowButton.addEventListener('click', () => void options.showActions.openShow());
+    elements.createShowButton.addEventListener('click', () => void options.showActions.createShow());
     elements.globalAudioMuteButton.addEventListener('click', async () => {
       options.renderState(await window.xtream.director.updateGlobalState({ globalAudioMuted: !options.getState()?.globalAudioMuted }));
     });

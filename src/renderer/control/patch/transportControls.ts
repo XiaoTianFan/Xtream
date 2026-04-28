@@ -1,7 +1,7 @@
 import { formatTimecode, getDirectorSeconds, parseTimecodeInput } from '../../../shared/timeline';
 import type { DirectorState, TransportCommand } from '../../../shared/types';
 import { syncSliderProgress } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 
 type TransportControllerOptions = {
   getState: () => DirectorState | undefined;
@@ -15,10 +15,14 @@ export type TransportController = ReturnType<typeof createTransportController>;
 export function createTransportController({ getState, getSoloOutputCount, renderState, setShowStatus }: TransportControllerOptions) {
   let timecodeEditor: HTMLInputElement | undefined;
   let rateDragStart: { clientX: number; rate: number } | undefined;
+  let timelineScrubPointerActive = false;
+  let timelineScrubDraftUntil = 0;
   const transportDraftElements = new Set<HTMLInputElement>([elements.loopStartInput, elements.loopEndInput]);
 
   const isTransportDraftActive = (input: HTMLInputElement): boolean =>
     document.activeElement === input || (transportDraftElements.has(input) && input.dataset.dirty === 'true');
+
+  const isTimelineScrubDraftActive = (): boolean => timelineScrubPointerActive || performance.now() < timelineScrubDraftUntil;
 
   const syncTransportInputs = (state: DirectorState): void => {
     elements.playButton.disabled = !state.readiness.ready;
@@ -77,10 +81,13 @@ export function createTransportController({ getState, getSoloOutputCount, render
     }
     elements.timelineScrubber.disabled = false;
     elements.timelineScrubber.max = String(duration);
-    if (document.activeElement !== elements.timelineScrubber) {
+    const timelineScrubDraftActive = isTimelineScrubDraftActive();
+    if (!timelineScrubDraftActive) {
       elements.timelineScrubber.value = String(Math.min(currentSeconds, duration));
     }
-    elements.timelineScrubber.style.setProperty('--progress', `${Math.min(100, Math.max(0, (currentSeconds / duration) * 100))}%`);
+    const displaySeconds = timelineScrubDraftActive ? Number(elements.timelineScrubber.value) || 0 : currentSeconds;
+    const clampedDisplaySeconds = Math.min(duration, Math.max(0, displaySeconds));
+    elements.timelineScrubber.style.setProperty('--progress', `${Math.min(100, Math.max(0, (clampedDisplaySeconds / duration) * 100))}%`);
     if (state.loop.enabled) {
       elements.timelineScrubber.style.setProperty('--loop-start', `${Math.min(100, Math.max(0, (state.loop.startSeconds / duration) * 100))}%`);
       elements.timelineScrubber.style.setProperty(
@@ -92,7 +99,7 @@ export function createTransportController({ getState, getSoloOutputCount, render
       elements.timelineScrubber.style.removeProperty('--loop-end');
     }
     const loopLimit = state.activeTimeline.loopRangeLimit;
-    elements.timelineSummaryPrimary.textContent = `Timeline ${formatTimecode(Math.min(currentSeconds, duration))} / ${formatTimecode(duration)}`;
+    elements.timelineSummaryPrimary.textContent = `Timeline ${formatTimecode(clampedDisplaySeconds)} / ${formatTimecode(duration)}`;
     if (loopLimit) {
       elements.timelineLoopLimitLine.textContent = `loop range limit: ${formatTimecode(loopLimit.startSeconds)}-${formatTimecode(loopLimit.endSeconds)}`;
       elements.timelineLoopLimitLine.hidden = false;
@@ -262,12 +269,22 @@ export function createTransportController({ getState, getSoloOutputCount, render
   return {
     beginRateDrag,
     beginRateEdit,
+    beginTimelineScrub: () => {
+      timelineScrubPointerActive = true;
+    },
     beginTimecodeEdit,
     cancelRateDrag: () => {
       rateDragStart = undefined;
     },
     commitLoopDraft,
     finishRateDrag,
+    finishTimelineScrub: () => {
+      timelineScrubPointerActive = false;
+      timelineScrubDraftUntil = 0;
+    },
+    holdTimelineScrubDraft: (milliseconds = 300) => {
+      timelineScrubDraftUntil = Math.max(timelineScrubDraftUntil, performance.now() + milliseconds);
+    },
     isTimecodeEditing: () => Boolean(timecodeEditor),
     markTransportDraft: (input: HTMLInputElement) => {
       input.dataset.dirty = 'true';

@@ -3,10 +3,13 @@ import type { DirectorState, DisplayMonitorInfo, MediaValidationIssue } from '..
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import { combineVisibleIssues } from './control/app/appStatus';
 import { installInteractionLock, isPanelInteractionActive } from './control/app/interactionLocks';
+import { createShowActions } from './control/app/showActions';
 import { createSurfaceRouter } from './control/app/surfaceRouter';
 import { createConfigSurfaceController } from './control/config/configSurface';
 import { createCueSurfaceController } from './control/cue/cueSurface';
 import { createLogsSurfaceController } from './control/logs/logsSurface';
+import { patchElements } from './control/patch/elements';
+import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
@@ -21,19 +24,20 @@ let previewSyncTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
 let displayMonitors: DisplayMonitorInfo[] = [];
 let currentIssues: MediaValidationIssue[] = [];
+let clearPatchSelection = (): void => undefined;
 
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
 
 function renderState(state: DirectorState): void {
   currentState = state;
   surfaceRouter.render(state);
-  renderIssueList(elements.issueList, combineVisibleIssues(state.readiness.issues, currentIssues));
+  renderIssueList(patchElements.issueList, combineVisibleIssues(state.readiness.issues, currentIssues));
 }
 
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
-  elements.showStatus.textContent = message;
+  patchElements.showStatus.textContent = message;
   currentIssues = issues;
-  renderIssueList(elements.issueList, combineVisibleIssues(currentState?.readiness.issues ?? [], currentIssues));
+  renderIssueList(patchElements.issueList, combineVisibleIssues(currentState?.readiness.issues ?? [], currentIssues));
 }
 
 async function loadAudioDevices(): Promise<void> {
@@ -54,13 +58,10 @@ function tick(): void {
   animationFrame = window.requestAnimationFrame(tick);
 }
 
-const patchSurface = createPatchSurfaceController({
-  getAudioDevices: () => audioDevices,
-  getDisplayMonitors: () => displayMonitors,
-  isPanelInteractionActive,
+const showActions = createShowActions({
   renderState,
-  setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
   setShowStatus,
+  clearSelection: () => clearPatchSelection(),
   onShowOpened: () => {
     if (launchDashboard.isVisible()) {
       launchDashboard.hide();
@@ -73,13 +74,25 @@ const patchSurface = createPatchSurfaceController({
   },
 });
 
+const patchSurface = createPatchSurfaceController({
+  getAudioDevices: () => audioDevices,
+  getDisplayMonitors: () => displayMonitors,
+  isPanelInteractionActive,
+  renderState,
+  setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
+  setShowStatus,
+  showActions,
+});
+
+clearPatchSelection = patchSurface.clearSelection;
+
 const surfaceRouter = createSurfaceRouter({
   getCurrentState: () => currentState,
   surfaces: [
     patchSurface,
     createCueSurfaceController(),
     createPerformanceSurfaceController(),
-    createConfigSurfaceController({ renderState, setShowStatus }),
+    createConfigSurfaceController({ renderState, setShowStatus, showActions }),
     createLogsSurfaceController({
       getOperationIssues: () => currentIssues,
       getDisplayStatusLabel: patchSurface.getDisplayStatusLabel,
@@ -94,13 +107,14 @@ const launchDashboard = createLaunchDashboardController({
   clearSelection: patchSurface.clearSelection,
 });
 
-installInteractionLock(elements.visualList);
-installInteractionLock(elements.audioPanel);
-installInteractionLock(elements.displayList);
-installInteractionLock(elements.outputPanel);
-installInteractionLock(elements.detailsContent);
-elements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
+installInteractionLock(patchElements.visualList);
+installInteractionLock(patchElements.audioPanel);
+installInteractionLock(patchElements.displayList);
+installInteractionLock(patchElements.outputPanel);
+installInteractionLock(patchElements.detailsContent);
+patchElements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
 installShellIcons();
+installPatchIcons();
 patchSurface.install();
 launchDashboard.show();
 
@@ -131,7 +145,7 @@ elements.launchOpenDefaultButton.addEventListener('click', async () => {
   const result = await window.xtream.show.openDefault();
   launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
 });
-elements.refreshOutputsButton.addEventListener('click', async () => {
+patchElements.refreshOutputsButton.addEventListener('click', async () => {
   await loadAudioDevices();
   renderState(await window.xtream.director.getState());
 });

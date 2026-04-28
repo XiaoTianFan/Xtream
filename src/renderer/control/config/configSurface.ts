@@ -1,7 +1,9 @@
 import { XTREAM_RUNTIME_VERSION } from '../../../shared/version';
 import type { AudioExtractionFormat, DirectorState } from '../../../shared/types';
+import type { ShowActions } from '../app/showActions';
 import type { SurfaceController } from '../app/surfaceRouter';
 import { createSurfaceStateSignature } from '../app/surfaceSignatures';
+import { patchElements } from '../patch/elements';
 import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
 import { createDetailLine, createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
 import { elements } from '../shell/elements';
@@ -9,6 +11,7 @@ import { elements } from '../shell/elements';
 type ConfigSurfaceOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
+  showActions: ShowActions;
 };
 
 export function createConfigSurfaceController(options: ConfigSurfaceOptions): SurfaceController {
@@ -69,16 +72,16 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
   const actionRow = document.createElement('div');
   actionRow.className = 'button-row';
   actionRow.append(
-    createButton('Save Show', 'secondary', () => elements.saveShowButton.click()),
-    createButton('Open Show', 'secondary', () => elements.openShowButton.click()),
+    createButton('Save Show', 'secondary', options.showActions.saveShow),
+    createButton('Open Show', 'secondary', options.showActions.openShow),
     createButton('Export Diagnostics', 'secondary', async () => {
       const filePath = await window.xtream.show.exportDiagnostics();
       if (filePath) {
         options.setShowStatus(`Exported diagnostics: ${filePath}`);
       }
     }),
-    createButton('Refresh Outputs', 'secondary', () => elements.refreshOutputsButton.click()),
-    createButton('Reset Meters', 'secondary', () => elements.resetMetersButton.click()),
+    createButton('Refresh Outputs', 'secondary', () => patchElements.refreshOutputsButton.click()),
+    createButton('Reset Meters', 'secondary', () => patchElements.resetMetersButton.click()),
   );
   actions.append(actionRow);
 

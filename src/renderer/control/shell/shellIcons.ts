@@ -2,25 +2,12 @@ import { decorateIconButton } from '../shared/icons';
 import { elements } from './elements';
 
 export function installShellIcons(): void {
-  decorateIconButton(elements.playButton, 'Play', 'Play');
-  decorateIconButton(elements.pauseButton, 'Pause', 'Pause');
-  decorateIconButton(elements.stopButton, 'StopCircle', 'Stop');
-  decorateIconButton(elements.loopToggleButton, 'Repeat', 'Loop settings');
-  decorateIconButton(elements.saveShowButton, 'Save', 'Save show');
-  decorateIconButton(elements.saveShowAsButton, 'FileJson', 'Save show as');
-  decorateIconButton(elements.openShowButton, 'FolderOpen', 'Open show');
-  decorateIconButton(elements.createShowButton, 'Plus', 'Create show project');
   decorateIconButton(elements.launchOpenShowButton, 'FolderOpen', 'Open existing show');
   decorateIconButton(elements.launchCreateShowButton, 'Plus', 'Create new show');
   decorateIconButton(elements.launchOpenDefaultButton, 'FileJson', 'Open default show');
   setLaunchActionLabel(elements.launchOpenShowButton, 'Open Existing', 'Choose a saved show file.');
   setLaunchActionLabel(elements.launchCreateShowButton, 'Create New', 'Start an empty show project.');
   setLaunchActionLabel(elements.launchOpenDefaultButton, 'Open Default', 'Use the default show project.');
-  decorateIconButton(elements.addVisualsButton, 'Plus', 'Add visuals');
-  decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
-  decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
-  decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');
-  decorateIconButton(elements.expandMixerButton, 'Maximize2', 'Expand mixer');
 }
 
 function setLaunchActionLabel(button: HTMLButtonElement, title: string, description: string): void {

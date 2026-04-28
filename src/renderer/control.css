@@ -260,20 +260,34 @@ input[type="range"].mini-slider:disabled {
 .app-frame {
   display: grid;
   position: relative;
-  grid-template-rows: auto minmax(0, 1fr) var(--splitter-hit) var(--operator-footer-height) var(--status-footer-height);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
 
 .app-frame.surface-mode {
-  grid-template-rows: auto minmax(0, 1fr) var(--status-footer-height);
+  grid-template-rows: minmax(0, 1fr);
 }
 
-.app-frame.launch-blocked .top-bar,
-.app-frame.launch-blocked .surface-panel,
-.app-frame.launch-blocked .workspace,
-.app-frame.launch-blocked .operator-footer,
-.app-frame.launch-blocked .status-footer {
+.surface-mount {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.patch-surface {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) var(--splitter-hit) var(--operator-footer-height) var(--status-footer-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.patch-surface[hidden] {
+  display: none;
+}
+
+.app-frame.launch-blocked .patch-surface,
+.app-frame.launch-blocked .surface-panel {
   pointer-events: none;
   user-select: none;
 }
@@ -453,6 +467,8 @@ input[type="range"].mini-slider:disabled {
 }
 
 .top-bar,
+.surface-mount,
+.patch-surface,
 .status-footer,
 .workspace,
 .operator-footer,

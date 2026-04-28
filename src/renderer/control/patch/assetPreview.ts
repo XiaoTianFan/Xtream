@@ -1,7 +1,7 @@
 import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../../shared/types';
 import { applyVisualStyle } from './displayPreview';
 import { createButton, createHint, createSlider, syncSliderProgress } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import type { SelectedEntity } from '../shared/types';
 
 export type AssetPreviewController = {

@@ -21,7 +21,7 @@ import {
   quantizeBusFaderDb,
 } from '../meters/busFaderLaw';
 import { createButton, createDbFader, createHint, createPanKnob, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { formatAudioChannelLabel } from '../shared/formatters';
 import {
   labelCountFromHeight,

@@ -1,5 +1,6 @@
 import type { DirectorState, DisplayMonitorInfo, MediaValidationIssue } from '../../../shared/types';
-import { elements } from '../shell/elements';
+import type { ShowActions } from '../app/showActions';
+import { patchElements as elements } from './elements';
 import type { ControlSurface, SelectedEntity } from '../shared/types';
 import { createAssetPreviewController } from './assetPreview';
 import { createDetailsPaneController } from './detailsPane';
@@ -25,8 +26,7 @@ type PatchSurfaceOptions = {
   renderState: (state: DirectorState) => void;
   setActiveSurface: (surface: ControlSurface) => void;
   setShowStatus: (message: string, issues?: MediaValidationIssue[]) => void;
-  onShowOpened: () => void;
-  onShowCreated: () => void;
+  showActions: ShowActions;
 };
 
 export type PatchSurfaceController = ReturnType<typeof createPatchSurfaceController>;
@@ -117,9 +117,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     getSoloOutputCount: mixerPanel.getSoloOutputCount,
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
-    clearSelection,
-    onShowOpened: options.onShowOpened,
-    onShowCreated: options.onShowCreated,
+    showActions: options.showActions,
   });
 
   function render(state: DirectorState): void {

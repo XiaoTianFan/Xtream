@@ -69,9 +69,7 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
     const isPatch = activeSurface === 'patch';
     syncRailState();
     elements.appFrame.classList.toggle('surface-mode', !isPatch);
-    elements.workspace.hidden = !isPatch;
-    elements.mainFooterSplitter.hidden = !isPatch;
-    elements.operatorFooter.hidden = !isPatch;
+    elements.patchSurface.hidden = !isPatch;
     elements.surfacePanel.hidden = isPatch;
   }
 

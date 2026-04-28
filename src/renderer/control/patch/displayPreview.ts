@@ -1,7 +1,7 @@
 import { getDirectorSeconds, getMediaEffectiveTime } from '../../../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
 import { createPreviewLabel } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
 import type { DisplayPreviewProgressEdge } from '../shared/types';
 

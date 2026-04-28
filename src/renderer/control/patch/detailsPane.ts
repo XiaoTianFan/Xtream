@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/types';
 import { OUTPUT_BUS_DELAY_MAX_MS, playOutputTestTone } from '../media/audioRuntime';
 import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { formatAudioChannelDetail, formatBytes, formatDuration } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
 

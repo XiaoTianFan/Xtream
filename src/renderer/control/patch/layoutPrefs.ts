@@ -1,4 +1,4 @@
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import type { LayoutPrefs } from '../shared/types';
 
 const UI_PREF_KEY = 'xtream.control.layout.v1';

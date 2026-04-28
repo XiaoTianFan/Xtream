@@ -7,7 +7,7 @@ import {
   getPreviewVisualIds,
 } from './displayPreview';
 import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
-import { elements } from '../shell/elements';
+import { patchElements as elements } from './elements';
 import { formatMilliseconds } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
 
