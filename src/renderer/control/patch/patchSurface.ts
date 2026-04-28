@@ -40,6 +40,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
   let header: PatchHeaderController;
 
   const embeddedAudioImport = createEmbeddedAudioImportController({
+    getState: () => currentState,
     getAudioExtractionFormat: () => currentState?.audioExtractionFormat,
     setSelectedEntity: (entity) => {
       selectedEntity = entity;

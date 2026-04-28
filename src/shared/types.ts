@@ -10,6 +10,10 @@ export type EmbeddedAudioExtractionMode = 'representation' | 'file';
 export type AudioExtractionFormat = 'm4a' | 'wav';
 export type AudioExtractionStatus = 'pending' | 'ready' | 'failed';
 export type EmbeddedAudioImportChoice = 'skip' | 'representation' | 'file';
+export type EmbeddedAudioImportCandidate = {
+  label: string;
+  durationSeconds?: number;
+};
 
 export type VisualLayoutProfile =
   | { type: 'single'; visualId?: VisualId }
@@ -515,7 +519,7 @@ export type IpcChannels = {
   'show:open-default': () => ShowConfigOperationResult;
   'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
-  'show:choose-embedded-audio-import': (labels: string[]) => Promise<EmbeddedAudioImportChoice>;
+  'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;
   'show:export-diagnostics': () => string | undefined;
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;

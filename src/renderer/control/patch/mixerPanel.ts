@@ -1,5 +1,4 @@
 import type {
-  AudioSourceState,
   DirectorState,
   MeterLaneState,
   OutputMeterReport,
@@ -30,6 +29,7 @@ import {
   renderOutputMeterGraticule,
 } from '../meters/graticuleLayout';
 import type { SelectedEntity } from '../shared/types';
+import { deriveOutputMeterLanes } from './meterLanes';
 
 export type MixerPanelController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -426,35 +426,7 @@ export function createMixerPanelController(options: MixerPanelControllerOptions)
   }
 
   function getOutputMeterLanes(output: VirtualOutputState, state = options.getState()): MeterLaneState[] {
-    const reported = latestMeterReports.get(output.id)?.lanes ?? output.meterLanes;
-    if (reported && reported.length > 0) {
-      return reported;
-    }
-    return output.sources.flatMap((selection) => {
-      const source = state?.audioSources[selection.audioSourceId];
-      const channelCount = source?.channelMode === 'left' || source?.channelMode === 'right' ? 1 : Math.max(1, Math.min(8, source?.channelCount ?? 2));
-      return Array.from({ length: channelCount }, (_, channelIndex): MeterLaneState => ({
-        id: `${output.id}:${selection.audioSourceId}:ch-${channelIndex + 1}`,
-        label: formatMeterLaneLabel(source, channelIndex, channelCount),
-        audioSourceId: selection.audioSourceId,
-        channelIndex,
-        db: -60,
-        clipped: false,
-      }));
-    });
-  }
-
-  function formatMeterLaneLabel(source: AudioSourceState | undefined, channelIndex: number, channelCount: number): string {
-    if (source?.channelMode === 'left') {
-      return 'L';
-    }
-    if (source?.channelMode === 'right') {
-      return 'R';
-    }
-    if (channelCount === 2) {
-      return channelIndex === 0 ? 'L' : 'R';
-    }
-    return `C${channelIndex + 1}`;
+    return deriveOutputMeterLanes(output, state, latestMeterReports.get(output.id));
   }
 
   function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
@@ -463,29 +435,28 @@ export function createMixerPanelController(options: MixerPanelControllerOptions)
     const availableSources = Object.values(state.audioSources).filter(
       (source) => !output.sources.some((selection) => selection.audioSourceId === source.id),
     );
-    if (availableSources.length > 0) {
-      wrapper.append(
-        createSelect(
-          'Add source',
-          [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
-          '',
-          (audioSourceId) => {
-            if (audioSourceId) {
-              if (document.activeElement instanceof HTMLElement) {
-                document.activeElement.blur();
+    const addSourceControl =
+      availableSources.length > 0
+        ? createSelect(
+            'Add source',
+            [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
+            '',
+            (audioSourceId) => {
+              if (audioSourceId) {
+                if (document.activeElement instanceof HTMLElement) {
+                  document.activeElement.blur();
+                }
+                void window.xtream.outputs
+                  .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0, pan: 0 }] })
+                  .then(async () => {
+                    const nextState = await window.xtream.director.getState();
+                    options.renderState(nextState);
+                    options.refreshDetails(nextState);
+                  });
               }
-              void window.xtream.outputs
-                .update(output.id, { sources: [...output.sources, { audioSourceId, levelDb: 0, pan: 0 }] })
-                .then(async () => {
-                  const nextState = await window.xtream.director.getState();
-                  options.renderState(nextState);
-                  options.refreshDetails(nextState);
-                });
-            }
-          },
-        ),
-      );
-    }
+            },
+          )
+        : undefined;
     if (output.sources.length === 0) {
       wrapper.append(createHint('No sources selected.'));
     }
@@ -530,7 +501,9 @@ export function createMixerPanelController(options: MixerPanelControllerOptions)
         await window.xtream.outputs.update(output.id, {
           sources: output.sources.filter((candidate) => candidate.audioSourceId !== selection.audioSourceId),
         });
-        options.renderState(await window.xtream.director.getState());
+        const nextState = await window.xtream.director.getState();
+        options.renderState(nextState);
+        options.refreshDetails(nextState);
       });
       const soloButton = createButton('S', selection.solo ? 'secondary active' : 'secondary', async () => {
         await window.xtream.outputs.update(output.id, {
@@ -562,6 +535,9 @@ export function createMixerPanelController(options: MixerPanelControllerOptions)
       mid.append(levelControl, sourcePan);
       row.append(sourceInfo, mid, actions);
       wrapper.append(row);
+    }
+    if (addSourceControl) {
+      wrapper.append(addSourceControl);
     }
     return wrapper;
   }

@@ -1,6 +1,10 @@
 import type { AudioExtractionFormat, DirectorState, VisualId, VisualState } from '../../../shared/types';
+import { elements as shellElements } from '../shell/elements';
+import { createButton } from '../shared/dom';
 import { hasEmbeddedAudioTrack } from '../media/mediaMetadata';
 import type { SelectedEntity } from '../shared/types';
+
+export const LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS = 30 * 60;
 
 export type EmbeddedAudioImportController = {
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
@@ -12,6 +16,7 @@ export type EmbeddedAudioImportController = {
 };
 
 type EmbeddedAudioImportControllerOptions = {
+  getState: () => DirectorState | undefined;
   getAudioExtractionFormat: () => AudioExtractionFormat | undefined;
   setSelectedEntity: (entity: SelectedEntity | undefined) => void;
   renderState: (state: DirectorState) => void;
@@ -21,6 +26,7 @@ type EmbeddedAudioImportControllerOptions = {
 export function createEmbeddedAudioImportController(options: EmbeddedAudioImportControllerOptions): EmbeddedAudioImportController {
   const pendingEmbeddedAudioImportBatches: VisualId[][] = [];
   let embeddedAudioImportPromptActive = false;
+  let extractionOverlayActive = false;
 
   function queueEmbeddedAudioImportPrompt(visuals: VisualState[] | undefined): void {
     const videoIds = (visuals ?? []).filter((visual) => visual.type === 'video').map((visual) => visual.id);
@@ -109,7 +115,12 @@ export function createEmbeddedAudioImportController(options: EmbeddedAudioImport
       return;
     }
     embeddedAudioImportPromptActive = true;
-    const choice = await window.xtream.show.chooseEmbeddedAudioImport(readyAudioVisuals.map((visual) => visual.label));
+    const choice = await window.xtream.show.chooseEmbeddedAudioImport(
+      readyAudioVisuals.map((visual) => ({
+        label: visual.label,
+        durationSeconds: visual.durationSeconds,
+      })),
+    );
     try {
       if (choice === 'representation') {
         for (const visual of readyAudioVisuals) {
@@ -134,16 +145,106 @@ export function createEmbeddedAudioImportController(options: EmbeddedAudioImport
   }
 
   async function extractEmbeddedAudioFile(visualId: VisualId): Promise<void> {
+    if (extractionOverlayActive) {
+      options.setShowStatus('Audio extraction is already running.');
+      return;
+    }
+    const initialFormat = options.getAudioExtractionFormat() ?? 'm4a';
+    extractionOverlayActive = true;
+    showExtractionPending(visualId, initialFormat);
     try {
-      const source = await window.xtream.audioSources.extractEmbedded(visualId, options.getAudioExtractionFormat());
-      options.setSelectedEntity({ type: 'audio-source', id: source.id });
-      options.renderState(await window.xtream.director.getState());
-      const format = source.type === 'embedded-visual' ? source.extractedFormat?.toUpperCase() : undefined;
-      options.setShowStatus(`Extracted embedded audio to ${format ?? 'file'} for ${source.label}.`);
+      await runExtractionAttempt(visualId, initialFormat);
+      hideExtractionOverlay();
     } catch (error: unknown) {
       options.renderState(await window.xtream.director.getState());
-      options.setShowStatus(error instanceof Error ? error.message : 'Audio extraction failed.');
+      const message = error instanceof Error ? error.message : 'Audio extraction failed.';
+      options.setShowStatus(message);
+      if (initialFormat === 'm4a') {
+        const retry = await showExtractionErrorWithRetry(message);
+        if (retry) {
+          try {
+            showExtractionPending(visualId, 'wav');
+            await runExtractionAttempt(visualId, 'wav');
+            hideExtractionOverlay();
+          } catch (retryError: unknown) {
+            options.renderState(await window.xtream.director.getState());
+            const retryMessage = retryError instanceof Error ? retryError.message : 'WAV extraction failed.';
+            options.setShowStatus(retryMessage);
+            await showExtractionDismissibleError(retryMessage);
+          }
+        }
+      } else {
+        await showExtractionDismissibleError(message);
+      }
+    } finally {
+      extractionOverlayActive = false;
     }
+  }
+
+  async function runExtractionAttempt(visualId: VisualId, format: AudioExtractionFormat): Promise<void> {
+    const source = await window.xtream.audioSources.extractEmbedded(visualId, format);
+    options.setSelectedEntity({ type: 'audio-source', id: source.id });
+    options.renderState(await window.xtream.director.getState());
+    const extractedFormat = source.type === 'embedded-visual' ? source.extractedFormat?.toUpperCase() : undefined;
+    options.setShowStatus(`Extracted embedded audio to ${extractedFormat ?? format.toUpperCase()} for ${source.label}.`);
+  }
+
+  function showExtractionPending(visualId: VisualId, format: AudioExtractionFormat): void {
+    document.body.classList.add('extraction-blocked');
+    shellElements.appFrame.classList.add('extraction-blocked');
+    shellElements.extractionOverlay.hidden = false;
+    shellElements.extractionOverlay.dataset.state = 'pending';
+    shellElements.extractionOverlayHeading.textContent = 'Extracting Audio';
+    shellElements.extractionOverlayStatus.textContent = format.toUpperCase();
+    shellElements.extractionOverlayMessage.textContent = `Extracting embedded audio from ${getVisualLabel(visualId)}.`;
+    shellElements.extractionOverlayError.hidden = true;
+    shellElements.extractionOverlayError.textContent = '';
+    shellElements.extractionOverlayActions.replaceChildren();
+  }
+
+  function showExtractionErrorWithRetry(message: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      shellElements.extractionOverlay.dataset.state = 'error';
+      shellElements.extractionOverlayHeading.textContent = 'Audio Extraction Failed';
+      shellElements.extractionOverlayStatus.textContent = 'M4A failed';
+      shellElements.extractionOverlayMessage.textContent = 'The M4A/AAC extraction failed. Try extracting a WAV file instead.';
+      shellElements.extractionOverlayError.hidden = false;
+      shellElements.extractionOverlayError.textContent = message;
+      const dismissButton = createButton('Dismiss', 'secondary', () => {
+        hideExtractionOverlay();
+        resolve(false);
+      });
+      const retryButton = createButton('Extract WAV', '', () => resolve(true));
+      shellElements.extractionOverlayActions.replaceChildren(dismissButton, retryButton);
+    });
+  }
+
+  function showExtractionDismissibleError(message: string): Promise<void> {
+    return new Promise((resolve) => {
+      shellElements.extractionOverlay.dataset.state = 'error';
+      shellElements.extractionOverlayHeading.textContent = 'Audio Extraction Failed';
+      shellElements.extractionOverlayStatus.textContent = 'Failed';
+      shellElements.extractionOverlayMessage.textContent = 'The audio extraction could not be completed.';
+      shellElements.extractionOverlayError.hidden = false;
+      shellElements.extractionOverlayError.textContent = message;
+      const dismissButton = createButton('Dismiss', '', () => {
+        hideExtractionOverlay();
+        resolve();
+      });
+      shellElements.extractionOverlayActions.replaceChildren(dismissButton);
+    });
+  }
+
+  function hideExtractionOverlay(): void {
+    shellElements.extractionOverlay.hidden = true;
+    shellElements.extractionOverlay.dataset.state = '';
+    shellElements.extractionOverlayActions.replaceChildren();
+    shellElements.appFrame.classList.remove('extraction-blocked');
+    document.body.classList.remove('extraction-blocked');
+  }
+
+  function getVisualLabel(visualId: VisualId): string {
+    return options.getState()?.visuals[visualId]?.label ?? visualId;
   }
 
   return {

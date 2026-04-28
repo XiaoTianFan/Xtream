@@ -15,6 +15,12 @@ export const elements = {
   launchCreateShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchCreateShowButton'), 'launchCreateShowButton'),
   launchOpenDefaultButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenDefaultButton'), 'launchOpenDefaultButton'),
   launchRecentList: assertElement(document.querySelector<HTMLDivElement>('#launchRecentList'), 'launchRecentList'),
+  extractionOverlay: assertElement(document.querySelector<HTMLElement>('#extractionOverlay'), 'extractionOverlay'),
+  extractionOverlayHeading: assertElement(document.querySelector<HTMLHeadingElement>('#extractionOverlayHeading'), 'extractionOverlayHeading'),
+  extractionOverlayStatus: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayStatus'), 'extractionOverlayStatus'),
+  extractionOverlayMessage: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayMessage'), 'extractionOverlayMessage'),
+  extractionOverlayError: assertElement(document.querySelector<HTMLPreElement>('#extractionOverlayError'), 'extractionOverlayError'),
+  extractionOverlayActions: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayActions'), 'extractionOverlayActions'),
 };
 
 export type ControlElements = typeof elements;

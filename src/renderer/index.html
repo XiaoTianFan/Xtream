@@ -172,6 +172,18 @@
             </div>
           </div>
         </section>
+
+        <section id="extractionOverlay" class="extraction-overlay" aria-labelledby="extractionOverlayHeading" role="dialog" aria-modal="true" hidden>
+          <div class="extraction-panel">
+            <div class="extraction-header">
+              <h1 id="extractionOverlayHeading">Extracting Audio</h1>
+              <div id="extractionOverlayStatus" class="extraction-status">Working</div>
+            </div>
+            <div id="extractionOverlayMessage" class="extraction-message" aria-live="polite"></div>
+            <pre id="extractionOverlayError" class="extraction-error" hidden></pre>
+            <div id="extractionOverlayActions" class="extraction-actions"></div>
+          </div>
+        </section>
       </div>
     </main>
   </body>

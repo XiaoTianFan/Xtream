@@ -224,6 +224,39 @@ describe('Director', () => {
     });
   });
 
+  it('rolls failed embedded audio extraction back to representation mode', () => {
+    const director = new Director(() => 1000);
+    director.addVisuals([
+      {
+        id: 'visual-with-audio',
+        label: 'Video With Audio',
+        type: 'video',
+        path: 'F:\\media\\video-with-audio.mp4',
+        url: 'file:///F:/media/video-with-audio.mp4',
+      },
+    ]);
+    director.updateVisualMetadata({ visualId: 'visual-with-audio', durationSeconds: 12, ready: true, hasEmbeddedAudio: true });
+    director.markEmbeddedAudioExtractionPending(
+      'visual-with-audio',
+      'F:\\project\\assets\\audio\\visual-with-audio.m4a',
+      'file:///F:/project/assets/audio/visual-with-audio.m4a',
+      'm4a',
+    );
+
+    const failed = director.markEmbeddedAudioExtractionFailed('visual-with-audio', 'AAC decode failed.');
+
+    expect(failed).toMatchObject({
+      type: 'embedded-visual',
+      extractionMode: 'representation',
+      extractionStatus: undefined,
+      extractedPath: undefined,
+      extractedUrl: undefined,
+      extractedFormat: undefined,
+      ready: true,
+      error: undefined,
+    });
+  });
+
   it('does not block readiness while extracted embedded audio is pending', () => {
     const director = new Director(() => 1000);
     director.addVisuals([

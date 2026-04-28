@@ -287,12 +287,20 @@ input[type="range"].mini-slider:disabled {
 }
 
 .app-frame.launch-blocked .patch-surface,
-.app-frame.launch-blocked .surface-panel {
+.app-frame.launch-blocked .surface-panel,
+.app-frame.extraction-blocked .patch-surface,
+.app-frame.extraction-blocked .surface-panel {
   pointer-events: none;
   user-select: none;
 }
 
-.launch-dashboard {
+body.extraction-blocked .nav-rail {
+  pointer-events: none;
+  user-select: none;
+}
+
+.launch-dashboard,
+.extraction-overlay {
   position: absolute;
   inset: 0;
   z-index: 50;
@@ -302,11 +310,13 @@ input[type="range"].mini-slider:disabled {
   background: color-mix(in srgb, var(--bg-base) 72%, transparent);
 }
 
-.launch-dashboard[hidden] {
+.launch-dashboard[hidden],
+.extraction-overlay[hidden] {
   display: none;
 }
 
-.launch-panel {
+.launch-panel,
+.extraction-panel {
   width: min(720px, calc(100vw - 120px));
   max-height: min(640px, calc(100vh - 96px));
   border: 1px solid var(--border-subtle);
@@ -316,7 +326,8 @@ input[type="range"].mini-slider:disabled {
   overflow: hidden;
 }
 
-.launch-header {
+.launch-header,
+.extraction-header {
   display: grid;
   gap: 2px;
   margin-bottom: 10px;
@@ -331,10 +342,75 @@ input[type="range"].mini-slider:disabled {
   text-transform: uppercase;
 }
 
-.launch-header h1 {
+.launch-header h1,
+.extraction-header h1 {
   margin: 0;
   color: var(--text-primary);
   font-size: 1.15rem;
+}
+
+.extraction-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.extraction-status {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  color: var(--accent-teal);
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.extraction-overlay[data-state="pending"] .extraction-status::before {
+  content: "";
+  grid-row: 2;
+  justify-self: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50% !important;
+  border: 2px solid color-mix(in srgb, var(--accent-teal) 28%, transparent);
+  border-top-color: var(--accent-teal);
+  animation: extraction-spin 0.9s linear infinite;
+}
+
+.extraction-overlay[data-state="error"] .extraction-status {
+  color: var(--status-critical);
+}
+
+@keyframes extraction-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.extraction-message {
+  color: var(--on-surface);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.extraction-error {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--status-critical) 36%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-low));
+  color: #ffb4ab;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.extraction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .launch-actions {

@@ -334,17 +334,23 @@ export class Director extends EventEmitter {
   }
 
   markEmbeddedAudioExtractionFailed(visualId: string, error: string): AudioSourceState {
-    const source = this.addEmbeddedAudioSource(visualId, 'file');
+    const source = this.addEmbeddedAudioSource(visualId, 'representation');
     if (source.type !== 'embedded-visual') {
       throw new Error(`Unable to create embedded audio source for ${visualId}.`);
     }
+    const visual = this.state.visuals[visualId];
     this.state.audioSources[source.id] = {
       ...source,
       type: 'embedded-visual',
-      extractionMode: 'file',
-      extractionStatus: 'failed',
-      ready: false,
-      error,
+      extractionMode: 'representation',
+      extractedPath: undefined,
+      extractedUrl: undefined,
+      extractedFormat: undefined,
+      extractionStatus: undefined,
+      durationSeconds: visual?.durationSeconds ?? source.durationSeconds,
+      fileSizeBytes: visual?.fileSizeBytes,
+      ready: Boolean(visual?.ready),
+      error: visual?.error,
     };
     this.syncDerivedEmbeddedAudioSources(this.state.audioSources[source.id]);
     this.updateOutputReadiness();

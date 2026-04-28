@@ -4,6 +4,7 @@ import { patchElements as elements } from './elements';
 import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
+import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from './embeddedAudioImport';
 
 type PoolTab = 'visuals' | 'audio';
 type PoolSort = 'label' | 'duration' | 'status';
@@ -54,7 +55,7 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
   }
 
   function createRenderSignature(state: DirectorState, selectedEntity: SelectedEntity | undefined): string {
-    return `${createVisualRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
+    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
   }
 
   function createVisualRow(visual: VisualState): HTMLElement {
@@ -83,7 +84,9 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
       }
       await window.xtream.visuals.remove(visual.id);
       options.clearSelectionIf({ type: 'visual', id: visual.id });
-      options.renderState(await window.xtream.director.getState());
+      const state = await window.xtream.director.getState();
+      render(state);
+      options.renderState(state);
     });
     decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
@@ -127,7 +130,9 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
       }
       await window.xtream.audioSources.remove(source.id);
       options.clearSelectionIf({ type: 'audio-source', id: source.id });
-      options.renderState(await window.xtream.director.getState());
+      const state = await window.xtream.director.getState();
+      render(state);
+      options.renderState(state);
     });
     decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
@@ -165,6 +170,10 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
     }
     event.preventDefault();
     event.stopPropagation();
+    if (options.getState()?.paused === false) {
+      options.setShowStatus('Pause the timeline before extracting embedded audio.');
+      return;
+    }
     dismissAudioSourceContextMenu();
     const menu = document.createElement('div');
     menu.className = 'context-menu audio-source-menu';
@@ -185,7 +194,15 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
       representationButton.title = 'No embedded audio track has been detected for this visual.';
       fileButton.title = representationButton.title;
     }
-    menu.append(representationButton, fileButton);
+    const isLongVideo = (visual.durationSeconds ?? 0) > LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS;
+    if (isLongVideo) {
+      if (!fileButton.disabled) {
+        fileButton.title = 'Long videos use extracted audio files for more stable playback.';
+      }
+      menu.append(fileButton);
+    } else {
+      menu.append(representationButton, fileButton);
+    }
     document.body.append(menu);
     positionContextMenu(menu, event.clientX, event.clientY);
     activeAudioSourceMenu = menu;
@@ -215,6 +232,22 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
       splitButton.title = source.channelCount === 1 ? 'Mono sources cannot be split.' : 'This source is already a mono channel.';
     }
     menu.append(splitButton);
+    if (source.type === 'embedded-visual' && source.extractionMode === 'representation') {
+      const fileButton = createButton('Extract audio as file', 'secondary context-menu-item', async () => {
+        dismissAudioSourceContextMenu();
+        if (options.getState()?.paused === false) {
+          options.setShowStatus('Pause the timeline before extracting embedded audio.');
+          return;
+        }
+        await options.extractEmbeddedAudioFile(source.visualId);
+      });
+      fileButton.setAttribute('role', 'menuitem');
+      if (options.getState()?.paused === false) {
+        fileButton.disabled = true;
+        fileButton.title = 'Pause the timeline before extracting embedded audio.';
+      }
+      menu.append(fileButton);
+    }
     document.body.append(menu);
     positionContextMenu(menu, event.clientX, event.clientY);
     activeAudioSourceMenu = menu;
@@ -292,6 +325,54 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
     return Boolean(event.dataTransfer?.types?.includes('Files'));
   }
 
+  function getDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
+    if (!dataTransfer) {
+      return [];
+    }
+    const files = [
+      ...Array.from(dataTransfer.files),
+      ...Array.from(dataTransfer.items)
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file)),
+    ];
+    const paths = files.map(getPathForDroppedFile).filter((path): path is string => Boolean(path));
+    const uriListPaths = parseDroppedFileUriList(dataTransfer.getData('text/uri-list'));
+    return Array.from(new Set([...paths, ...uriListPaths]));
+  }
+
+  function getPathForDroppedFile(file: File): string | undefined {
+    const path = window.xtream.platform.getPathForFile(file) || (file as File & { path?: string }).path;
+    return path || undefined;
+  }
+
+  function parseDroppedFileUriList(uriList: string): string[] {
+    return uriList
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map(fileUriToPath)
+      .filter((path): path is string => Boolean(path));
+  }
+
+  function fileUriToPath(uri: string): string | undefined {
+    try {
+      const url = new URL(uri);
+      if (url.protocol !== 'file:') {
+        return undefined;
+      }
+      const decodedPath = decodeURIComponent(url.pathname);
+      const pathWithHost = url.hostname ? `//${url.hostname}${decodedPath}` : decodedPath;
+      if (navigator.platform.toLowerCase().startsWith('win')) {
+        const windowsPath = pathWithHost.replace(/\//g, '\\');
+        return windowsPath.replace(/^\\([A-Za-z]:\\)/, '$1');
+      }
+      return pathWithHost;
+    } catch {
+      return undefined;
+    }
+  }
+
   function clearMediaPoolDragOver(event: DragEvent): void {
     const next = event.relatedTarget;
     if (next instanceof Node && elements.mediaPoolPanel.contains(next)) {
@@ -322,9 +403,7 @@ export function createMediaPoolController(options: MediaPoolControllerOptions): 
     elements.mediaPoolPanel.addEventListener('drop', async (event) => {
       event.preventDefault();
       elements.mediaPoolPanel.classList.remove('drag-over');
-      const paths = Array.from(event.dataTransfer?.files ?? [])
-        .map((file) => (file as File & { path?: string }).path)
-        .filter((path): path is string => Boolean(path));
+      const paths = getDroppedFilePaths(event.dataTransfer);
       if (paths.length === 0) {
         options.setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
         return;
@@ -394,6 +473,41 @@ function createVisualRenderSignature(state: DirectorState): string {
         contrast: visual.contrast,
         playbackRate: visual.playbackRate,
         fileSizeBytes: visual.fileSizeBytes,
+      })),
+  );
+}
+
+function createAudioRenderSignature(state: DirectorState): string {
+  return JSON.stringify(
+    Object.values(state.audioSources)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((source) => ({
+        id: source.id,
+        label: source.label,
+        type: source.type,
+        durationSeconds: source.durationSeconds,
+        ready: source.ready,
+        error: source.error,
+        fileSizeBytes: source.fileSizeBytes,
+        playbackRate: source.playbackRate,
+        levelDb: source.levelDb,
+        channelCount: source.channelCount,
+        channelMode: source.channelMode,
+        derivedFromAudioSourceId: source.derivedFromAudioSourceId,
+        ...(source.type === 'external-file'
+          ? {
+              path: source.path,
+              url: source.url,
+            }
+          : {
+              visualId: source.visualId,
+              extractionMode: source.extractionMode,
+              extractionStatus: source.extractionStatus,
+              extractedPath: source.extractedPath,
+              extractedUrl: source.extractedUrl,
+              extractedFormat: source.extractedFormat,
+              visualLabel: state.visuals[source.visualId]?.label,
+            }),
       })),
   );
 }

@@ -33,6 +33,7 @@ import type {
   DisplayUpdate,
   DriftReport,
   EmbeddedAudioImportChoice,
+  EmbeddedAudioImportCandidate,
   EmbeddedAudioExtractionMode,
   PreviewStatus,
   OutputMeterReport,
@@ -69,6 +70,7 @@ const rendererRoot = path.join(__dirname, '../../renderer');
 const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
 /** Matches add-file dialog: Audio + Video/Audio groups (excludes * catch-all) */
 const AUDIO_FILE_IMPORT_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'm4v', 'webm']);
+const LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS = 30 * 60;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -366,9 +368,43 @@ function runFfmpeg(args: string[]): Promise<void> {
         resolve();
         return;
       }
-      reject(new Error(stderr.trim() || `FFmpeg exited with code ${code ?? 'unknown'}.`));
+      reject(new Error(summarizeFfmpegError(stderr) || `FFmpeg exited with code ${code ?? 'unknown'}.`));
     });
   });
+}
+
+function summarizeFfmpegError(stderr: string): string {
+  const lines = stderr
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const importantLines = lines.filter((line) => /error|invalid|failed|not yet implemented|reserved|sample rate|rematrix/i.test(line));
+  return (importantLines.length > 0 ? importantLines : lines.slice(-12)).slice(-20).join('\n');
+}
+
+function createAudioExtractionArgs(inputPath: string, outputPath: string, format: AudioExtractionFormat): string[] {
+  const baseArgs = [
+    '-y',
+    '-fflags',
+    '+discardcorrupt',
+    '-err_detect',
+    'ignore_err',
+    '-i',
+    inputPath,
+    '-map',
+    '0:a:0',
+    '-vn',
+    '-sn',
+    '-dn',
+    '-ac',
+    '2',
+    '-ar',
+    '48000',
+  ];
+  return format === 'wav'
+    ? [...baseArgs, '-acodec', 'pcm_s16le', outputPath]
+    : [...baseArgs, '-acodec', 'aac', '-b:a', '192k', outputPath];
 }
 
 async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFormat): Promise<ReturnType<Director['markEmbeddedAudioExtractionReady']>> {
@@ -380,12 +416,8 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
   await mkdir(path.dirname(outputPath), { recursive: true });
   const outputUrl = toRendererFileUrl(outputPath);
   director.markEmbeddedAudioExtractionPending(visualId, outputPath, outputUrl, format);
-  const args =
-    format === 'wav'
-      ? ['-y', '-i', visual.path, '-vn', '-acodec', 'pcm_s16le', outputPath]
-      : ['-y', '-i', visual.path, '-vn', '-acodec', 'aac', '-b:a', '192k', outputPath];
   try {
-    await runFfmpeg(args);
+    await runFfmpeg(createAudioExtractionArgs(visual.path, outputPath, format));
     const source = director.markEmbeddedAudioExtractionReady(
       visualId,
       outputPath,
@@ -396,6 +428,9 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
     scheduleShowConfigAutoSave();
     return source;
   } catch (error: unknown) {
+    if (fs.existsSync(outputPath)) {
+      fs.rmSync(outputPath, { force: true });
+    }
     const message = error instanceof Error ? error.message : 'Audio extraction failed.';
     const source = director.markEmbeddedAudioExtractionFailed(visualId, message);
     scheduleShowConfigAutoSave();
@@ -715,29 +750,41 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('show:choose-embedded-audio-import', async (_event, labels: string[]): Promise<EmbeddedAudioImportChoice> => {
-    const label = labels.length === 1 ? labels[0] : `${labels.length} videos`;
-    const result = controlWindow
-      ? await dialog.showMessageBox(controlWindow, {
-          type: 'question',
-          buttons: ['Do not extract audio', 'Extract into representation', 'Extract audio into files'],
-          defaultId: 1,
-          cancelId: 0,
-          title: 'Import video audio',
-          message: `Import audio from ${label}?`,
-          detail: 'Choose how Xtream should create audio sources for the imported video media.',
-        })
-      : await dialog.showMessageBox({
-          type: 'question',
-          buttons: ['Do not extract audio', 'Extract into representation', 'Extract audio into files'],
-          defaultId: 1,
-          cancelId: 0,
-          title: 'Import video audio',
-          message: `Import audio from ${label}?`,
-          detail: 'Choose how Xtream should create audio sources for the imported video media.',
-        });
-    return result.response === 2 ? 'file' : result.response === 1 ? 'representation' : 'skip';
-  });
+  ipcMain.handle(
+    'show:choose-embedded-audio-import',
+    async (_event, candidates: EmbeddedAudioImportCandidate[]): Promise<EmbeddedAudioImportChoice> => {
+      const label = candidates.length === 1 ? candidates[0]?.label ?? 'video' : `${candidates.length} videos`;
+      const hasLongVideo = candidates.some((candidate) => (candidate.durationSeconds ?? 0) > LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS);
+      const buttons = hasLongVideo
+        ? ['Do not extract audio', 'Extract audio into files']
+        : ['Do not extract audio', 'Extract into representation', 'Extract audio into files'];
+      const fileResponseId = hasLongVideo ? 1 : 2;
+      const representationResponseId = hasLongVideo ? -1 : 1;
+      const detail = hasLongVideo
+        ? 'Videos longer than 30 minutes use extracted audio files for more stable playback.'
+        : 'Choose how Xtream should create audio sources for the imported video media.';
+      const result = controlWindow
+        ? await dialog.showMessageBox(controlWindow, {
+            type: 'question',
+            buttons,
+            defaultId: 1,
+            cancelId: 0,
+            title: 'Import video audio',
+            message: `Import audio from ${label}?`,
+            detail,
+          })
+        : await dialog.showMessageBox({
+            type: 'question',
+            buttons,
+            defaultId: 1,
+            cancelId: 0,
+            title: 'Import video audio',
+            message: `Import audio from ${label}?`,
+            detail,
+          });
+      return result.response === fileResponseId ? 'file' : result.response === representationResponseId ? 'representation' : 'skip';
+    },
+  );
 
   ipcMain.handle('show:open', async (): Promise<ShowConfigOperationResult | undefined> => {
     const result = await showOpenDialog({

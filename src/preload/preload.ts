@@ -1,7 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
+  EmbeddedAudioImportCandidate,
   AudioSourceId,
   AudioSourceSplitResult,
   AudioSourceState,
@@ -109,8 +110,8 @@ const api = {
     openDefault: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:open-default'),
     openRecent: (filePath: string): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-recent', filePath),
     updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),
-    chooseEmbeddedAudioImport: (labels: string[]): Promise<EmbeddedAudioImportChoice> =>
-      ipcRenderer.invoke('show:choose-embedded-audio-import', labels),
+    chooseEmbeddedAudioImport: (candidates: EmbeddedAudioImportCandidate[]): Promise<EmbeddedAudioImportChoice> =>
+      ipcRenderer.invoke('show:choose-embedded-audio-import', candidates),
     open: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open'),
     exportDiagnostics: (): Promise<string | undefined> => ipcRenderer.invoke('show:export-diagnostics'),
   },
@@ -121,6 +122,9 @@ const api = {
   },
   events: {
     hasDirectorEvent: (eventName: string): boolean => DIRECTOR_EVENTS.has(eventName as DirectorEventName),
+  },
+  platform: {
+    getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   },
 };
 
