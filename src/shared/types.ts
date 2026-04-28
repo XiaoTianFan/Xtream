@@ -419,7 +419,7 @@ export type FadeSpec = {
   curve?: 'linear' | 'equal-power' | 'log';
 };
 
-export type DisplayZoneId = 'single' | 'split-left' | 'split-right';
+export type DisplayZoneId = 'single' | 'L' | 'R';
 
 export type VisualDisplayTarget = {
   displayId: DisplayWindowId;
@@ -427,7 +427,6 @@ export type VisualDisplayTarget = {
 };
 
 export type SubCueRef = {
-  streamId?: StreamId;
   sceneId: SceneId;
   subCueId: SubCueId;
 };
@@ -470,9 +469,9 @@ export type PersistedControlSubCueConfig = {
   id: SubCueId;
   kind: 'control';
   action:
-    | { type: 'stop-scene'; streamId?: StreamId; sceneId: SceneId; fadeOutMs?: number }
-    | { type: 'pause-scene'; streamId?: StreamId; sceneId: SceneId }
-    | { type: 'resume-scene'; streamId?: StreamId; sceneId: SceneId }
+    | { type: 'stop-scene'; sceneId: SceneId; fadeOutMs?: number }
+    | { type: 'pause-scene'; sceneId: SceneId }
+    | { type: 'resume-scene'; sceneId: SceneId }
     | {
         type: 'set-audio-subcue-level';
         subCueRef: SubCueRef;
@@ -570,8 +569,7 @@ export type PersistedShowConfigV8 = {
   outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>;
   displays: PersistedDisplayConfigV8[];
 
-  streams: Record<StreamId, PersistedStreamConfig>;
-  activeStreamId?: StreamId;
+  stream: PersistedStreamConfig;
 
   patchCompatibility: PersistedPatchSceneProjection;
 };
@@ -590,7 +588,6 @@ export type SceneRuntimeState = {
 };
 
 export type StreamRuntimeState = {
-  streamId: StreamId;
   status: 'idle' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed';
   originWallTimeMs?: number;
   cursorSceneId?: SceneId;
@@ -599,32 +596,29 @@ export type StreamRuntimeState = {
 };
 
 export type StreamCommand =
-  | { type: 'go'; streamId: StreamId; sceneId?: SceneId }
-  | { type: 'pause'; streamId: StreamId }
-  | { type: 'resume'; streamId: StreamId }
-  | { type: 'stop'; streamId: StreamId }
-  | { type: 'jump-next'; streamId: StreamId }
-  | { type: 'back-to-first'; streamId: StreamId };
+  | { type: 'go'; sceneId?: SceneId }
+  | { type: 'pause' }
+  | { type: 'resume' }
+  | { type: 'stop' }
+  | { type: 'jump-next' }
+  | { type: 'back-to-first' };
 
 export type StreamEditCommand =
-  | { type: 'create-stream'; label?: string }
-  | { type: 'update-stream'; streamId: StreamId; label?: string; active?: boolean }
-  | { type: 'create-scene'; streamId: StreamId; afterSceneId?: SceneId; trigger?: SceneTrigger }
-  | { type: 'update-scene'; streamId: StreamId; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
-  | { type: 'duplicate-scene'; streamId: StreamId; sceneId: SceneId }
-  | { type: 'remove-scene'; streamId: StreamId; sceneId: SceneId }
-  | { type: 'reorder-scenes'; streamId: StreamId; sceneOrder: SceneId[] }
+  | { type: 'update-stream'; label?: string }
+  | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger }
+  | { type: 'update-scene'; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
+  | { type: 'duplicate-scene'; sceneId: SceneId }
+  | { type: 'remove-scene'; sceneId: SceneId }
+  | { type: 'reorder-scenes'; sceneOrder: SceneId[] }
   | {
       type: 'update-subcue';
-      streamId: StreamId;
       sceneId: SceneId;
       subCueId: SubCueId;
       update: Partial<PersistedSubCueConfig>;
     };
 
 export type StreamEnginePublicState = {
-  activeStreamId?: StreamId;
-  streams: Record<StreamId, PersistedStreamConfig>;
+  stream: PersistedStreamConfig;
   runtime: StreamRuntimeState | null;
   validationMessages: string[];
 };
@@ -847,10 +841,10 @@ export type IpcChannels = {
   'renderer:ready': (report: RendererReadyReport) => void;
   'renderer:drift': (report: DriftReport) => void;
   'renderer:preview-status': (report: PreviewStatus) => void;
-  'streams:get-state': () => StreamEnginePublicState;
-  'streams:edit': (command: StreamEditCommand) => StreamEnginePublicState;
-  'streams:transport': (command: StreamCommand) => StreamEnginePublicState;
+  'stream:get-state': () => StreamEnginePublicState;
+  'stream:edit': (command: StreamEditCommand) => StreamEnginePublicState;
+  'stream:transport': (command: StreamCommand) => StreamEnginePublicState;
 };
 
 export type DirectorEventName = 'director:state';
-export type StreamsEventName = 'streams:state';
+export type StreamEventName = 'stream:state';

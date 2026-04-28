@@ -30,7 +30,7 @@ import type {
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
-  StreamsEventName,
+  StreamEventName,
   TransportCommand,
   VisualId,
   VisualMetadataReport,
@@ -42,7 +42,7 @@ import type {
 } from '../shared/types';
 
 const DIRECTOR_EVENTS = new Set<DirectorEventName>(['director:state']);
-const STREAMS_EVENTS = new Set<StreamsEventName>(['streams:state']);
+const STREAM_EVENTS = new Set<StreamEventName>(['stream:state']);
 
 const api = {
   director: {
@@ -120,14 +120,14 @@ const api = {
       return () => ipcRenderer.removeListener('audio:solo-output-ids', listener);
     },
   },
-  streams: {
-    getState: (): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:get-state'),
-    edit: (command: StreamEditCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:edit', command),
-    transport: (command: StreamCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:transport', command),
+  stream: {
+    getState: (): Promise<StreamEnginePublicState> => ipcRenderer.invoke('stream:get-state'),
+    edit: (command: StreamEditCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('stream:edit', command),
+    transport: (command: StreamCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('stream:transport', command),
     onState: (callback: (state: StreamEnginePublicState) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: StreamEnginePublicState) => callback(state);
-      ipcRenderer.on('streams:state', listener);
-      return () => ipcRenderer.removeListener('streams:state', listener);
+      ipcRenderer.on('stream:state', listener);
+      return () => ipcRenderer.removeListener('stream:state', listener);
     },
   },
   show: {
@@ -150,7 +150,7 @@ const api = {
   },
   events: {
     hasDirectorEvent: (eventName: string): boolean => DIRECTOR_EVENTS.has(eventName as DirectorEventName),
-    hasStreamsEvent: (eventName: string): boolean => STREAMS_EVENTS.has(eventName as StreamsEventName),
+    hasStreamEvent: (eventName: string): boolean => STREAM_EVENTS.has(eventName as StreamEventName),
   },
   platform: {
     getPathForFile: (file: File): string => webUtils.getPathForFile(file),

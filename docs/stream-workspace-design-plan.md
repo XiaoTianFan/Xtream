@@ -6,7 +6,7 @@ This document replaces the old long-term cue-list direction with a concrete desi
 
 The older roadmap in `docs/show-cue-system-long-term-roadmap.md` remains useful for principles: one authoritative clock, versioned show data, explicit readiness, rail-like media/control actions, and a cue engine beside the director. The implementation target is now more specific:
 
-- A show can contain multiple Streams.
+- A show contains one Stream.
 - A Stream is a scene-by-scene sequence, comparable to a cue list.
 - A Scene is the executable unit. It can contain multiple audio, visual, and control sub-cues that start together.
 - The existing Patch workspace edits a dedicated hidden compatibility Scene, separate from user-authored Streams.
@@ -44,16 +44,16 @@ A show is the saved project document. It contains:
 - global asset pool: visuals and audio sources
 - global outputs: virtual audio outputs and physical routing
 - global displays: display windows and monitor placement
-- one or more Streams
+- one Stream
 - show-level settings: extraction format, global mute/blackout fade defaults, future adapter settings
 
 Displays and outputs are not owned by a scene. A scene references them.
 
 ### Stream
 
-A Stream is a scene-by-scene sequence.
+A Stream is the scene-by-scene sequence for the show.
 
-Multiple Streams can exist in one show, but Stream playback is exclusive. The first production design intentionally does not support parallel Stream playback. Each Stream has its own cursor, timing origin, trigger graph, and runtime state. All Streams share the same show-level media pool, outputs, display windows, and safety controls.
+There is exactly one user-authored Stream per show file. The Stream has one cursor, one timing origin, one trigger graph, and one runtime state. It shares the show-level media pool, outputs, display windows, and safety controls.
 
 Patch and Stream playback are also mutually exclusive:
 
@@ -128,7 +128,7 @@ Multiple scenes or visual sub-cues may target the same display target. This is a
 
 Recommended display mingle algorithms for v1:
 
-- `latest`: latest-started visual owns the target
+- `latest`: latest-started visual owns the target; this is the default for new display windows
 - `alpha-over`: normal opacity compositing by layer/start order
 - `additive`
 - `multiply`
@@ -143,6 +143,12 @@ Control sub-cues:
 - support commands such as stop, pause, resume, fade out, set level, set pan, blackout display, mute output, and future adapter actions
 
 When adding a video visual sub-cue, Xtream should automatically create or attach an embedded-audio audio sub-cue by default if the video has embedded audio. The generated audio sub-cue should reference the existing embedded audio source mechanism rather than storing duplicated media metadata inside the scene.
+
+Embedded video audio selection priority:
+
+- use an existing extracted embedded-audio file source when one exists
+- otherwise use an existing representation source when one exists
+- otherwise create the embedded-audio representation source and attach it
 
 ## 4. Proposed Persisted Schema
 
@@ -162,8 +168,7 @@ export type PersistedShowConfigV8 = {
   outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>;
   displays: PersistedDisplayConfigV8[];
 
-  streams: Record<StreamId, PersistedStreamConfig>;
-  activeStreamId?: StreamId;
+  stream: PersistedStreamConfig;
 
   patchCompatibility: PersistedPatchSceneProjection;
 };
@@ -198,6 +203,7 @@ export type VisualMingleAlgorithm =
 
 export type PersistedDisplayConfigV8 = PersistedDisplayConfig & {
   visualMingle?: {
+    /** Defaults to 'latest' for new display windows. */
     algorithm: VisualMingleAlgorithm;
     defaultTransitionMs?: number;
   };
@@ -305,7 +311,7 @@ export type PersistedVisualSubCueConfig = {
   playbackRate?: number;
 };
 
-export type DisplayZoneId = 'single' | 'split-left' | 'split-right';
+export type DisplayZoneId = 'single' | 'L' | 'R';
 
 export type VisualDisplayTarget = {
   displayId: DisplayWindowId;
@@ -316,9 +322,9 @@ export type PersistedControlSubCueConfig = {
   id: SubCueId;
   kind: 'control';
   action:
-    | { type: 'stop-scene'; streamId?: StreamId; sceneId: SceneId; fadeOutMs?: number }
-    | { type: 'pause-scene'; streamId?: StreamId; sceneId: SceneId }
-    | { type: 'resume-scene'; streamId?: StreamId; sceneId: SceneId }
+    | { type: 'stop-scene'; sceneId: SceneId; fadeOutMs?: number }
+    | { type: 'pause-scene'; sceneId: SceneId }
+    | { type: 'resume-scene'; sceneId: SceneId }
     | { type: 'set-audio-subcue-level'; subCueRef: SubCueRef; targetDb: number; durationMs?: number; curve?: FadeSpec['curve'] }
     | { type: 'set-audio-subcue-pan'; subCueRef: SubCueRef; targetPan: number; durationMs?: number }
     | { type: 'stop-subcue'; subCueRef: SubCueRef; fadeOutMs?: number }
@@ -327,7 +333,6 @@ export type PersistedControlSubCueConfig = {
 };
 
 export type SubCueRef = {
-  streamId?: StreamId;
   sceneId: SceneId;
   subCueId: SubCueId;
 };
@@ -344,7 +349,7 @@ export type PersistedSubCueConfig =
 
 When opening an existing v7 show:
 
-1. Create a default Stream:
+1. Create the show Stream:
    - `id: stream-main`
    - `label: Main Stream`
 2. Create a first user-authored Stream Scene:
@@ -364,7 +369,6 @@ When opening an existing v7 show:
    - each output source selection becomes an audio sub-cue
    - preserve output bus settings and display window definitions at show level
 5. Preserve all existing media pool records, outputs, displays, and settings.
-6. Set `activeStreamId` to the default Stream.
 
 ### Patch Workspace As Scene Projection
 
@@ -394,7 +398,6 @@ Add a main-process `StreamEngine` that owns Stream runtime state:
 
 ```ts
 export type StreamRuntimeState = {
-  streamId: StreamId;
   status: 'idle' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed';
   originWallTimeMs?: number;
   cursorSceneId?: SceneId;
@@ -692,11 +695,13 @@ Add-scene behavior:
 
 Recommended implementation:
 
-- Start with DOM/SVG rather than adding a canvas library dependency.
-- Use absolutely positioned scene cards in a transformed canvas layer.
-- Use SVG for virtual links behind cards.
+- Use Rete.js for Flow mode.
 - Persist card `flow` rect and Stream `flowViewport`.
-- Add a dedicated library only if pan/zoom/selection complexity grows beyond the simple implementation.
+- Keep the scene graph as Xtream-owned data; the library is the editing/view layer, not the source of truth.
+- Require custom scene-card rendering, pan/zoom, selection, drag, resize, programmatic fit-view, custom links, and library-independent serialization.
+- Use Rete's area/pan/zoom and connection primitives, but keep scene cards, previews, hover controls, and command dispatch as Xtream-owned components.
+- Add only the Rete packages required for the selected renderer path. Because the current control renderer is vanilla TypeScript, evaluate Rete's Lit or classic renderer integration before introducing a React island.
+- Treat Rete node and connection data as a projection of `PersistedSceneConfig.flow` and scene trigger policies, not as the persisted show schema.
 
 ## 13. Scene Edit Tab
 
@@ -759,37 +764,38 @@ Control sub-cue editor:
 - choose fade/automation duration where relevant
 - show validation if the target is missing or creates a risky self-reference
 
+The first Stream implementation should include the full planned control sub-cue scope rather than a reduced starter subset: audio/sub-cue controls, display/global controls, and scene transport controls.
+
 ## 14. IPC And Shared Types
 
 Add Stream-specific IPC channels rather than overloading current director channels:
 
 ```ts
 export type StreamCommand =
-  | { type: 'go'; streamId: StreamId; sceneId?: SceneId }
-  | { type: 'pause'; streamId: StreamId }
-  | { type: 'resume'; streamId: StreamId }
-  | { type: 'stop'; streamId: StreamId }
-  | { type: 'jump-next'; streamId: StreamId }
-  | { type: 'back-to-first'; streamId: StreamId };
+  | { type: 'go'; sceneId?: SceneId }
+  | { type: 'pause' }
+  | { type: 'resume' }
+  | { type: 'stop' }
+  | { type: 'jump-next' }
+  | { type: 'back-to-first' };
 
 export type StreamEditCommand =
-  | { type: 'create-stream'; label?: string }
-  | { type: 'update-stream'; streamId: StreamId; label?: string; active?: boolean }
-  | { type: 'create-scene'; streamId: StreamId; afterSceneId?: SceneId; trigger?: SceneTrigger }
-  | { type: 'update-scene'; streamId: StreamId; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
-  | { type: 'duplicate-scene'; streamId: StreamId; sceneId: SceneId }
-  | { type: 'remove-scene'; streamId: StreamId; sceneId: SceneId }
-  | { type: 'reorder-scenes'; streamId: StreamId; sceneOrder: SceneId[] }
-  | { type: 'update-subcue'; streamId: StreamId; sceneId: SceneId; subCueId: SubCueId; update: Partial<PersistedSubCueConfig> };
+  | { type: 'update-stream'; label?: string }
+  | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger }
+  | { type: 'update-scene'; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
+  | { type: 'duplicate-scene'; sceneId: SceneId }
+  | { type: 'remove-scene'; sceneId: SceneId }
+  | { type: 'reorder-scenes'; sceneOrder: SceneId[] }
+  | { type: 'update-subcue'; sceneId: SceneId; subCueId: SubCueId; update: Partial<PersistedSubCueConfig> };
 ```
 
 Renderer API shape:
 
 ```ts
-window.xtream.streams.getState()
-window.xtream.streams.edit(command)
-window.xtream.streams.transport(command)
-window.xtream.streams.onState(callback)
+window.xtream.stream.getState()
+window.xtream.stream.edit(command)
+window.xtream.stream.transport(command)
+window.xtream.stream.onState(callback)
 ```
 
 Autosave should run for Stream edits just like current Patch edits.
@@ -798,11 +804,11 @@ Autosave should run for Stream edits just like current Patch edits.
 
 Show readiness should include Stream validation:
 
-- at least one Stream exists
-- each Stream has at least one Scene
+- exactly one Stream exists
+- the Stream has at least one Scene
 - each Scene ID is stable and unique within the show
 - `sceneOrder` contains every scene exactly once
-- explicit trigger references point to existing scenes in the same Stream
+- explicit trigger references point to existing scenes in the Stream
 - trigger graph has no invalid cycles
 - audio sub-cues reference existing audio sources
 - visual sub-cues reference existing visuals
@@ -825,7 +831,7 @@ Show readiness should include Stream validation:
 - Add schema v8 persisted show types.
 - Add v7->v8 migration.
 - Update `Director.createShowConfig` and restore path to read/write v8.
-- Create default Stream, first user Scene, and hidden Patch compatibility Scene for new show projects.
+- Create the show Stream, first user Scene, and hidden Patch compatibility Scene for new show projects.
 - Add display-zone targets and display visual mingle config.
 - Add tests for migration and round-trip persistence.
 
@@ -835,9 +841,9 @@ Exit: existing v7 show files open, save as v8, and preserve Patch behavior throu
 
 - Add main-process `StreamEngine`.
 - Add runtime state types and state broadcast.
-- Add `streams:get-state`, `streams:edit`, and `streams:transport` IPC.
+- Add `stream:get-state`, `stream:edit`, and `stream:transport` IPC.
 - Implement scene numbering, trigger graph validation, expected duration calculation, and simple manual GO state transitions.
-- Enforce exclusive playback between Patch and Stream, and between Streams.
+- Enforce exclusive playback between Patch and Stream.
 - Add unit tests for trigger semantics and duration calculation.
 
 Exit: a Stream can be edited in data and manually stepped in tests without full UI.
@@ -878,9 +884,10 @@ Exit: users can build a Stream sequence in List mode.
 - Implement audio sub-cue editor and routing to virtual outputs.
 - Implement visual sub-cue editor and routing to display targets, including split display zones.
 - Auto-create embedded audio sub-cue when adding video visual sub-cue.
+- Prefer existing extracted embedded-audio file sources when auto-creating video audio sub-cues, then fall back to representation sources.
 - Add display visual mingle controls in display details.
 - Add basic fade/rate/loop controls.
-- Defer advanced waveform/curve authoring to Phase 8 if needed.
+- Implement the full planned control sub-cue scope, including scene transport controls.
 
 Exit: scenes can contain multiple audio and visual sub-cues and save correctly.
 
@@ -896,7 +903,7 @@ Exit: Stream can run scene-to-scene in the app.
 
 ### Phase 8: Flow Mode
 
-- Implement pan/zoom DOM/SVG canvas.
+- Install and integrate Rete.js for the Flow graph/canvas surface.
 - Implement scene cards, previews, links, hover actions, add-on-right interaction.
 - Persist card rects and viewport.
 - Support drag and resize.
@@ -923,11 +930,11 @@ Exit: Stream Workspace reaches the advanced flexible shell queue target.
 
 Exit: Stream Workspace is production-ready.
 
-## 17. Open Architectural Questions
+## 17. Resolved Decisions
 
-1. Multi-Stream UI: does the first Stream Workspace version need visible tabs/list for switching Streams, or can v1 support multiple Streams in data while the UI focuses on one active Stream?
-2. Display mingle defaults: should `latest`, `alpha-over`, or `crossfade` be the default algorithm for new display windows?
-3. Display split naming: should split zones be fixed as left/right for v1, or do we need user-editable zone labels immediately?
-4. Control sub-cue scope: should v1 include only audio/display/global controls, or also scene transport controls from the start?
-5. Embedded video audio: should auto-created audio sub-cues default to representation mode for short videos and extracted file mode for long videos, matching current import behavior?
-6. Flow implementation: is DOM/SVG acceptable for v1, or do we want to adopt a graph/canvas library before implementation?
+- A show file contains exactly one Stream.
+- New display windows default to the `latest` visual mingle algorithm.
+- Split display zones are named `L` and `R` in v1.
+- The first Stream implementation includes the full planned control sub-cue scope, including scene transport controls.
+- Auto-created embedded video audio sub-cues prefer an existing extracted embedded-audio file source, then fall back to a representation source.
+- Flow mode uses Rete.js.

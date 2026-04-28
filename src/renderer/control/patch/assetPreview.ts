@@ -1,7 +1,6 @@
 import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../../shared/types';
 import { applyVisualStyle } from './displayPreview';
 import { createButton, createHint, createSlider, syncSliderProgress } from '../shared/dom';
-import { patchElements as elements } from './elements';
 import type { SelectedEntity } from '../shared/types';
 import { attachLiveVisualStream, reportLiveVisualError } from '../media/liveCaptureRuntime';
 
@@ -14,7 +13,12 @@ type AssetPreviewControllerOptions = {
   reportVisualMetadataFromVideo: (visualId: VisualId, video: HTMLVideoElement) => void;
 };
 
-export function createAssetPreviewController(options: AssetPreviewControllerOptions): AssetPreviewController {
+export type AssetPreviewElements = {
+  assetPreviewRegion: HTMLDivElement;
+  assetPreview: HTMLDivElement;
+};
+
+export function createAssetPreviewController(elements: AssetPreviewElements, options: AssetPreviewControllerOptions): AssetPreviewController {
   let assetPreviewSignature = '';
   let localPreviewCleanup: (() => void) | undefined;
 

@@ -1,10 +1,12 @@
 import type {
   AudioSourceId,
+  DisplayZoneId,
   PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
   SceneTrigger,
   VisualId,
+  VirtualOutputId,
 } from './types';
 
 export function computeSceneNumbers(sceneOrder: SceneId[]): Record<SceneId, number> {
@@ -128,6 +130,121 @@ export function validateTriggerReferences(stream: PersistedStreamConfig): string
   if (hasTriggerCycle(stream)) {
     messages.push('Trigger dependency graph contains a cycle');
   }
+  return messages;
+}
+
+export function validateStreamContent(
+  stream: PersistedStreamConfig,
+  context: {
+    visuals?: ReadonlySet<VisualId>;
+    audioSources?: ReadonlySet<AudioSourceId>;
+    outputs?: ReadonlySet<VirtualOutputId>;
+    displayZones?: ReadonlyMap<string, ReadonlySet<DisplayZoneId>>;
+  } = {},
+): string[] {
+  const messages: string[] = [];
+  if (stream.sceneOrder.length === 0) {
+    messages.push('Stream must contain at least one scene');
+  }
+
+  for (const sceneId of stream.sceneOrder) {
+    const scene = stream.scenes[sceneId];
+    if (!scene) {
+      continue;
+    }
+    if (scene.loop.enabled) {
+      const start = scene.loop.range?.startMs;
+      const end = scene.loop.range?.endMs;
+      if (start !== undefined && start < 0) {
+        messages.push(`Scene ${sceneId} has negative loop start`);
+      }
+      if (end !== undefined && end < 0) {
+        messages.push(`Scene ${sceneId} has negative loop end`);
+      }
+      if (start !== undefined && end !== undefined && end <= start) {
+        messages.push(`Scene ${sceneId} has invalid loop range`);
+      }
+      if (scene.loop.iterations.type === 'count' && scene.loop.iterations.count <= 0) {
+        messages.push(`Scene ${sceneId} has non-positive loop count`);
+      }
+    }
+    if (scene.preload.leadTimeMs !== undefined && scene.preload.leadTimeMs < 0) {
+      messages.push(`Scene ${sceneId} has negative preload lead time`);
+    }
+
+    const seenSubCues = new Set<string>();
+    for (const subCueId of scene.subCueOrder) {
+      if (seenSubCues.has(subCueId)) {
+        messages.push(`Scene ${sceneId} has duplicate sub-cue id in order: ${subCueId}`);
+      }
+      seenSubCues.add(subCueId);
+      const subCue = scene.subCues[subCueId];
+      if (!subCue) {
+        messages.push(`Scene ${sceneId} references missing sub-cue: ${subCueId}`);
+        continue;
+      }
+      if (subCue.id !== subCueId) {
+        messages.push(`Scene ${sceneId} sub-cue record id mismatch for ${subCueId}`);
+      }
+      if ('startOffsetMs' in subCue && subCue.startOffsetMs !== undefined && subCue.startOffsetMs < 0) {
+        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has negative start offset`);
+      }
+      if ('durationOverrideMs' in subCue && subCue.durationOverrideMs !== undefined && subCue.durationOverrideMs < 0) {
+        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has negative duration override`);
+      }
+      if ('playbackRate' in subCue && subCue.playbackRate !== undefined && subCue.playbackRate <= 0) {
+        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has non-positive playback rate`);
+      }
+      if (subCue.kind === 'audio') {
+        if (context.audioSources && !context.audioSources.has(subCue.audioSourceId)) {
+          messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing audio source ${subCue.audioSourceId}`);
+        }
+        if (subCue.outputIds.length === 0) {
+          messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} has no output targets`);
+        }
+        for (const outputId of subCue.outputIds) {
+          if (context.outputs && !context.outputs.has(outputId)) {
+            messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing output ${outputId}`);
+          }
+        }
+      } else if (subCue.kind === 'visual') {
+        if (context.visuals && !context.visuals.has(subCue.visualId)) {
+          messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing visual ${subCue.visualId}`);
+        }
+        if (subCue.targets.length === 0) {
+          messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} has no display targets`);
+        }
+        for (const target of subCue.targets) {
+          const zone = target.zoneId ?? 'single';
+          const available = context.displayZones?.get(target.displayId);
+          if (context.displayZones && !available) {
+            messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing display ${target.displayId}`);
+          } else if (available && !available.has(zone)) {
+            messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing display zone ${target.displayId}:${zone}`);
+          }
+        }
+      } else if (subCue.kind === 'control') {
+        const action = subCue.action;
+        if ('sceneId' in action && !stream.scenes[action.sceneId]) {
+          messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing scene ${action.sceneId}`);
+        }
+        if ('subCueRef' in action) {
+          const refScene = stream.scenes[action.subCueRef.sceneId];
+          if (!refScene) {
+            messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing scene ${action.subCueRef.sceneId}`);
+          } else if (!refScene.subCues[action.subCueRef.subCueId]) {
+            messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing sub-cue ${action.subCueRef.subCueId}`);
+          }
+        }
+      }
+    }
+    for (const subCueId of Object.keys(scene.subCues)) {
+      if (!seenSubCues.has(subCueId)) {
+        messages.push(`Scene ${sceneId} sub-cue ${subCueId} is not listed in subCueOrder`);
+      }
+    }
+  }
+
   return messages;
 }
 

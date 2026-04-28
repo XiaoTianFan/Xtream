@@ -18,6 +18,7 @@ import {
   migrateV7ToV8,
   readRecentShows,
   readShowConfig,
+  validateShowConfigMedia,
   validateRuntimeState,
   writeJsonFile,
   writeShowConfig,
@@ -130,6 +131,37 @@ describe('show config persistence helpers', () => {
   it('migrates schema v7 to v8 and rejects unsupported versions', () => {
     expect(assertShowConfig(configV7)).toEqual(config);
     expect(() => assertShowConfig({ ...configV7, schemaVersion: 2 })).toThrow(/schema versions 3 through 8/i);
+  });
+
+  it('normalizes legacy v8 streams records to the single stream field', () => {
+    const { stream, ...rest } = config;
+    const legacy = {
+      ...rest,
+      streams: { [stream.id]: stream },
+      activeStreamId: stream.id,
+    };
+    expect(assertShowConfig(legacy)).toEqual(config);
+  });
+
+  it('validates stream media and target references in show files', () => {
+    const invalid = structuredClone(config);
+    invalid.stream.scenes['scene-1'].subCueOrder = ['bad-visual'];
+    invalid.stream.scenes['scene-1'].subCues = {
+      'bad-visual': {
+        id: 'bad-visual',
+        kind: 'visual',
+        visualId: 'missing-visual',
+        targets: [{ displayId: 'display-0', zoneId: 'R' }],
+        playbackRate: 0,
+      },
+    };
+    expect(validateShowConfigMedia(invalid)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: 'stream:stream-main', message: expect.stringContaining('missing visual') }),
+        expect.objectContaining({ target: 'stream:stream-main', message: expect.stringContaining('missing display zone display-0:R') }),
+        expect.objectContaining({ target: 'stream:stream-main', message: expect.stringContaining('non-positive playback rate') }),
+      ]),
+    );
   });
 
   it('migrates schema v5 outputs to v6 with centered pan for bus and each source', () => {

@@ -7,7 +7,6 @@ import {
   getPreviewVisualIds,
 } from './displayPreview';
 import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
-import { patchElements as elements } from './elements';
 import { formatMilliseconds } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
 
@@ -20,6 +19,10 @@ export type DisplayWorkspaceController = {
   createMappingControls: (display: DisplayWindowState, visualIds: VisualId[], enabled?: boolean) => HTMLDivElement;
 };
 
+export type DisplayWorkspaceElements = {
+  displayList: HTMLDivElement;
+};
+
 type DisplayWorkspaceControllerOptions = {
   getState: () => DirectorState | undefined;
   isSelected: (type: SelectedEntity['type'], id: string) => boolean;
@@ -28,7 +31,7 @@ type DisplayWorkspaceControllerOptions = {
   renderState: (state: DirectorState) => void;
 };
 
-export function createDisplayWorkspaceController(options: DisplayWorkspaceControllerOptions): DisplayWorkspaceController {
+export function createDisplayWorkspaceController(elements: DisplayWorkspaceElements, options: DisplayWorkspaceControllerOptions): DisplayWorkspaceController {
   function render(displays: DisplayWindowState[]): void {
     elements.displayList.replaceChildren(
       ...displays.map((display) => {

@@ -38,12 +38,12 @@ describe('v7 to v8 migration', () => {
     };
     const v8 = migrateV7ToV8(v7);
     expect(v8.schemaVersion).toBe(8);
-    expect(v8.patchCompatibility.scene.subCues['patch-vis-disp-1-split-left']).toMatchObject({
+    expect(v8.patchCompatibility.scene.subCues['patch-vis-disp-1-L']).toMatchObject({
       kind: 'visual',
       visualId: 'v1',
-      targets: [{ displayId: 'disp-1', zoneId: 'split-left' }],
+      targets: [{ displayId: 'disp-1', zoneId: 'L' }],
     });
-    expect(v8.streams['stream-main']?.sceneOrder).toContain('scene-1');
+    expect(v8.stream.sceneOrder).toContain('scene-1');
   });
 
   it('round-trips native v8 through assertShowConfig', () => {

@@ -59,7 +59,7 @@ describe('Patch compatibility projection', () => {
         },
       },
       displays: [{ id: 'disp-1', layout: { type: 'single' as const, visualId: 'wrong' }, fullscreen: false }],
-      streams: {},
+      stream: { id: 'stream-main', label: 'Main Stream', sceneOrder: [], scenes: {} },
       patchCompatibility: { scene },
     };
     const merged = mergeShowConfigPatchRouting(v8);

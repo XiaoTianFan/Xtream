@@ -1,6 +1,5 @@
 import type { AudioSourceState, DirectorState, LiveDesktopSourceSummary, VisualId, VisualState } from '../../../shared/types';
 import { createButton, createHint } from '../shared/dom';
-import { patchElements as elements } from './elements';
 import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
@@ -17,6 +16,17 @@ export type MediaPoolController = {
   install: () => void;
 };
 
+export type MediaPoolElements = {
+  mediaPoolPanel: HTMLElement;
+  visualList: HTMLDivElement;
+  audioPanel: HTMLDivElement;
+  visualTabButton: HTMLButtonElement;
+  audioTabButton: HTMLButtonElement;
+  poolSearchInput: HTMLInputElement;
+  poolSortSelect: HTMLSelectElement;
+  addVisualsButton: HTMLButtonElement;
+};
+
 type MediaPoolControllerOptions = {
   getState: () => DirectorState | undefined;
   setSelectedEntity: (entity: SelectedEntity | undefined) => void;
@@ -30,7 +40,7 @@ type MediaPoolControllerOptions = {
   extractEmbeddedAudioFile: (visualId: VisualId) => Promise<void>;
 };
 
-export function createMediaPoolController(options: MediaPoolControllerOptions): MediaPoolController {
+export function createMediaPoolController(elements: MediaPoolElements, options: MediaPoolControllerOptions): MediaPoolController {
   let activePoolTab: PoolTab = 'visuals';
   let poolSearchQuery = '';
   let poolSort: PoolSort = 'label';

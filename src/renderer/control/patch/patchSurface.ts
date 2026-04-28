@@ -49,11 +49,11 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     setShowStatus: options.setShowStatus,
   });
 
-  const assetPreview = createAssetPreviewController({
+  const assetPreview = createAssetPreviewController(elements, {
     reportVisualMetadataFromVideo: embeddedAudioImport.reportVisualMetadataFromVideo,
   });
 
-  const displayWorkspace = createDisplayWorkspaceController({
+  const displayWorkspace = createDisplayWorkspaceController(elements, {
     getState: () => currentState,
     isSelected,
     selectEntity,
@@ -64,7 +64,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
   let refreshDetailsPane = (state: DirectorState) => {
     detailsPane.render(state, true);
   };
-  const mixerPanel = createMixerPanelController({
+  const mixerPanel = createMixerPanelController(elements, {
     getState: () => currentState,
     getAudioDevices: options.getAudioDevices,
     isSelected,
@@ -98,7 +98,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     detailsPane.render(state, true);
   };
 
-  const mediaPool = createMediaPoolController({
+  const mediaPool = createMediaPoolController(elements, {
     getState: () => currentState,
     setSelectedEntity: (entity) => {
       selectedEntity = entity;

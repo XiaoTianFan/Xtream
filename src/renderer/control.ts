@@ -86,11 +86,19 @@ const patchSurface = createPatchSurfaceController({
 
 clearPatchSelection = patchSurface.clearSelection;
 
+const streamSurface = createStreamSurfaceController({
+  getAudioDevices: () => audioDevices,
+  getDisplayMonitors: () => displayMonitors,
+  renderState,
+  setShowStatus,
+  showActions,
+});
+
 const surfaceRouter = createSurfaceRouter({
   getCurrentState: () => currentState,
   surfaces: [
     patchSurface,
-    createStreamSurfaceController(),
+    streamSurface,
     createPerformanceSurfaceController(),
     createConfigSurfaceController({ renderState, setShowStatus, showActions }),
     createLogsSurfaceController({
@@ -159,6 +167,7 @@ window.xtream.audioRuntime.onMeterLanes((report) => {
     };
   }
   patchSurface.applyOutputMeterReport(report);
+  streamSurface.applyOutputMeterReport(report);
 });
 void window.xtream.renderer.ready({ kind: 'control' });
 void launchDashboard.load();
@@ -169,6 +178,7 @@ void window.xtream.director.getState().then(renderState);
 animationFrame = window.requestAnimationFrame(tick);
 previewSyncTimer = window.setInterval(() => {
   patchSurface.syncPreviewElements();
+  streamSurface.syncPreviewElements();
 }, DISPLAY_PREVIEW_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {

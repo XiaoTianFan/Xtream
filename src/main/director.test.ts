@@ -613,7 +613,7 @@ describe('Director', () => {
           }),
         }),
       },
-      streams: expect.any(Object),
+      stream: expect.objectContaining({ id: 'stream-main' }),
     });
   });
 

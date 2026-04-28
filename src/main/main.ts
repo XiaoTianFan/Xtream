@@ -157,7 +157,7 @@ function sendStreamState(window: BrowserWindow | undefined, state: StreamEngineP
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
     return;
   }
-  window.webContents.send('streams:state', state);
+  window.webContents.send('stream:state', state);
 }
 
 function broadcastStreamState(state: StreamEnginePublicState): void {
@@ -1073,13 +1073,13 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('streams:get-state', () => streamEngine.getPublicState());
-  ipcMain.handle('streams:edit', (_event, command: StreamEditCommand) => {
+  ipcMain.handle('stream:get-state', () => streamEngine.getPublicState());
+  ipcMain.handle('stream:edit', (_event, command: StreamEditCommand) => {
     const state = streamEngine.applyEdit(command);
     scheduleShowConfigAutoSave();
     return state;
   });
-  ipcMain.handle('streams:transport', (_event, command: StreamCommand) => {
+  ipcMain.handle('stream:transport', (_event, command: StreamCommand) => {
     const state = streamEngine.applyTransport(command);
     scheduleShowConfigAutoSave();
     return state;

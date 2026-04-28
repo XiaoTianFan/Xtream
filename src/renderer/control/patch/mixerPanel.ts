@@ -20,7 +20,6 @@ import {
   quantizeBusFaderDb,
 } from '../meters/busFaderLaw';
 import { createButton, createDbFader, createHint, createPanKnob, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
-import { patchElements as elements } from './elements';
 import { formatAudioChannelLabel } from '../shared/formatters';
 import {
   labelCountFromHeight,
@@ -45,6 +44,10 @@ export type MixerPanelController = {
   createOutputSourceControls: (output: VirtualOutputState, state: DirectorState) => HTMLElement;
 };
 
+export type MixerPanelElements = {
+  outputPanel: HTMLDivElement;
+};
+
 type MixerPanelControllerOptions = {
   getState: () => DirectorState | undefined;
   getAudioDevices: () => MediaDeviceInfo[];
@@ -55,7 +58,7 @@ type MixerPanelControllerOptions = {
   refreshDetails: (state: DirectorState) => void;
 };
 
-export function createMixerPanelController(options: MixerPanelControllerOptions): MixerPanelController {
+export function createMixerPanelController(elements: MixerPanelElements, options: MixerPanelControllerOptions): MixerPanelController {
   let soloOutputIds = new Set<VirtualOutputId>();
   const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
   const meterLaneElementCache = new Map<string, Set<HTMLElement>>();
@@ -120,7 +123,7 @@ export function createMixerPanelController(options: MixerPanelControllerOptions)
   }
 
   function syncSelection(selectedEntity: SelectedEntity | undefined): void {
-    document.querySelectorAll<HTMLElement>('[data-output-strip]').forEach((strip) => {
+    elements.outputPanel.querySelectorAll<HTMLElement>('[data-output-strip]').forEach((strip) => {
       strip.classList.toggle('selected', selectedEntity?.type === 'output' && selectedEntity.id === strip.dataset.outputStrip);
     });
   }

@@ -682,7 +682,7 @@ export class Director extends EventEmitter {
 
   createShowConfig(
     savedAt = new Date().toISOString(),
-    streamPersistence: Pick<PersistedShowConfigV8, 'streams' | 'activeStreamId'> = getDefaultStreamPersistence(),
+    streamPersistence: Pick<PersistedShowConfigV8, 'stream'> = getDefaultStreamPersistence(),
   ): PersistedShowConfig {
     const displays: PersistedDisplayConfigV8[] = Object.values(this.state.displays).map((display) => {
       const mingle = this.displayPersistMeta.get(display.id)?.visualMingle;
@@ -709,8 +709,7 @@ export class Director extends EventEmitter {
       audioExtractionFormat: this.state.audioExtractionFormat,
       globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,
       globalDisplayBlackoutFadeOutSeconds: this.state.globalDisplayBlackoutFadeOutSeconds,
-      streams: structuredClone(streamPersistence.streams),
-      activeStreamId: streamPersistence.activeStreamId,
+      stream: structuredClone(streamPersistence.stream),
       patchCompatibility: { scene: patchScene },
       visuals: Object.fromEntries(
         Object.values(this.state.visuals).map((visual) => [

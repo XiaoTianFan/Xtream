@@ -15,15 +15,19 @@ import type {
   SubCueId,
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
-import { estimateLinearManualStreamDurationMs, validateStreamStructure, validateTriggerReferences } from '../shared/streamSchedule';
+import {
+  estimateLinearManualStreamDurationMs,
+  validateStreamContent,
+  validateStreamStructure,
+  validateTriggerReferences,
+} from '../shared/streamSchedule';
 
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString('hex')}`;
 }
 
 export class StreamEngine extends EventEmitter {
-  private streams: Record<StreamId, PersistedStreamConfig> = {};
-  private activeStreamId: StreamId | undefined;
+  private stream: PersistedStreamConfig = getDefaultStreamPersistence().stream;
   private runtime: StreamRuntimeState | null = null;
   private validationMessages: string[] = [];
 
@@ -32,12 +36,11 @@ export class StreamEngine extends EventEmitter {
   }
 
   isStreamPlaybackActive(): boolean {
-    return this.runtime !== null && (this.runtime.status === 'running' || this.runtime.status === 'preloading');
+    return this.runtime !== null && (this.runtime.status === 'running' || this.runtime.status === 'preloading' || this.runtime.status === 'paused');
   }
 
-  loadFromShow(config: { streams: Record<StreamId, PersistedStreamConfig>; activeStreamId?: StreamId }): void {
-    this.streams = structuredClone(config.streams);
-    this.activeStreamId = config.activeStreamId ?? Object.keys(this.streams)[0];
+  loadFromShow(config: { stream: PersistedStreamConfig }): void {
+    this.stream = structuredClone(config.stream);
     this.runtime = null;
     this.revalidate();
     this.emitState();
@@ -45,20 +48,18 @@ export class StreamEngine extends EventEmitter {
 
   resetToDefault(): void {
     const d = getDefaultStreamPersistence();
-    this.loadFromShow({ streams: structuredClone(d.streams), activeStreamId: d.activeStreamId });
+    this.loadFromShow({ stream: structuredClone(d.stream) });
   }
 
-  getPersistence(): Pick<PersistedShowConfigV8, 'streams' | 'activeStreamId'> {
+  getPersistence(): Pick<PersistedShowConfigV8, 'stream'> {
     return {
-      streams: structuredClone(this.streams),
-      activeStreamId: this.activeStreamId,
+      stream: structuredClone(this.stream),
     };
   }
 
   getPublicState(): StreamEnginePublicState {
     return {
-      activeStreamId: this.activeStreamId,
-      streams: structuredClone(this.streams),
+      stream: structuredClone(this.stream),
       runtime: this.runtime ? structuredClone(this.runtime) : null,
       validationMessages: [...this.validationMessages],
     };
@@ -66,58 +67,34 @@ export class StreamEngine extends EventEmitter {
 
   applyEdit(command: StreamEditCommand): StreamEnginePublicState {
     switch (command.type) {
-      case 'create-stream': {
-        const id = newId('stream') as StreamId;
-        const firstSceneId = newId('scene') as SceneId;
-        this.streams[id] = {
-          id,
-          label: command.label?.trim() || 'Stream',
-          sceneOrder: [firstSceneId],
-          scenes: { [firstSceneId]: createEmptyUserScene(firstSceneId, 'Scene 1') },
-        };
-        this.activeStreamId = id;
-        break;
-      }
       case 'update-stream': {
-        const stream = this.streams[command.streamId];
-        if (!stream) {
-          break;
-        }
         if (command.label !== undefined) {
-          stream.label = command.label;
-        }
-        if (command.active) {
-          this.activeStreamId = command.streamId;
+          this.stream.label = command.label;
         }
         break;
       }
       case 'create-scene': {
-        const stream = this.streams[command.streamId];
-        if (!stream) {
-          break;
-        }
         const sceneId = newId('scene') as SceneId;
-        const scene = createEmptyUserScene(sceneId, `Scene ${stream.sceneOrder.length + 1}`);
+        const scene = createEmptyUserScene(sceneId, `Scene ${this.stream.sceneOrder.length + 1}`);
         if (command.trigger) {
           scene.trigger = command.trigger;
         }
         if (command.afterSceneId !== undefined) {
-          const idx = stream.sceneOrder.indexOf(command.afterSceneId);
+          const idx = this.stream.sceneOrder.indexOf(command.afterSceneId);
           if (idx >= 0) {
-            stream.sceneOrder.splice(idx + 1, 0, sceneId);
+            this.stream.sceneOrder.splice(idx + 1, 0, sceneId);
           } else {
-            stream.sceneOrder.push(sceneId);
+            this.stream.sceneOrder.push(sceneId);
           }
         } else {
-          stream.sceneOrder.push(sceneId);
+          this.stream.sceneOrder.push(sceneId);
         }
-        stream.scenes[sceneId] = scene;
+        this.stream.scenes[sceneId] = scene;
         break;
       }
       case 'update-scene': {
-        const stream = this.streams[command.streamId];
-        const scene = stream?.scenes[command.sceneId];
-        if (!stream || !scene) {
+        const scene = this.stream.scenes[command.sceneId];
+        if (!scene) {
           break;
         }
         const { subCues, subCueOrder, id: _id, ...rest } = command.update;
@@ -131,9 +108,8 @@ export class StreamEngine extends EventEmitter {
         break;
       }
       case 'duplicate-scene': {
-        const stream = this.streams[command.streamId];
-        const source = stream?.scenes[command.sceneId];
-        if (!stream || !source) {
+        const source = this.stream.scenes[command.sceneId];
+        if (!source) {
           break;
         }
         const sceneId = newId('scene') as SceneId;
@@ -155,37 +131,28 @@ export class StreamEngine extends EventEmitter {
           subCueOrder,
           subCues,
         };
-        const idx = stream.sceneOrder.indexOf(command.sceneId);
+        const idx = this.stream.sceneOrder.indexOf(command.sceneId);
         if (idx >= 0) {
-          stream.sceneOrder.splice(idx + 1, 0, sceneId);
+          this.stream.sceneOrder.splice(idx + 1, 0, sceneId);
         } else {
-          stream.sceneOrder.push(sceneId);
+          this.stream.sceneOrder.push(sceneId);
         }
-        stream.scenes[sceneId] = copy;
+        this.stream.scenes[sceneId] = copy;
         break;
       }
       case 'remove-scene': {
-        const stream = this.streams[command.streamId];
-        if (!stream) {
-          break;
-        }
-        stream.sceneOrder = stream.sceneOrder.filter((id) => id !== command.sceneId);
-        delete stream.scenes[command.sceneId];
+        this.stream.sceneOrder = this.stream.sceneOrder.filter((id) => id !== command.sceneId);
+        delete this.stream.scenes[command.sceneId];
         break;
       }
       case 'reorder-scenes': {
-        const stream = this.streams[command.streamId];
-        if (!stream) {
-          break;
-        }
-        stream.sceneOrder = [...command.sceneOrder];
+        this.stream.sceneOrder = [...command.sceneOrder];
         break;
       }
       case 'update-subcue': {
-        const stream = this.streams[command.streamId];
-        const scene = stream?.scenes[command.sceneId];
+        const scene = this.stream.scenes[command.sceneId];
         const sub = scene?.subCues[command.subCueId];
-        if (!stream || !scene || !sub) {
+        if (!scene || !sub) {
           break;
         }
         Object.assign(sub, command.update);
@@ -200,23 +167,16 @@ export class StreamEngine extends EventEmitter {
   }
 
   applyTransport(command: StreamCommand): StreamEnginePublicState {
-    const stream = this.streams[command.streamId];
-    if (!stream) {
-      return this.getPublicState();
-    }
-    if (command.type !== 'stop' && command.streamId !== this.activeStreamId) {
-      return this.getPublicState();
-    }
     if (this.director.isPatchTransportPlaying() && command.type !== 'stop') {
       return this.getPublicState();
     }
 
     switch (command.type) {
       case 'go':
-        this.handleGo(stream, command.sceneId);
+        this.handleGo(command.sceneId);
         break;
       case 'pause':
-        if (this.runtime && this.runtime.streamId === command.streamId) {
+        if (this.runtime) {
           this.runtime.status = 'paused';
           for (const id of Object.keys(this.runtime.sceneStates)) {
             const st = this.runtime.sceneStates[id];
@@ -227,7 +187,7 @@ export class StreamEngine extends EventEmitter {
         }
         break;
       case 'resume':
-        if (this.runtime && this.runtime.streamId === command.streamId && this.runtime.status === 'paused') {
+        if (this.runtime && this.runtime.status === 'paused') {
           this.runtime.status = 'running';
           for (const id of Object.keys(this.runtime.sceneStates)) {
             const st = this.runtime.sceneStates[id];
@@ -238,16 +198,13 @@ export class StreamEngine extends EventEmitter {
         }
         break;
       case 'stop':
-        if (this.runtime?.streamId === command.streamId) {
-          this.runtime = null;
-        }
+        this.runtime = null;
         break;
       case 'jump-next':
-        this.handleJumpNext(stream);
+        this.handleJumpNext();
         break;
       case 'back-to-first':
-        this.runtime = null;
-        this.handleGo(stream);
+        this.handleBackToFirst();
         break;
       default:
         break;
@@ -257,14 +214,13 @@ export class StreamEngine extends EventEmitter {
     return this.getPublicState();
   }
 
-  private handleGo(stream: PersistedStreamConfig, sceneId?: SceneId): void {
+  private handleGo(sceneId?: SceneId): void {
     const target =
-      sceneId && stream.scenes[sceneId] && !stream.scenes[sceneId].disabled
+      sceneId && this.stream.scenes[sceneId] && !this.stream.scenes[sceneId].disabled
         ? sceneId
-        : stream.sceneOrder.find((id) => !stream.scenes[id]?.disabled);
+        : this.stream.sceneOrder.find((id) => !this.stream.scenes[id]?.disabled);
     if (!target) {
       this.runtime = {
-        streamId: stream.id,
         status: 'complete',
         sceneStates: {},
       };
@@ -272,8 +228,8 @@ export class StreamEngine extends EventEmitter {
     }
 
     const sceneStates: Record<SceneId, SceneRuntimeState> = {};
-    for (const id of stream.sceneOrder) {
-      const sc = stream.scenes[id];
+    for (const id of this.stream.sceneOrder) {
+      const sc = this.stream.scenes[id];
       if (!sc || sc.disabled) {
         sceneStates[id] = { sceneId: id, status: 'disabled' };
       } else if (id === target) {
@@ -285,21 +241,38 @@ export class StreamEngine extends EventEmitter {
 
     const wall = Date.now();
     this.runtime = {
-      streamId: stream.id,
       status: 'running',
       originWallTimeMs: wall,
       cursorSceneId: target,
       sceneStates,
-      expectedDurationMs: estimateLinearManualStreamDurationMs(stream, {}, {}) ?? undefined,
+      expectedDurationMs: estimateLinearManualStreamDurationMs(this.stream, ...this.getDurationMaps()) ?? undefined,
     };
   }
 
-  private handleJumpNext(stream: PersistedStreamConfig): void {
-    if (!this.runtime || this.runtime.streamId !== stream.id || !this.runtime.cursorSceneId) {
+  private handleBackToFirst(): void {
+    const target = this.stream.sceneOrder.find((id) => !this.stream.scenes[id]?.disabled);
+    const sceneStates: Record<SceneId, SceneRuntimeState> = {};
+    for (const id of this.stream.sceneOrder) {
+      const sc = this.stream.scenes[id];
+      sceneStates[id] = {
+        sceneId: id,
+        status: !sc || sc.disabled ? 'disabled' : 'ready',
+      };
+    }
+    this.runtime = {
+      status: target ? 'idle' : 'complete',
+      cursorSceneId: target,
+      sceneStates,
+      expectedDurationMs: estimateLinearManualStreamDurationMs(this.stream, ...this.getDurationMaps()) ?? undefined,
+    };
+  }
+
+  private handleJumpNext(): void {
+    if (!this.runtime || !this.runtime.cursorSceneId) {
       return;
     }
     const cur = this.runtime.cursorSceneId;
-    const idx = stream.sceneOrder.indexOf(cur);
+    const idx = this.stream.sceneOrder.indexOf(cur);
     if (idx < 0) {
       return;
     }
@@ -308,7 +281,7 @@ export class StreamEngine extends EventEmitter {
       curState.status = 'complete';
       curState.endedAtStreamMs = 0;
     }
-    const next = stream.sceneOrder.slice(idx + 1).find((id) => !stream.scenes[id]?.disabled);
+    const next = this.stream.sceneOrder.slice(idx + 1).find((id) => !this.stream.scenes[id]?.disabled);
     if (!next) {
       this.runtime.status = 'complete';
       this.runtime.cursorSceneId = undefined;
@@ -324,14 +297,43 @@ export class StreamEngine extends EventEmitter {
 
   private revalidate(): void {
     const messages: string[] = [];
-    const stream = this.activeStreamId ? this.streams[this.activeStreamId] : undefined;
-    if (!stream) {
-      messages.push('No active stream');
-    } else {
-      messages.push(...validateStreamStructure(stream));
-      messages.push(...validateTriggerReferences(stream));
-    }
+    messages.push(...validateStreamStructure(this.stream));
+    messages.push(...validateTriggerReferences(this.stream));
+    messages.push(...validateStreamContent(this.stream, this.getValidationContext()));
     this.validationMessages = messages;
+  }
+
+  private getDurationMaps(): [Record<string, number>, Record<string, number>] {
+    const getState = (this.director as unknown as { getState?: Director['getState'] }).getState;
+    if (!getState) {
+      return [{}, {}];
+    }
+    const state = getState.call(this.director);
+    return [
+      Object.fromEntries(Object.values(state.visuals).flatMap((visual) => (visual.durationSeconds !== undefined ? [[visual.id, visual.durationSeconds]] : []))),
+      Object.fromEntries(
+        Object.values(state.audioSources).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds]] : [])),
+      ),
+    ];
+  }
+
+  private getValidationContext(): Parameters<typeof validateStreamContent>[1] {
+    const getState = (this.director as unknown as { getState?: Director['getState'] }).getState;
+    if (!getState) {
+      return {};
+    }
+    const state = getState.call(this.director);
+    return {
+      visuals: new Set(Object.keys(state.visuals)),
+      audioSources: new Set(Object.keys(state.audioSources)),
+      outputs: new Set(Object.keys(state.outputs)),
+      displayZones: new Map(
+        Object.values(state.displays).map((display) => [
+          display.id,
+          new Set(display.layout.type === 'split' ? ['L', 'R'] : ['single']),
+        ]),
+      ),
+    };
   }
 
   private emitState(): void {

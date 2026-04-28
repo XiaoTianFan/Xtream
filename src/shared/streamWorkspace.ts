@@ -61,7 +61,7 @@ export function createEmptyUserScene(id: SceneId, title: string): PersistedScene
   };
 }
 
-export function getDefaultStreamPersistence(): Pick<PersistedShowConfigV8, 'streams' | 'activeStreamId'> {
+export function getDefaultStreamPersistence(): Pick<PersistedShowConfigV8, 'stream'> {
   const firstScene = createEmptyUserScene(SCENE_FIRST_ID, 'Scene 1');
   const mainStream: PersistedStreamConfig = {
     id: STREAM_MAIN_ID,
@@ -70,8 +70,7 @@ export function getDefaultStreamPersistence(): Pick<PersistedShowConfigV8, 'stre
     scenes: { [SCENE_FIRST_ID]: firstScene },
   };
   return {
-    streams: { [STREAM_MAIN_ID]: mainStream },
-    activeStreamId: STREAM_MAIN_ID,
+    stream: mainStream,
   };
 }
 
@@ -106,8 +105,8 @@ export function buildPatchCompatibilityScene(
       }
     } else {
       const zones = [
-        { zone: 'split-left' as const, visualId: layout.visualIds[0] },
-        { zone: 'split-right' as const, visualId: layout.visualIds[1] },
+        { zone: 'L' as const, visualId: layout.visualIds[0] },
+        { zone: 'R' as const, visualId: layout.visualIds[1] },
       ];
       for (const { zone, visualId } of zones) {
         if (visualId) {
@@ -190,12 +189,12 @@ export function applyPatchCompatibilitySceneToPersistedRouting(
     if (cue.kind === 'visual') {
       for (const t of cue.targets) {
         const slot = displaySlots.get(t.displayId) ?? {};
-        const zone = t.zoneId ?? 'single';
+        const zone = (t.zoneId ?? 'single') as 'single' | 'L' | 'R' | 'split-left' | 'split-right';
         if (zone === 'single') {
           slot.single = cue.visualId;
-        } else if (zone === 'split-left') {
+        } else if (zone === 'L' || zone === 'split-left') {
           slot.left = cue.visualId;
-        } else if (zone === 'split-right') {
+        } else if (zone === 'R' || zone === 'split-right') {
           slot.right = cue.visualId;
         }
         displaySlots.set(t.displayId, slot);

@@ -3,9 +3,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { toRendererFileUrl } from './fileUrls';
 import { buildPatchCompatibilityScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
+import { validateStreamContent, validateStreamStructure, validateTriggerReferences } from '../shared/streamSchedule';
 import type {
   DiagnosticsReport,
   DirectorState,
+  DisplayZoneId,
   DisplayWindowId,
   MediaValidationIssue,
   PersistedShowConfig,
@@ -161,8 +163,8 @@ function assertV8Fields(candidate: Partial<PersistedShowConfigV8>): void {
   if (candidate.audioExtractionFormat !== 'm4a' && candidate.audioExtractionFormat !== 'wav') {
     throw new Error('Show config is missing or invalid audioExtractionFormat.');
   }
-  if (!candidate.streams || typeof candidate.streams !== 'object') {
-    throw new Error('Show config is missing streams.');
+  if (!candidate.stream && (!('streams' in candidate) || typeof (candidate as { streams?: unknown }).streams !== 'object')) {
+    throw new Error('Show config is missing stream.');
   }
   if (!candidate.patchCompatibility || typeof candidate.patchCompatibility.scene !== 'object') {
     throw new Error('Show config is missing patchCompatibility.scene.');
@@ -198,7 +200,7 @@ export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfi
     displays.map((d) => ({ id: d.id, layout: d.layout })),
     config.outputs,
   );
-  const { streams, activeStreamId } = getDefaultStreamPersistence();
+  const { stream } = getDefaultStreamPersistence();
   return {
     schemaVersion: 8,
     savedAt: config.savedAt,
@@ -210,8 +212,7 @@ export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfi
     audioSources: config.audioSources,
     outputs: config.outputs,
     displays,
-    streams,
-    activeStreamId,
+    stream,
     patchCompatibility: { scene: patchScene, migratedFromSchemaVersion: 7 },
   };
 }
@@ -225,6 +226,16 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   >;
   if (candidate.schemaVersion === 8) {
     assertV8Fields(candidate);
+    const legacyStreams = (candidate as Partial<PersistedShowConfigV8> & { streams?: Record<string, PersistedShowConfigV8['stream']>; activeStreamId?: string }).streams;
+    if (!candidate.stream && legacyStreams) {
+      const active = (candidate as { activeStreamId?: string }).activeStreamId;
+      const stream = (active ? legacyStreams[active] : undefined) ?? Object.values(legacyStreams)[0] ?? getDefaultStreamPersistence().stream;
+      const { streams: _streams, activeStreamId: _activeStreamId, ...rest } = candidate as typeof candidate & {
+        streams?: unknown;
+        activeStreamId?: unknown;
+      };
+      return { ...rest, stream } as PersistedShowConfigV8;
+    }
     return candidate as PersistedShowConfigV8;
   }
   if (
@@ -383,6 +394,28 @@ export function validateShowConfigMedia(config: PersistedShowConfig): MediaValid
         message: `Extracted audio file is missing: ${source.extractedPath}`,
       });
     }
+  }
+  const displayZones = new Map<string, Set<DisplayZoneId>>();
+  for (const display of config.displays) {
+    if (display.id) {
+      displayZones.set(display.id, new Set(display.layout.type === 'split' ? ['L', 'R'] : ['single']));
+    }
+  }
+  for (const message of [
+    ...validateStreamStructure(config.stream),
+    ...validateTriggerReferences(config.stream),
+    ...validateStreamContent(config.stream, {
+      visuals: new Set(Object.keys(config.visuals)),
+      audioSources: new Set(Object.keys(config.audioSources)),
+      outputs: new Set(Object.keys(config.outputs)),
+      displayZones,
+    }),
+  ]) {
+    issues.push({
+      severity: 'error',
+      target: `stream:${config.stream.id}`,
+      message,
+    });
   }
   return issues;
 }
