@@ -27,6 +27,10 @@ import type {
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
+  StreamCommand,
+  StreamEditCommand,
+  StreamEnginePublicState,
+  StreamsEventName,
   TransportCommand,
   VisualId,
   VisualMetadataReport,
@@ -38,6 +42,7 @@ import type {
 } from '../shared/types';
 
 const DIRECTOR_EVENTS = new Set<DirectorEventName>(['director:state']);
+const STREAMS_EVENTS = new Set<StreamsEventName>(['streams:state']);
 
 const api = {
   director: {
@@ -115,6 +120,16 @@ const api = {
       return () => ipcRenderer.removeListener('audio:solo-output-ids', listener);
     },
   },
+  streams: {
+    getState: (): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:get-state'),
+    edit: (command: StreamEditCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:edit', command),
+    transport: (command: StreamCommand): Promise<StreamEnginePublicState> => ipcRenderer.invoke('streams:transport', command),
+    onState: (callback: (state: StreamEnginePublicState) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: StreamEnginePublicState) => callback(state);
+      ipcRenderer.on('streams:state', listener);
+      return () => ipcRenderer.removeListener('streams:state', listener);
+    },
+  },
   show: {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
@@ -135,6 +150,7 @@ const api = {
   },
   events: {
     hasDirectorEvent: (eventName: string): boolean => DIRECTOR_EVENTS.has(eventName as DirectorEventName),
+    hasStreamsEvent: (eventName: string): boolean => STREAMS_EVENTS.has(eventName as StreamsEventName),
   },
   platform: {
     getPathForFile: (file: File): string => webUtils.getPathForFile(file),

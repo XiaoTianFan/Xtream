@@ -7,6 +7,7 @@ let mixerExpandedTemporarily = false;
 
 export function installSplitters(): void {
   applyLayoutPrefs(readLayoutPrefs());
+  window.addEventListener('resize', syncSplitterAria);
   installSplitter(elements.workspaceSplitter, 'x', (delta) => {
     const workspace = elements.workspaceSplitter.parentElement!;
     const current = readLayoutPrefs().mediaWidthPx ?? workspace.querySelector<HTMLElement>('.media-pool')!.getBoundingClientRect().width;
@@ -26,6 +27,57 @@ export function installSplitters(): void {
     const current = readLayoutPrefs().assetPreviewHeightPx ?? elements.assetPreview.getBoundingClientRect().height;
     saveLayoutPrefs({ assetPreviewHeightPx: clamp(current - delta, 110, 320) });
   });
+  syncSplitterAria();
+}
+
+/** Focusable `role="separator"` splitters require aria-valuenow/min/max (ARIA 1.2). */
+export function syncSplitterAria(): void {
+  const workspace = elements.workspaceSplitter.parentElement;
+  const mediaPool = workspace?.querySelector<HTMLElement>('.media-pool');
+  if (workspace && mediaPool) {
+    const frameW = workspace.getBoundingClientRect().width;
+    const minW = 260;
+    const maxW = Math.max(320, frameW - 420);
+    const wNow = clamp(mediaPool.getBoundingClientRect().width, minW, maxW);
+    setSeparatorValue(elements.workspaceSplitter, 'vertical', minW, maxW, wNow);
+  }
+
+  const mainFrame = elements.mainFooterSplitter.parentElement;
+  const footer = mainFrame?.querySelector<HTMLElement>('.operator-footer');
+  if (mainFrame && footer) {
+    const frameH = mainFrame.getBoundingClientRect().height;
+    const minH = 180;
+    const maxH = Math.max(220, frameH - 280);
+    const hNow = clamp(footer.getBoundingClientRect().height, minH, maxH);
+    setSeparatorValue(elements.mainFooterSplitter, 'horizontal', minH, maxH, hNow);
+  }
+
+  const footerRow = elements.footerSplitter.parentElement;
+  const mixer = footerRow?.querySelector<HTMLElement>('.mixer-panel');
+  if (footerRow && mixer) {
+    const minM = 260;
+    const maxM = getMaxMixerWidth();
+    const mNow = clamp(mixer.getBoundingClientRect().width, minM, maxM);
+    setSeparatorValue(elements.footerSplitter, 'vertical', minM, maxM, mNow);
+  }
+
+  const minA = 110;
+  const maxA = 320;
+  const aNow = clamp(elements.assetPreview.getBoundingClientRect().height, minA, maxA);
+  setSeparatorValue(elements.assetPreviewSplitter, 'horizontal', minA, maxA, aNow);
+}
+
+function setSeparatorValue(
+  el: HTMLElement,
+  orientation: 'horizontal' | 'vertical',
+  min: number,
+  max: number,
+  value: number,
+): void {
+  el.setAttribute('aria-orientation', orientation);
+  el.setAttribute('aria-valuemin', String(Math.round(min)));
+  el.setAttribute('aria-valuemax', String(Math.round(max)));
+  el.setAttribute('aria-valuenow', String(Math.round(value)));
 }
 
 function installSplitter(handle: HTMLElement, axis: 'x' | 'y', onDelta: (delta: number) => void): void {
@@ -116,6 +168,7 @@ export function applyLayoutPrefs(prefs: LayoutPrefs): void {
   if (prefs.assetPreviewHeightPx !== undefined) {
     root.style.setProperty('--asset-preview-height', `${prefs.assetPreviewHeightPx}px`);
   }
+  syncSplitterAria();
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { PersistedShowConfig } from '../shared/types';
+import type { PersistedShowConfig, PersistedShowConfigV7 } from '../shared/types';
 import { Director } from './director';
+import { migrateV7ToV8 } from './showConfig';
 
 function addReadyVideo(director: Director, id: string, durationSeconds: number): void {
   director.addVisuals([
@@ -305,7 +306,7 @@ describe('Director', () => {
 
   it('defaults fade durations to one second when a show file omits them', () => {
     const director = new Director(() => 1000);
-    const minimal: PersistedShowConfig = {
+    const minimalV7: PersistedShowConfigV7 = {
       schemaVersion: 7,
       savedAt: '2026-01-01T00:00:00.000Z',
       audioExtractionFormat: 'm4a',
@@ -323,6 +324,7 @@ describe('Director', () => {
       },
       displays: [],
     };
+    const minimal = migrateV7ToV8(minimalV7);
     director.restoreShowConfig(minimal, { visuals: {}, audioSources: {} });
     expect(director.getState().globalAudioMuteFadeOutSeconds).toBe(1);
     expect(director.getState().globalDisplayBlackoutFadeOutSeconds).toBe(1);
@@ -512,7 +514,7 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       audioExtractionFormat: 'm4a',
       visuals: { 'visual-a': { id: 'visual-a', kind: 'file', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
@@ -521,6 +523,15 @@ describe('Director', () => {
           pan: 0,
         },
       },
+      patchCompatibility: {
+        scene: expect.objectContaining({
+          id: 'patch-compat-scene',
+          subCues: expect.objectContaining({
+            'patch-vis-display-0-single': expect.objectContaining({ kind: 'visual', visualId: 'visual-a' }),
+          }),
+        }),
+      },
+      streams: expect.any(Object),
     });
   });
 

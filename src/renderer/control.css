@@ -291,11 +291,13 @@ input[type="range"].mini-slider:disabled {
 .app-frame.extraction-blocked .patch-surface,
 .app-frame.extraction-blocked .surface-panel {
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
 body.extraction-blocked .nav-rail {
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1347,6 +1349,7 @@ body.extraction-blocked .nav-rail {
   font-variant-numeric: tabular-nums;
   color: transparent;
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 

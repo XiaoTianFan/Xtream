@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { toRendererFileUrl } from './fileUrls';
+import { buildPatchCompatibilityScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
 import type {
   DiagnosticsReport,
   DirectorState,
+  DisplayWindowId,
   MediaValidationIssue,
   PersistedShowConfig,
   PersistedShowConfigV3,
@@ -12,6 +14,7 @@ import type {
   PersistedShowConfigV5,
   PersistedShowConfigV6,
   PersistedShowConfigV7,
+  PersistedShowConfigV8,
   RecentShowEntry,
 } from '../shared/types';
 
@@ -133,20 +136,12 @@ function isMissingFileError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
-export function assertShowConfig(value: unknown): PersistedShowConfig {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Show config must be a JSON object.');
-  }
-  const candidate = value as Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7>;
-  if (
-    candidate.schemaVersion !== 3 &&
-    candidate.schemaVersion !== 4 &&
-    candidate.schemaVersion !== 5 &&
-    candidate.schemaVersion !== 6 &&
-    candidate.schemaVersion !== 7
-  ) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 7 only.');
-  }
+function assertCommonShowFields(candidate: {
+  visuals?: unknown;
+  audioSources?: unknown;
+  outputs?: unknown;
+  displays?: unknown;
+}): void {
   if (!candidate.visuals || typeof candidate.visuals !== 'object') {
     throw new Error('Show config is missing visuals.');
   }
@@ -159,6 +154,25 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
   if (!Array.isArray(candidate.displays)) {
     throw new Error('Show config is missing display mappings.');
   }
+}
+
+function assertV8Fields(candidate: Partial<PersistedShowConfigV8>): void {
+  assertCommonShowFields(candidate);
+  if (candidate.audioExtractionFormat !== 'm4a' && candidate.audioExtractionFormat !== 'wav') {
+    throw new Error('Show config is missing or invalid audioExtractionFormat.');
+  }
+  if (!candidate.streams || typeof candidate.streams !== 'object') {
+    throw new Error('Show config is missing streams.');
+  }
+  if (!candidate.patchCompatibility || typeof candidate.patchCompatibility.scene !== 'object') {
+    throw new Error('Show config is missing patchCompatibility.scene.');
+  }
+}
+
+function migrateDiskConfigToV7(
+  candidate: Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7>,
+): PersistedShowConfigV7 {
+  assertCommonShowFields(candidate);
   if (candidate.schemaVersion === 3) {
     return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(candidate as PersistedShowConfigV3))));
   }
@@ -172,6 +186,57 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     return migrateV6ToV7(candidate as PersistedShowConfigV6);
   }
   return candidate as PersistedShowConfigV7;
+}
+
+export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfigV8 {
+  const displays = config.displays.map((d, index) => ({
+    ...d,
+    id: (d.id ?? (`display-${index}` as DisplayWindowId)) as DisplayWindowId,
+  }));
+  const patchScene = buildPatchCompatibilityScene(
+    config.loop,
+    displays.map((d) => ({ id: d.id, layout: d.layout })),
+    config.outputs,
+  );
+  const { streams, activeStreamId } = getDefaultStreamPersistence();
+  return {
+    schemaVersion: 8,
+    savedAt: config.savedAt,
+    rate: config.rate,
+    audioExtractionFormat: config.audioExtractionFormat,
+    globalAudioMuteFadeOutSeconds: config.globalAudioMuteFadeOutSeconds,
+    globalDisplayBlackoutFadeOutSeconds: config.globalDisplayBlackoutFadeOutSeconds,
+    visuals: config.visuals,
+    audioSources: config.audioSources,
+    outputs: config.outputs,
+    displays,
+    streams,
+    activeStreamId,
+    patchCompatibility: { scene: patchScene, migratedFromSchemaVersion: 7 },
+  };
+}
+
+export function assertShowConfig(value: unknown): PersistedShowConfig {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Show config must be a JSON object.');
+  }
+  const candidate = value as Partial<
+    PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7 | PersistedShowConfigV8
+  >;
+  if (candidate.schemaVersion === 8) {
+    assertV8Fields(candidate);
+    return candidate as PersistedShowConfigV8;
+  }
+  if (
+    candidate.schemaVersion !== 3 &&
+    candidate.schemaVersion !== 4 &&
+    candidate.schemaVersion !== 5 &&
+    candidate.schemaVersion !== 6 &&
+    candidate.schemaVersion !== 7
+  ) {
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 8 only.');
+  }
+  return migrateV7ToV8(migrateDiskConfigToV7(candidate));
 }
 
 export function migrateV3ToV4(config: PersistedShowConfigV3): PersistedShowConfigV4 {

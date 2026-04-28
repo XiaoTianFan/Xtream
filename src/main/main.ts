@@ -6,6 +6,7 @@ import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 import { getAppIconPath } from './appIcon';
 import { Director } from './director';
+import { StreamEngine } from './streamEngine';
 import { DisplayRegistry } from './displayRegistry';
 import { toRendererFileUrl } from './fileUrls';
 import {
@@ -46,6 +47,9 @@ import type {
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
+  StreamCommand,
+  StreamEditCommand,
+  StreamEnginePublicState,
   TransportCommand,
   VisualImportItem,
   VisualMediaType,
@@ -57,6 +61,8 @@ import type {
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 
 const director = new Director();
+const streamEngine = new StreamEngine(director);
+director.setStreamPlaybackGate(() => streamEngine.isStreamPlaybackActive());
 
 let controlWindow: BrowserWindow | undefined;
 let audioWindow: BrowserWindow | undefined;
@@ -144,6 +150,21 @@ function broadcastDirectorState(state: DirectorState): void {
   for (const displayWindow of displayRegistry?.getAllWindows() ?? []) {
     sendDirectorState(displayWindow, state);
   }
+}
+
+function sendStreamState(window: BrowserWindow | undefined, state: StreamEnginePublicState): void {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+  window.webContents.send('streams:state', state);
+}
+
+function broadcastStreamState(state: StreamEnginePublicState): void {
+  sendStreamState(controlWindow, state);
+}
+
+function createPersistedShowForDisk(): ReturnType<Director['createShowConfig']> {
+  return director.createShowConfig(new Date().toISOString(), streamEngine.getPersistence());
 }
 
 function sendDirectorState(window: BrowserWindow | undefined, state: DirectorState): void {
@@ -303,7 +324,7 @@ function scheduleShowConfigAutoSave(): void {
     autoSaveTimer = undefined;
     if (currentShowConfigPath) {
       void ensureShowProjectStructure(currentShowConfigPath)
-        .then(() => writeShowConfig(currentShowConfigPath!, director.createShowConfig()))
+        .then(() => writeShowConfig(currentShowConfigPath!, createPersistedShowForDisk()))
         .then(() => {
           hasShowChanges = false;
         })
@@ -323,7 +344,7 @@ function flushShowConfigAutoSave(): void {
   try {
     fs.mkdirSync(path.dirname(currentShowConfigPath), { recursive: true });
     ensureShowProjectStructureSync(currentShowConfigPath);
-    fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(director.createShowConfig(), null, 2)}\n`, 'utf8');
+    fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(createPersistedShowForDisk(), null, 2)}\n`, 'utf8');
     hasShowChanges = false;
   } catch (error: unknown) {
     console.error('Failed to save show config before shutdown.', error);
@@ -417,6 +438,7 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
   }
   currentShowConfigPath = configPath;
   hasShowChanges = false;
+  streamEngine.loadFromShow(config);
   return { state: director.getState(), filePath: currentShowConfigPath, issues };
 }
 
@@ -431,12 +453,13 @@ async function createEmptyShowProject(configPath: string): Promise<void> {
   await ensureShowProjectStructure(currentShowConfigPath);
   displayRegistry?.closeAll();
   director.resetShow();
+  streamEngine.resetToDefault();
   if (!displayRegistry) {
     throw new Error('Display registry is not initialized.');
   }
   const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
   director.registerDisplay(display);
-  await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+  await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
   hasShowChanges = false;
 }
 
@@ -589,7 +612,7 @@ async function promptBeforeCreateShowIfNeeded(): Promise<boolean> {
   if (result.response === 0) {
     currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
     await ensureShowProjectStructure(currentShowConfigPath);
-    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
     hasShowChanges = false;
   }
   return true;
@@ -828,7 +851,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('show:save', async (): Promise<ShowConfigOperationResult> => {
     currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
     await ensureShowProjectStructure(currentShowConfigPath);
-    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
     hasShowChanges = false;
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
@@ -844,7 +867,7 @@ function registerIpcHandlers(): void {
     }
     currentShowConfigPath = result.filePath;
     await ensureShowProjectStructure(currentShowConfigPath);
-    await writeShowConfig(currentShowConfigPath, director.createShowConfig());
+    await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
     hasShowChanges = false;
     await addRecentShow(app.getPath('userData'), currentShowConfigPath);
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
@@ -1044,6 +1067,18 @@ function registerIpcHandlers(): void {
       director.updatePreviewStatus(report);
     }
   });
+
+  ipcMain.handle('streams:get-state', () => streamEngine.getPublicState());
+  ipcMain.handle('streams:edit', (_event, command: StreamEditCommand) => {
+    const state = streamEngine.applyEdit(command);
+    scheduleShowConfigAutoSave();
+    return state;
+  });
+  ipcMain.handle('streams:transport', (_event, command: StreamCommand) => {
+    const state = streamEngine.applyTransport(command);
+    scheduleShowConfigAutoSave();
+    return state;
+  });
 }
 
 app.whenReady().then(() => {
@@ -1066,6 +1101,7 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   installCapturePermissionHandlers();
   director.on('state', (state) => broadcastDirectorState(state));
+  streamEngine.on('state', (streamState) => broadcastStreamState(streamState));
 
   controlWindow = createControlWindow();
   audioWindow = createAudioWindow();

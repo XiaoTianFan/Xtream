@@ -11,8 +11,10 @@ import type {
   DriftReport,
   GlobalStateUpdate,
   LiveVisualCaptureConfig,
+  PersistedDisplayConfigV8,
   ShowSettingsUpdate,
   PersistedShowConfig,
+  PersistedShowConfigV8,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
@@ -29,6 +31,7 @@ import type {
 } from '../shared/types';
 import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
+import { buildPatchCompatibilityScene, getDefaultStreamPersistence, sceneLoopPolicyToLoopState } from '../shared/streamWorkspace';
 import { getDirectorSeconds } from '../shared/timeline';
 
 const DRIFT_WARN_THRESHOLD_SECONDS = 0.05;
@@ -45,12 +48,14 @@ function isExtractionPendingAudioSource(source: AudioSourceState): boolean {
 export class Director extends EventEmitter {
   private state: DirectorState;
   private readonly now: () => number;
+  private streamPlaybackGate: () => boolean = () => false;
   private readonly correctionCounts = new Map<string, number>();
   private readonly lastCorrectionWallTimeMs = new Map<string, number>();
   private correctionRevision = 0;
   private visualSequence = 0;
   private audioSourceSequence = 0;
   private outputSequence = 1;
+  private displayPersistMeta = new Map<DisplayWindowState['id'], Pick<PersistedDisplayConfigV8, 'visualMingle'>>();
 
   constructor(now: () => number = Date.now) {
     super();
@@ -87,6 +92,16 @@ export class Director extends EventEmitter {
       },
       previews: {},
     };
+  }
+
+  /** True when Patch transport is actively playing (not paused). */
+  isPatchTransportPlaying(): boolean {
+    return !this.state.paused;
+  }
+
+  /** Stream engine registers here to block Patch play while Stream playback is active. */
+  setStreamPlaybackGate(gate: () => boolean): void {
+    this.streamPlaybackGate = gate;
   }
 
   getState(): DirectorState {
@@ -445,6 +460,7 @@ export class Director extends EventEmitter {
     this.visualSequence = 0;
     this.audioSourceSequence = 0;
     this.outputSequence = 1;
+    this.displayPersistMeta.clear();
     this.state = {
       paused: true,
       rate: 1,
@@ -659,15 +675,38 @@ export class Director extends EventEmitter {
     return { state, primaryDisplayId: first.id };
   }
 
-  createShowConfig(savedAt = new Date().toISOString()): PersistedShowConfig {
+  createShowConfig(
+    savedAt = new Date().toISOString(),
+    streamPersistence: Pick<PersistedShowConfigV8, 'streams' | 'activeStreamId'> = getDefaultStreamPersistence(),
+  ): PersistedShowConfig {
+    const displays: PersistedDisplayConfigV8[] = Object.values(this.state.displays).map((display) => {
+      const mingle = this.displayPersistMeta.get(display.id)?.visualMingle;
+      return {
+        id: display.id,
+        label: display.label,
+        layout: structuredClone(display.layout),
+        fullscreen: display.fullscreen,
+        alwaysOnTop: display.alwaysOnTop,
+        displayId: display.displayId,
+        bounds: display.bounds,
+        ...(mingle ? { visualMingle: mingle } : {}),
+      };
+    });
+    const patchScene = buildPatchCompatibilityScene(
+      this.state.loop,
+      displays.map((d) => ({ id: d.id!, layout: d.layout })),
+      Object.fromEntries(Object.values(this.state.outputs).map((o) => [o.id, { id: o.id, sources: o.sources }])),
+    );
     return {
-      schemaVersion: 7,
+      schemaVersion: 8,
       savedAt,
       rate: this.state.rate,
       audioExtractionFormat: this.state.audioExtractionFormat,
       globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,
       globalDisplayBlackoutFadeOutSeconds: this.state.globalDisplayBlackoutFadeOutSeconds,
-      loop: structuredClone(this.state.loop),
+      streams: structuredClone(streamPersistence.streams),
+      activeStreamId: streamPersistence.activeStreamId,
+      patchCompatibility: { scene: patchScene },
       visuals: Object.fromEntries(
         Object.values(this.state.visuals).map((visual) => [
           visual.id,
@@ -749,15 +788,7 @@ export class Director extends EventEmitter {
           },
         ]),
       ),
-      displays: Object.values(this.state.displays).map((display) => ({
-        id: display.id,
-        label: display.label,
-        layout: structuredClone(display.layout),
-        fullscreen: display.fullscreen,
-        alwaysOnTop: display.alwaysOnTop,
-        displayId: display.displayId,
-        bounds: display.bounds,
-      })),
+      displays,
     };
   }
 
@@ -778,7 +809,14 @@ export class Director extends EventEmitter {
     );
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
-    this.state.loop = structuredClone(config.loop);
+    this.displayPersistMeta.clear();
+    for (const display of config.displays) {
+      const id = display.id;
+      if (id && display.visualMingle) {
+        this.displayPersistMeta.set(id, { visualMingle: display.visualMingle });
+      }
+    }
+    this.state.loop = sceneLoopPolicyToLoopState(config.patchCompatibility.scene.loop);
     this.state.visuals = Object.fromEntries(
       Object.values(config.visuals).map((visual) => [
         visual.id,
@@ -990,6 +1028,9 @@ export class Director extends EventEmitter {
 
   private play(): void {
     if (!this.state.paused) {
+      return;
+    }
+    if (this.streamPlaybackGate()) {
       return;
     }
     this.state.anchorWallTimeMs = this.now();

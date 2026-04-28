@@ -15,6 +15,7 @@ import {
   migrateV4ToV5,
   migrateV5ToV6,
   migrateV6ToV7,
+  migrateV7ToV8,
   readRecentShows,
   readShowConfig,
   validateRuntimeState,
@@ -23,10 +24,10 @@ import {
 } from './showConfig';
 import { toRendererFileUrl } from './fileUrls';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
-import type { DirectorState, PersistedShowConfig, PersistedShowConfigV5 } from '../shared/types';
+import type { DirectorState, PersistedShowConfig, PersistedShowConfigV5, PersistedShowConfigV7 } from '../shared/types';
 import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 
-const config: PersistedShowConfig = {
+const configV7: PersistedShowConfigV7 = {
   schemaVersion: 7,
   savedAt: '2026-04-26T00:00:00.000Z',
   rate: 1,
@@ -93,6 +94,8 @@ const config: PersistedShowConfig = {
   ],
 };
 
+const config: PersistedShowConfig = migrateV7ToV8(configV7);
+
 function createRuntimeState(): DirectorState {
   return {
     paused: true,
@@ -124,9 +127,9 @@ function createRuntimeState(): DirectorState {
 }
 
 describe('show config persistence helpers', () => {
-  it('validates schema v7 config shape and rejects older versions', () => {
-    expect(assertShowConfig(config)).toEqual(config);
-    expect(() => assertShowConfig({ ...config, schemaVersion: 2 })).toThrow(/schema versions 3 through 7/i);
+  it('migrates schema v7 to v8 and rejects unsupported versions', () => {
+    expect(assertShowConfig(configV7)).toEqual(config);
+    expect(() => assertShowConfig({ ...configV7, schemaVersion: 2 })).toThrow(/schema versions 3 through 8/i);
   });
 
   it('migrates schema v5 outputs to v6 with centered pan for bus and each source', () => {
@@ -164,7 +167,7 @@ describe('show config persistence helpers', () => {
 
   it('migrates schema v6 visuals to schema v7 file visuals', () => {
     const v6 = {
-      ...config,
+      ...configV7,
       schemaVersion: 6,
       visuals: {
         'visual-a': {
@@ -188,7 +191,7 @@ describe('show config persistence helpers', () => {
 
   it('migrates schema v3 configs to schema v4 defaults', () => {
     const v3Config = {
-      ...config,
+      ...configV7,
       schemaVersion: 3,
       visuals: {
         'visual-a': {
@@ -228,7 +231,7 @@ describe('show config persistence helpers', () => {
 
   it('migrates schema v4 embedded audio sources to representation mode in schema v5', () => {
     const v4Config = {
-      ...config,
+      ...configV7,
       schemaVersion: 4,
       audioSources: {
         'audio-source-embedded-visual-a': {

@@ -370,6 +370,160 @@ export type PersistedDisplayConfig = {
   bounds?: DisplayWindowState['bounds'];
 };
 
+/** --- Schema v8: Stream workspace (CueStream) --- */
+
+export type StreamId = string;
+export type SceneId = string;
+export type SubCueId = string;
+
+export type VisualMingleAlgorithm =
+  | 'latest'
+  | 'alpha-over'
+  | 'additive'
+  | 'multiply'
+  | 'screen'
+  | 'lighten'
+  | 'darken'
+  | 'crossfade';
+
+export type PersistedDisplayConfigV8 = PersistedDisplayConfig & {
+  visualMingle?: {
+    algorithm: VisualMingleAlgorithm;
+    defaultTransitionMs?: number;
+  };
+};
+
+export type SceneTrigger =
+  | { type: 'manual' }
+  | { type: 'simultaneous-start'; followsSceneId?: SceneId }
+  | { type: 'follow-end'; followsSceneId?: SceneId }
+  | { type: 'time-offset'; followsSceneId?: SceneId; offsetMs: number }
+  | { type: 'at-timecode'; timecodeMs: number };
+
+export type SceneLoopPolicy =
+  | { enabled: false }
+  | {
+      enabled: true;
+      range?: { startMs: number; endMs?: number };
+      iterations: { type: 'count'; count: number } | { type: 'infinite' };
+    };
+
+export type CurvePoint = {
+  timeMs: number;
+  value: number;
+  interpolation?: 'linear' | 'hold' | 'ease-in' | 'ease-out' | 'equal-power';
+};
+
+export type FadeSpec = {
+  durationMs: number;
+  curve?: 'linear' | 'equal-power' | 'log';
+};
+
+export type DisplayZoneId = 'single' | 'split-left' | 'split-right';
+
+export type VisualDisplayTarget = {
+  displayId: DisplayWindowId;
+  zoneId?: DisplayZoneId;
+};
+
+export type SubCueRef = {
+  streamId?: StreamId;
+  sceneId: SceneId;
+  subCueId: SubCueId;
+};
+
+export type PersistedAudioSubCueConfig = {
+  id: SubCueId;
+  kind: 'audio';
+  audioSourceId: AudioSourceId;
+  outputIds: VirtualOutputId[];
+  startOffsetMs?: number;
+  durationOverrideMs?: number;
+  loop?: SceneLoopPolicy;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  levelDb?: number;
+  pan?: number;
+  levelAutomation?: CurvePoint[];
+  panAutomation?: CurvePoint[];
+  playbackRate?: number;
+};
+
+export type PersistedVisualSubCueConfig = {
+  id: SubCueId;
+  kind: 'visual';
+  visualId: VisualId;
+  targets: VisualDisplayTarget[];
+  startOffsetMs?: number;
+  durationOverrideMs?: number;
+  loop?: SceneLoopPolicy;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  freezeFrameMs?: number;
+  playbackRate?: number;
+};
+
+export type PersistedControlSubCueConfig = {
+  id: SubCueId;
+  kind: 'control';
+  action:
+    | { type: 'stop-scene'; streamId?: StreamId; sceneId: SceneId; fadeOutMs?: number }
+    | { type: 'pause-scene'; streamId?: StreamId; sceneId: SceneId }
+    | { type: 'resume-scene'; streamId?: StreamId; sceneId: SceneId }
+    | {
+        type: 'set-audio-subcue-level';
+        subCueRef: SubCueRef;
+        targetDb: number;
+        durationMs?: number;
+        curve?: FadeSpec['curve'];
+      }
+    | { type: 'set-audio-subcue-pan'; subCueRef: SubCueRef; targetPan: number; durationMs?: number }
+    | { type: 'stop-subcue'; subCueRef: SubCueRef; fadeOutMs?: number }
+    | { type: 'set-global-audio-muted'; muted: boolean; fadeMs?: number }
+    | { type: 'set-global-display-blackout'; blackout: boolean; fadeMs?: number };
+};
+
+export type PersistedSubCueConfig = PersistedAudioSubCueConfig | PersistedVisualSubCueConfig | PersistedControlSubCueConfig;
+
+export type PersistedSceneConfig = {
+  id: SceneId;
+  title?: string;
+  note?: string;
+  disabled?: boolean;
+  trigger: SceneTrigger;
+  loop: SceneLoopPolicy;
+  preload: {
+    enabled: boolean;
+    leadTimeMs?: number;
+  };
+  subCueOrder: SubCueId[];
+  subCues: Record<SubCueId, PersistedSubCueConfig>;
+  flow?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+};
+
+export type PersistedStreamConfig = {
+  id: StreamId;
+  label: string;
+  sceneOrder: SceneId[];
+  scenes: Record<SceneId, PersistedSceneConfig>;
+  flowViewport?: {
+    x: number;
+    y: number;
+    zoom: number;
+  };
+};
+
+export type PersistedPatchSceneProjection = {
+  /** Hidden manual Scene used only by the Patch workspace compatibility projection. */
+  scene: PersistedSceneConfig;
+  migratedFromSchemaVersion?: 7;
+};
+
 export type PersistedShowConfigV3 = {
   schemaVersion: 3;
   savedAt: string;
@@ -400,7 +554,77 @@ export type PersistedShowConfigV7 = Omit<PersistedShowConfigV6, 'schemaVersion'>
   schemaVersion: 7;
 };
 
-export type PersistedShowConfig = PersistedShowConfigV7;
+export type PersistedShowConfigV8 = {
+  schemaVersion: 8;
+  savedAt: string;
+  rate?: number;
+  audioExtractionFormat: AudioExtractionFormat;
+  globalAudioMuteFadeOutSeconds?: number;
+  globalDisplayBlackoutFadeOutSeconds?: number;
+
+  visuals: Record<VisualId, PersistedVisualConfig>;
+  audioSources: Record<AudioSourceId, PersistedAudioSourceConfig>;
+  outputs: Record<VirtualOutputId, PersistedVirtualOutputConfig>;
+  displays: PersistedDisplayConfigV8[];
+
+  streams: Record<StreamId, PersistedStreamConfig>;
+  activeStreamId?: StreamId;
+
+  patchCompatibility: PersistedPatchSceneProjection;
+};
+
+/** On disk and after migration; v7 kept for migration input only. */
+export type PersistedShowConfig = PersistedShowConfigV8;
+
+export type SceneRuntimeState = {
+  sceneId: SceneId;
+  status: 'disabled' | 'ready' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
+  scheduledStartMs?: number;
+  startedAtStreamMs?: number;
+  endedAtStreamMs?: number;
+  progress?: number;
+  error?: string;
+};
+
+export type StreamRuntimeState = {
+  streamId: StreamId;
+  status: 'idle' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed';
+  originWallTimeMs?: number;
+  cursorSceneId?: SceneId;
+  sceneStates: Record<SceneId, SceneRuntimeState>;
+  expectedDurationMs?: number;
+};
+
+export type StreamCommand =
+  | { type: 'go'; streamId: StreamId; sceneId?: SceneId }
+  | { type: 'pause'; streamId: StreamId }
+  | { type: 'resume'; streamId: StreamId }
+  | { type: 'stop'; streamId: StreamId }
+  | { type: 'jump-next'; streamId: StreamId }
+  | { type: 'back-to-first'; streamId: StreamId };
+
+export type StreamEditCommand =
+  | { type: 'create-stream'; label?: string }
+  | { type: 'update-stream'; streamId: StreamId; label?: string; active?: boolean }
+  | { type: 'create-scene'; streamId: StreamId; afterSceneId?: SceneId; trigger?: SceneTrigger }
+  | { type: 'update-scene'; streamId: StreamId; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
+  | { type: 'duplicate-scene'; streamId: StreamId; sceneId: SceneId }
+  | { type: 'remove-scene'; streamId: StreamId; sceneId: SceneId }
+  | { type: 'reorder-scenes'; streamId: StreamId; sceneOrder: SceneId[] }
+  | {
+      type: 'update-subcue';
+      streamId: StreamId;
+      sceneId: SceneId;
+      subCueId: SubCueId;
+      update: Partial<PersistedSubCueConfig>;
+    };
+
+export type StreamEnginePublicState = {
+  activeStreamId?: StreamId;
+  streams: Record<StreamId, PersistedStreamConfig>;
+  runtime: StreamRuntimeState | null;
+  validationMessages: string[];
+};
 
 export type MediaValidationIssue = {
   severity: 'warning' | 'error';
@@ -620,6 +844,10 @@ export type IpcChannels = {
   'renderer:ready': (report: RendererReadyReport) => void;
   'renderer:drift': (report: DriftReport) => void;
   'renderer:preview-status': (report: PreviewStatus) => void;
+  'streams:get-state': () => StreamEnginePublicState;
+  'streams:edit': (command: StreamEditCommand) => StreamEnginePublicState;
+  'streams:transport': (command: StreamCommand) => StreamEnginePublicState;
 };
 
 export type DirectorEventName = 'director:state';
+export type StreamsEventName = 'streams:state';
