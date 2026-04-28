@@ -513,6 +513,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         createStreamDetailOverlay({
           detailPane: detailPane!,
           currentState: currentState!,
+          getDirectorState: () => currentState,
           options,
           displayWorkspace,
           mixerPanel,

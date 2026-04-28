@@ -12,6 +12,7 @@ import { createButton, createHint, createSelect, createSlider, syncSliderProgres
 import { patchElements as elements } from './elements';
 import type { SelectedEntity } from '../shared/types';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from './mediaDetailSharedForms';
+import { applyMediaDetailLivePreview } from './mediaDetailLivePreview';
 
 type DetailsPaneControllerOptions = {
   getSelectedEntity: () => SelectedEntity | undefined;
@@ -39,6 +40,7 @@ export type DetailsPaneController = {
 export function createDetailsPaneController(options: DetailsPaneControllerOptions): DetailsPaneController {
   let detailsRenderSignature = '';
   let disposeMediaPreview: (() => void) | undefined;
+  let lastDirectorState: DirectorState | undefined;
 
   function clearMediaPreview(): void {
     disposeMediaPreview?.();
@@ -46,6 +48,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
   }
 
   function render(state: DirectorState, force = false): void {
+    lastDirectorState = state;
     const selectedEntity = options.getSelectedEntity();
     const signature = JSON.stringify({
       selectedEntity,
@@ -57,6 +60,11 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
       return;
     }
     if (!force && options.isPanelInteractionActive(elements.detailsContent)) {
+      const ent = options.getSelectedEntity();
+      if (ent?.type === 'visual' || ent?.type === 'audio-source') {
+        applyMediaDetailLivePreview(elements.detailsContent, state, ent);
+        detailsRenderSignature = signature;
+      }
       return;
     }
     detailsRenderSignature = signature;
@@ -179,6 +187,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     };
     const layout = attachVisualMediaDetailMount(state, visual, sharedMediaDeps(), disposeRef);
     elements.detailsContent.replaceChildren(layout);
+    applyMediaDetailLivePreview(elements.detailsContent, state, { type: 'visual', id: visual.id });
   }
 
   function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState): void {
@@ -189,6 +198,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     };
     const layout = attachAudioMediaDetailMount(state, source, sharedMediaDeps(), disposeRef);
     elements.detailsContent.replaceChildren(layout);
+    applyMediaDetailLivePreview(elements.detailsContent, state, { type: 'audio-source', id: source.id });
   }
 
   function renderDisplayDetails(display: DisplayWindowState, state: DirectorState): void {
@@ -437,6 +447,24 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     });
     return input;
   }
+
+  elements.detailsContent.addEventListener('input', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== 'range') {
+      return;
+    }
+    if (!target.closest('.media-detail-layout__meta')) {
+      return;
+    }
+    const selected = options.getSelectedEntity();
+    if (!selected || (selected.type !== 'visual' && selected.type !== 'audio-source')) {
+      return;
+    }
+    if (!lastDirectorState) {
+      return;
+    }
+    applyMediaDetailLivePreview(elements.detailsContent, lastDirectorState, selected);
+  });
 
   return { render };
 }

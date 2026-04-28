@@ -1,4 +1,6 @@
 import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualMingleAlgorithm } from '../../../shared/types';
+import type { SelectedEntity } from '../shared/types';
+import { applyMediaDetailLivePreview } from '../patch/mediaDetailLivePreview';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
@@ -10,6 +12,7 @@ import { createStreamDetailField, createStreamDetailLine, createStreamTextInput 
 export type StreamDetailOverlayDeps = {
   detailPane: DetailPane;
   currentState: DirectorState;
+  getDirectorState: () => DirectorState | undefined;
   options: StreamSurfaceOptions;
   displayWorkspace: DisplayWorkspaceController | undefined;
   mixerPanel: MixerPanelController | undefined;
@@ -32,6 +35,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
   const {
     detailPane,
     currentState,
+    getDirectorState,
     options,
     displayWorkspace,
     mixerPanel,
@@ -80,6 +84,9 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
         disposeRef.current = undefined;
       });
       body.append(attachVisualMediaDetailMount(currentState, visual, mediaDetailDeps, disposeRef));
+      const selected: SelectedEntity = { type: 'visual', id: visual.id };
+      applyMediaDetailLivePreview(body, currentState, selected);
+      wireStreamMediaSliderLive(body, getDirectorState, selected);
     }
   } else {
     const source = currentState.audioSources[detailPane.id];
@@ -92,10 +99,37 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
         disposeRef.current = undefined;
       });
       body.append(attachAudioMediaDetailMount(currentState, source, mediaDetailDeps, disposeRef));
+      const selected: SelectedEntity = { type: 'audio-source', id: source.id };
+      applyMediaDetailLivePreview(body, currentState, selected);
+      wireStreamMediaSliderLive(body, getDirectorState, selected);
     }
   }
   wrap.append(header, body);
   return wrap;
+}
+
+function wireStreamMediaSliderLive(
+  root: HTMLElement,
+  getDirectorState: () => DirectorState | undefined,
+  selected: SelectedEntity,
+): void {
+  if (selected.type !== 'visual' && selected.type !== 'audio-source') {
+    return;
+  }
+  root.addEventListener('input', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== 'range') {
+      return;
+    }
+    if (!target.closest('.media-detail-layout__meta')) {
+      return;
+    }
+    const state = getDirectorState();
+    if (!state) {
+      return;
+    }
+    applyMediaDetailLivePreview(root, state, selected);
+  });
 }
 
 function createStreamDisplayDetailCard(
