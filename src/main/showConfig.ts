@@ -409,6 +409,8 @@ export function validateShowConfigMedia(config: PersistedShowConfig): MediaValid
       audioSources: new Set(Object.keys(config.audioSources)),
       outputs: new Set(Object.keys(config.outputs)),
       displayZones,
+      audioSourceLabels: new Map(Object.values(config.audioSources).map((s) => [s.id, s.label])),
+      visualLabels: new Map(Object.values(config.visuals).map((v) => [v.id, v.label])),
     }),
   ]) {
     issues.push({

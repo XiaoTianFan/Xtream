@@ -91,7 +91,6 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
       stream: elements.streamRailButton,
       performance: elements.performanceRailButton,
       config: elements.configRailButton,
-      logs: elements.logsRailButton,
     };
     for (const [surface, button] of Object.entries(railButtons) as Array<[ControlSurface, HTMLButtonElement]>) {
       const active = activeSurface === surface;

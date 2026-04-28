@@ -33,7 +33,15 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
   heading.textContent = 'Media Pool';
   const addVisualsButton = createButton('Add Media', '', () => undefined);
   decorateIconButton(addVisualsButton, 'Plus', 'Add visuals');
-  header.append(heading, addVisualsButton);
+  const visualPoolLayoutToggleButton = createButton('', 'icon-button', () => undefined);
+  decorateIconButton(visualPoolLayoutToggleButton, 'LayoutGrid', 'Show grid view');
+  visualPoolLayoutToggleButton.id = 'streamVisualPoolLayoutToggleButton';
+  visualPoolLayoutToggleButton.hidden = true;
+  visualPoolLayoutToggleButton.setAttribute('aria-pressed', 'false');
+  const headerActions = document.createElement('div');
+  headerActions.className = 'panel-header-actions';
+  headerActions.append(addVisualsButton, visualPoolLayoutToggleButton);
+  header.append(heading, headerActions);
 
   const main = document.createElement('div');
   main.className = 'media-pool-main';
@@ -72,7 +80,13 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
   const mediaListRegion = document.createElement('div');
   mediaListRegion.className = 'media-list-region drop-target';
   const visualList = document.createElement('div');
-  visualList.className = 'visual-list';
+  visualList.className = 'visual-list-mount';
+  const visualListListPane = document.createElement('div');
+  visualListListPane.className = 'visual-list';
+  const visualListGridPane = document.createElement('div');
+  visualListGridPane.className = 'visual-list visual-list--grid';
+  visualListGridPane.hidden = true;
+  visualList.append(visualListListPane, visualListGridPane);
   const audioPanel = document.createElement('div');
   audioPanel.className = 'audio-panel';
   mediaListRegion.append(visualList, audioPanel);
@@ -81,12 +95,15 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
   return {
     mediaPoolPanel: panel,
     visualList,
+    visualListListPane,
+    visualListGridPane,
     audioPanel,
     visualTabButton,
     audioTabButton,
     poolSearchInput,
     poolSortSelect,
     addVisualsButton,
+    visualPoolLayoutToggleButton,
   };
 }
 

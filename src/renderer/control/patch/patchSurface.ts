@@ -129,7 +129,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     }
     header.sync(state);
     const nextAudioRenderSignature = mixerPanel.createRenderSignature(state);
-    const nextVisualRenderSignature = mediaPool.createRenderSignature(state, selectedEntity);
+    const nextVisualRenderSignature = mediaPool.createRenderSignature(state);
     if (
       !options.isPanelInteractionActive(elements.visualList) &&
       !options.isPanelInteractionActive(elements.audioPanel) &&
@@ -137,6 +137,9 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     ) {
       visualRenderSignature = nextVisualRenderSignature;
       mediaPool.render(state);
+    }
+    if (!options.isPanelInteractionActive(elements.visualList) && !options.isPanelInteractionActive(elements.audioPanel)) {
+      mediaPool.syncPoolSelectionHighlight(state);
     }
     if (!options.isPanelInteractionActive(elements.outputPanel) && audioRenderSignature !== nextAudioRenderSignature) {
       audioRenderSignature = nextAudioRenderSignature;
@@ -191,7 +194,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     restoreTemporaryMixerExpansion();
     mediaPool.selectEntityPoolTab(entity);
     if (currentState) {
-      visualRenderSignature = '';
       options.renderState(currentState);
     }
   }

@@ -333,6 +333,8 @@ export class StreamEngine extends EventEmitter {
           new Set(display.layout.type === 'split' ? ['L', 'R'] : ['single']),
         ]),
       ),
+      audioSourceLabels: new Map(Object.values(state.audioSources).map((s) => [s.id, s.label])),
+      visualLabels: new Map(Object.values(state.visuals).map((v) => [v.id, v.label])),
     };
   }
 

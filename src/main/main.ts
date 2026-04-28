@@ -45,6 +45,7 @@ import type {
   PresetId,
   PresetResult,
   LaunchShowData,
+  MediaValidationIssue,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -1059,6 +1060,10 @@ function registerIpcHandlers(): void {
     await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME));
     await addRecentShow(app.getPath('userData'), currentShowConfigPath!);
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
+  });
+
+  ipcMain.handle('show:media-validation-issues', (): MediaValidationIssue[] => {
+    return validateShowConfigMedia(createPersistedShowForDisk());
   });
 
   ipcMain.handle('show:get-launch-data', async (): Promise<LaunchShowData> => {

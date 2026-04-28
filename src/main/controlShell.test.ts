@@ -10,7 +10,6 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="streamRailButton"');
     expect(controlHtml).toContain('id="performanceRailButton"');
     expect(controlHtml).toContain('id="configRailButton"');
-    expect(controlHtml).toContain('id="logsRailButton"');
     expect(controlHtml).toContain('id="surfacePanel"');
     expect(controlHtml).not.toContain('Stream surface planned" disabled');
     expect(controlHtml).not.toContain('Performance surface planned" disabled');

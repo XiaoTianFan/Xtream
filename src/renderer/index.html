@@ -11,11 +11,10 @@
       <aside class="nav-rail" aria-label="Primary">
         <div class="brand-mark">XT</div>
         <nav class="rail-items" aria-label="Xtream surfaces">
-          <button id="patchRailButton" class="rail-item active" type="button" aria-current="page">Patch</button>
-          <button id="streamRailButton" class="rail-item" type="button" title="Stream surface planned">Stream</button>
-          <button id="performanceRailButton" class="rail-item" type="button" title="Performance surface planned">Perf</button>
-          <button id="configRailButton" class="rail-item" type="button" title="Config and diagnostics">Config</button>
-          <button id="logsRailButton" class="rail-item" type="button" title="Logs and readiness issues">Logs</button>
+          <button id="patchRailButton" class="rail-item active" type="button" aria-current="page"></button>
+          <button id="streamRailButton" class="rail-item" type="button"></button>
+          <button id="performanceRailButton" class="rail-item" type="button"></button>
+          <button id="configRailButton" class="rail-item" type="button"></button>
         </nav>
       </aside>
 
@@ -72,7 +71,10 @@
             <section id="mediaPoolPanel" class="panel media-pool" aria-labelledby="mediaPoolHeading">
               <div class="panel-header">
                 <h2 id="mediaPoolHeading">Media Pool</h2>
-                <button id="addVisualsButton" type="button">Add Media</button>
+                <div class="panel-header-actions">
+                  <button id="addVisualsButton" type="button">Add Media</button>
+                  <button id="visualPoolLayoutToggleButton" type="button" class="icon-button" hidden aria-pressed="false"></button>
+                </div>
               </div>
               <div class="media-pool-main">
                 <div class="pool-tabs" role="tablist" aria-label="Media pool tabs">
@@ -91,7 +93,10 @@
                   </select>
                 </div>
                 <div id="mediaListRegion" class="media-list-region drop-target">
-                  <div id="visualList" class="visual-list"></div>
+                  <div id="visualList" class="visual-list-mount">
+                    <div id="visualListList" class="visual-list"></div>
+                    <div id="visualListGrid" class="visual-list visual-list--grid" hidden></div>
+                  </div>
                   <div id="audioPanel" class="audio-panel"></div>
                 </div>
               </div>

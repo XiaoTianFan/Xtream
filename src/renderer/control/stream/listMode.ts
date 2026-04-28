@@ -2,7 +2,7 @@ import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneI
 import type { StreamEnginePublicState } from '../../../shared/types';
 import type { BottomTab } from './streamTypes';
 import { createButton, createHint } from '../shared/dom';
-import { createIcon, decorateIconButton } from '../shared/icons';
+import { decorateIconButton } from '../shared/icons';
 import {
   formatSceneDuration,
   formatSceneStateLabel,
@@ -97,7 +97,8 @@ function showSceneRowContextMenu(
 export type StreamListModeContext = {
   streamState: StreamEnginePublicState | undefined;
   selectedSceneId: SceneId | undefined;
-  listDragSceneId: SceneId | undefined;
+  /** Live dragging scene id (not snapshotted at render — required for HTML5 drop targets). */
+  getListDragSceneId: () => SceneId | undefined;
   expandedListSceneIds: Set<SceneId>;
   currentState: DirectorState | undefined;
   setSelectedSceneId: (id: SceneId | undefined) => void;
@@ -130,16 +131,71 @@ export function scenesExplicitlyFollowing(stream: PersistedStreamConfig | undefi
   return out;
 }
 
+type SceneListDragUi = {
+  syncIndicatorForRowDrag: (event: DragEvent, rowEl: HTMLElement, sceneId: SceneId) => void;
+  hideDropIndicator: () => void;
+  finalizeDropIntent: () => { insertBeforeId: SceneId | undefined } | null;
+};
+
 export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamListModeContext): HTMLElement {
   const root = document.createElement('div');
   root.className = 'stream-scene-list-root';
   const list = document.createElement('div');
   list.className = 'stream-scene-list';
+  const dropLine = document.createElement('div');
+  dropLine.className = 'stream-scene-drop-indicator';
+  dropLine.setAttribute('aria-hidden', 'true');
+
+  let dropIntent: { insertBeforeId: SceneId | undefined } | null = null;
+
+  function hideDropIndicator(): void {
+    dropLine.hidden = true;
+    dropIntent = null;
+  }
+
+  function finalizeDropIntent(): { insertBeforeId: SceneId | undefined } | null {
+    const captured = dropIntent;
+    dropLine.hidden = true;
+    dropIntent = null;
+    return captured;
+  }
+
+  function showDropLine(left: number, top: number, width: number): void {
+    dropLine.hidden = false;
+    dropLine.style.left = `${left}px`;
+    dropLine.style.top = `${top}px`;
+    dropLine.style.width = `${width}px`;
+  }
+
+  function syncIndicatorForRowDrag(event: DragEvent, rowEl: HTMLElement, sceneId: SceneId): void {
+    const dragging = ctx.getListDragSceneId();
+    if (!dragging || dragging === sceneId) {
+      hideDropIndicator();
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = 'move';
+    const rect = rowEl.getBoundingClientRect();
+    const beforeMid = event.clientY < rect.top + rect.height / 2;
+    const order = stream.sceneOrder;
+    const idx = order.indexOf(sceneId);
+    let insertBeforeId: SceneId | undefined;
+    if (beforeMid) {
+      insertBeforeId = sceneId;
+    } else {
+      insertBeforeId = idx < order.length - 1 ? order[idx + 1] : undefined;
+    }
+    dropIntent = { insertBeforeId };
+    const lineY = beforeMid ? rect.top : rect.bottom;
+    showDropLine(rect.left, lineY - 1.5, rect.width);
+  }
+
+  const dragUi: SceneListDragUi = { syncIndicatorForRowDrag, hideDropIndicator, finalizeDropIntent };
+
   const header = document.createElement('div');
   header.className = 'stream-scene-row stream-scene-row--header';
   header.append(
     createStreamCell('', 'stream-list-col-expand'),
-    createStreamCell('', 'stream-list-col-drag'),
     createStreamCell('#', 'stream-list-col-num'),
     createStreamCell('Title', 'stream-list-col-title'),
     createStreamCell('Trigger', 'stream-list-col-trigger'),
@@ -149,26 +205,33 @@ export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamL
   );
   list.append(header);
   const scenes = stream.sceneOrder.map((id) => stream.scenes[id]).filter(Boolean) as PersistedSceneConfig[];
-  scenes.forEach((scene, index) => list.append(createSceneRowWrap(stream, scene, index + 1, ctx)));
+  scenes.forEach((scene, index) => list.append(createSceneRowWrap(stream, scene, index + 1, ctx, dragUi)));
 
   const endDropTarget = document.createElement('div');
   endDropTarget.className = 'stream-scene-list-end-target';
   endDropTarget.setAttribute('aria-hidden', 'true');
   endDropTarget.addEventListener('dragover', (e) => {
+    const dragging = ctx.getListDragSceneId();
+    if (!dragging) {
+      return;
+    }
     e.preventDefault();
-    endDropTarget.classList.add('drop-hover');
+    e.dataTransfer!.dropEffect = 'move';
+    dropIntent = { insertBeforeId: undefined };
+    const lr = list.getBoundingClientRect();
+    const er = endDropTarget.getBoundingClientRect();
+    showDropLine(lr.left, er.top - 1.5, lr.width);
   });
-  endDropTarget.addEventListener('dragleave', () => endDropTarget.classList.remove('drop-hover'));
   endDropTarget.addEventListener('drop', (e) => {
     e.preventDefault();
-    endDropTarget.classList.remove('drop-hover');
     const dragged = e.dataTransfer?.getData('text/plain') as SceneId | undefined;
-    if (dragged) {
-      ctx.applySceneReorder(dragged, undefined);
+    const intent = finalizeDropIntent();
+    if (dragged && intent) {
+      ctx.applySceneReorder(dragged, intent.insertBeforeId);
     }
   });
 
-  root.append(list, endDropTarget, createSceneListPhantomRow(stream, ctx));
+  root.append(list, endDropTarget, createSceneListPhantomRow(stream, ctx), dropLine);
   return root;
 }
 
@@ -204,6 +267,7 @@ function createSceneRowWrap(
   scene: PersistedSceneConfig,
   number: number,
   ctx: StreamListModeContext,
+  dragUi: SceneListDragUi,
 ): HTMLElement {
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
   const runtimeRowStatus = runtimeState?.status ?? 'ready';
@@ -213,9 +277,10 @@ function createSceneRowWrap(
   wrap.dataset.sceneId = scene.id;
 
   const row = document.createElement('div');
-  row.className = `stream-scene-row ${scene.id === ctx.selectedSceneId ? 'selected' : ''} ${statusClass}${ctx.listDragSceneId === scene.id ? ' dragging' : ''}`;
+  row.className = `stream-scene-row ${scene.id === ctx.selectedSceneId ? 'selected' : ''} ${statusClass}${ctx.getListDragSceneId() === scene.id ? ' dragging' : ''}`;
+  row.draggable = true;
   row.addEventListener('click', (event) => {
-    if ((event.target as HTMLElement).closest('button, [draggable="true"]')) {
+    if ((event.target as HTMLElement).closest('button')) {
       return;
     }
     ctx.setSelectedSceneId(scene.id);
@@ -237,39 +302,37 @@ function createSceneRowWrap(
     ctx.requestRender();
   });
 
-  const dragHandle = document.createElement('div');
-  dragHandle.className = 'stream-scene-drag-handle';
-  dragHandle.draggable = true;
-  dragHandle.title = 'Drag to reorder';
-  dragHandle.append(createIcon('GripVertical', 'Reorder'));
-  dragHandle.addEventListener('dragstart', (event) => {
+  row.addEventListener('dragstart', (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button')) {
+      event.preventDefault();
+      return;
+    }
+    dragUi.hideDropIndicator();
     ctx.setListDragSceneId(scene.id);
     event.dataTransfer?.setData('text/plain', scene.id);
     event.dataTransfer!.effectAllowed = 'move';
     wrap.classList.add('drag-source');
+    // Do not call requestRender() here — rebuilding the list destroys the drag source and cancels HTML5 drag.
   });
-  dragHandle.addEventListener('dragend', () => {
+  row.addEventListener('dragend', () => {
     ctx.setListDragSceneId(undefined);
     wrap.classList.remove('drag-source');
-    document.querySelectorAll('.stream-scene-row-wrap.drop-hover').forEach((el) => el.classList.remove('drop-hover'));
+    dragUi.hideDropIndicator();
+    ctx.requestRender();
   });
 
-  row.addEventListener('dragover', (event) => {
-    if (!ctx.listDragSceneId || ctx.listDragSceneId === scene.id) {
+  wrap.addEventListener('dragover', (event) => {
+    dragUi.syncIndicatorForRowDrag(event, row, scene.id);
+  });
+  wrap.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const dragged = event.dataTransfer?.getData('text/plain') as SceneId | undefined;
+    const intent = dragUi.finalizeDropIntent();
+    if (!dragged || !intent) {
       return;
     }
-    event.preventDefault();
-    event.dataTransfer!.dropEffect = 'move';
-    wrap.classList.add('drop-hover');
-  });
-  row.addEventListener('dragleave', () => wrap.classList.remove('drop-hover'));
-  row.addEventListener('drop', (event) => {
-    event.preventDefault();
-    wrap.classList.remove('drop-hover');
-    const dragged = event.dataTransfer?.getData('text/plain') as SceneId | undefined;
-    if (dragged && dragged !== scene.id) {
-      ctx.applySceneReorder(dragged, scene.id);
-    }
+    ctx.applySceneReorder(dragged, intent.insertBeforeId);
   });
 
   row.addEventListener('contextmenu', (event) => showSceneRowContextMenu(event, stream, scene, ctx));
@@ -290,7 +353,7 @@ function createSceneRowWrap(
 
   actions.append(runHere);
 
-  row.append(expandBtn, dragHandle, cueCell, titleCell, triggerCell, durationCell, stateCell, actions);
+  row.append(expandBtn, cueCell, titleCell, triggerCell, durationCell, stateCell, actions);
 
   wrap.append(row);
 

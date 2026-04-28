@@ -9,7 +9,6 @@ export const elements = {
   streamRailButton: assertElement(document.querySelector<HTMLButtonElement>('#streamRailButton'), 'streamRailButton'),
   performanceRailButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceRailButton'), 'performanceRailButton'),
   configRailButton: assertElement(document.querySelector<HTMLButtonElement>('#configRailButton'), 'configRailButton'),
-  logsRailButton: assertElement(document.querySelector<HTMLButtonElement>('#logsRailButton'), 'logsRailButton'),
   launchDashboard: assertElement(document.querySelector<HTMLElement>('#launchDashboard'), 'launchDashboard'),
   launchOpenShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchOpenShowButton'), 'launchOpenShowButton'),
   launchCreateShowButton: assertElement(document.querySelector<HTMLButtonElement>('#launchCreateShowButton'), 'launchCreateShowButton'),

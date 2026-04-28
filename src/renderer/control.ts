@@ -7,7 +7,6 @@ import { createShowActions } from './control/app/showActions';
 import { createSurfaceRouter } from './control/app/surfaceRouter';
 import { createConfigSurfaceController } from './control/config/configSurface';
 import { createStreamSurfaceController } from './control/stream/streamSurface';
-import { createLogsSurfaceController } from './control/logs/logsSurface';
 import { patchElements } from './control/patch/elements';
 import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
@@ -28,6 +27,23 @@ let currentIssues: MediaValidationIssue[] = [];
 let clearPatchSelection = (): void => undefined;
 
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
+const STREAM_MEDIA_ISSUES_DEBOUNCE_MS = 200;
+let streamMediaIssuesTimer: number | undefined;
+
+function scheduleRefreshStreamMediaIssues(): void {
+  if (streamMediaIssuesTimer !== undefined) {
+    window.clearTimeout(streamMediaIssuesTimer);
+  }
+  streamMediaIssuesTimer = window.setTimeout(() => {
+    streamMediaIssuesTimer = undefined;
+    void window.xtream.show.getMediaValidationIssues().then((issues) => {
+      currentIssues = issues;
+      if (currentState) {
+        renderIssueList(patchElements.issueList, combineVisibleIssues(currentState.readiness.issues, currentIssues));
+      }
+    });
+  }, STREAM_MEDIA_ISSUES_DEBOUNCE_MS);
+}
 
 function renderState(state: DirectorState): void {
   currentState = state;
@@ -99,14 +115,20 @@ const streamSurface = createStreamSurfaceController({
   showActions,
 });
 
+window.xtream.stream.onState(() => {
+  scheduleRefreshStreamMediaIssues();
+});
+
 const surfaceRouter = createSurfaceRouter({
   getCurrentState: () => currentState,
   surfaces: [
     patchSurface,
     streamSurface,
     createPerformanceSurfaceController(),
-    createConfigSurfaceController({ renderState, setShowStatus, showActions }),
-    createLogsSurfaceController({
+    createConfigSurfaceController({
+      renderState,
+      setShowStatus,
+      showActions,
       getOperationIssues: () => currentIssues,
       getDisplayStatusLabel: patchSurface.getDisplayStatusLabel,
       getDisplayTelemetry: patchSurface.getDisplayTelemetry,
@@ -128,14 +150,9 @@ hydrateControlShellAfterShow = async (result: ShowConfigOperationResult) => {
   }
   const streamPublic = await window.xtream.stream.getState();
   streamSurface.applyImportedProjectUi(snapshot.stream, result.state, streamPublic);
-  const surfaceId = snapshot.activeSurface as ControlSurface;
-  if (
-    surfaceId === 'patch' ||
-    surfaceId === 'stream' ||
-    surfaceId === 'performance' ||
-    surfaceId === 'config' ||
-    surfaceId === 'logs'
-  ) {
+  const rawSurface = snapshot.activeSurface as ControlSurface | 'logs';
+  const surfaceId: ControlSurface = rawSurface === 'logs' ? 'config' : rawSurface;
+  if (surfaceId === 'patch' || surfaceId === 'stream' || surfaceId === 'performance' || surfaceId === 'config') {
     surfaceRouter.setPersistedActiveSurface(surfaceId);
   }
 };

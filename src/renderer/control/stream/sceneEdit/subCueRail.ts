@@ -34,6 +34,77 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   const rail = document.createElement('div');
   rail.className = 'stream-subcue-rail';
 
+  const dropLine = document.createElement('div');
+  dropLine.className = 'stream-scene-drop-indicator';
+  dropLine.setAttribute('aria-hidden', 'true');
+
+  let draggingSubCueId: SubCueId | undefined;
+  let dropIntent: { insertBeforeSubCueId: SubCueId | undefined } | null = null;
+
+  function hideDropIndicator(): void {
+    dropLine.hidden = true;
+    dropIntent = null;
+  }
+
+  function finalizeDropIntent(): { insertBeforeSubCueId: SubCueId | undefined } | null {
+    const captured = dropIntent;
+    dropLine.hidden = true;
+    dropIntent = null;
+    return captured;
+  }
+
+  function showDropLine(left: number, top: number, width: number): void {
+    dropLine.hidden = false;
+    dropLine.style.left = `${left}px`;
+    dropLine.style.top = `${top}px`;
+    dropLine.style.width = `${width}px`;
+  }
+
+  function syncIndicatorForRowDrag(event: DragEvent, rowEl: HTMLElement, hoveredSubCueId: SubCueId): void {
+    if (!draggingSubCueId || draggingSubCueId === hoveredSubCueId) {
+      hideDropIndicator();
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = 'move';
+    const rect = rowEl.getBoundingClientRect();
+    const beforeMid = event.clientY < rect.top + rect.height / 2;
+    const order = scene.subCueOrder;
+    const idx = order.indexOf(hoveredSubCueId);
+    let insertBeforeSubCueId: SubCueId | undefined;
+    if (beforeMid) {
+      insertBeforeSubCueId = hoveredSubCueId;
+    } else {
+      insertBeforeSubCueId = idx < order.length - 1 ? order[idx + 1] : undefined;
+    }
+    dropIntent = { insertBeforeSubCueId };
+    const lineY = beforeMid ? rect.top : rect.bottom;
+    showDropLine(rect.left, lineY - 1.5, rect.width);
+  }
+
+  function patchScene(update: Partial<PersistedSceneConfig>): Promise<StreamEnginePublicState> {
+    return window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update });
+  }
+
+  function applySubCueReorder(draggedId: SubCueId, insertBeforeId: SubCueId | undefined): void {
+    const order = [...scene.subCueOrder];
+    const from = order.indexOf(draggedId);
+    if (from < 0) {
+      return;
+    }
+    order.splice(from, 1);
+    if (insertBeforeId === undefined) {
+      order.push(draggedId);
+    } else {
+      const to = order.indexOf(insertBeforeId);
+      if (to < 0) {
+        return;
+      }
+      order.splice(to, 0, draggedId);
+    }
+    void patchScene({ subCueOrder: order }).then(() => requestRender());
+  }
+
   const sceneBtn = document.createElement('button');
   sceneBtn.type = 'button';
   sceneBtn.className = `stream-section-pill ${sceneEditSelection.kind === 'scene' ? 'active' : ''}`;
@@ -44,49 +115,103 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   });
   rail.append(sceneBtn);
 
-  for (let i = 0; i < scene.subCueOrder.length; i++) {
-    const subCueId = scene.subCueOrder[i]!;
+  for (const subCueId of scene.subCueOrder) {
     const sub = scene.subCues[subCueId];
     if (!sub) {
       continue;
     }
+    const rowWrap = document.createElement('div');
+    rowWrap.className = 'stream-subcue-rail-row-wrap';
+    rowWrap.dataset.subCueId = subCueId;
+
     const row = document.createElement('div');
     row.className = 'stream-subcue-rail-row';
+    row.draggable = true;
+
+    const selected = sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === subCueId;
+    const titleWrap = document.createElement('div');
+    titleWrap.className = `stream-subcue-rail-title-wrap${selected ? ' active' : ''}`;
 
     const labelBtn = document.createElement('button');
     labelBtn.type = 'button';
-    labelBtn.className = `stream-section-pill ${sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === subCueId ? 'active' : ''}`;
+    labelBtn.className = 'stream-subcue-rail-label';
     labelBtn.textContent = formatSubCueLabel(currentState, sub);
     labelBtn.addEventListener('click', () => {
       setSceneEditSelection({ kind: 'subcue', sceneId: scene.id, subCueId });
       requestRender();
     });
 
-    const reorder = document.createElement('div');
-    reorder.className = 'stream-subcue-rail-reorder';
-    const up = createButton('↑', 'secondary icon-button', () => moveSubCue(i, i - 1));
-    up.title = 'Move up';
-    up.setAttribute('aria-label', 'Move up');
-    up.disabled = i === 0;
-    const down = createButton('↓', 'secondary icon-button', () => moveSubCue(i, i + 1));
-    down.title = 'Move down';
-    down.setAttribute('aria-label', 'Move down');
-    down.disabled = i >= scene.subCueOrder.length - 1;
-
-    const removeBtn = createButton('', 'secondary icon-button', () => removeSubCue(subCueId));
+    const removeBtn = createButton('', 'secondary icon-button stream-subcue-rail-remove', () => removeSubCue(subCueId));
     decorateIconButton(removeBtn, 'Trash2', 'Remove sub-cue');
 
-    reorder.append(up, down, removeBtn);
-    row.append(labelBtn, reorder);
-    rail.append(row);
+    row.addEventListener('dragstart', (event) => {
+      const el = event.target as HTMLElement;
+      if (el.closest('.stream-subcue-rail-remove')) {
+        event.preventDefault();
+        return;
+      }
+      hideDropIndicator();
+      draggingSubCueId = subCueId;
+      event.dataTransfer?.setData('text/plain', subCueId);
+      event.dataTransfer!.effectAllowed = 'move';
+      rowWrap.classList.add('drag-source');
+    });
+    row.addEventListener('dragend', () => {
+      draggingSubCueId = undefined;
+      rowWrap.classList.remove('drag-source');
+      hideDropIndicator();
+      requestRender();
+    });
+
+    rowWrap.addEventListener('dragover', (event) => {
+      syncIndicatorForRowDrag(event, row, subCueId);
+    });
+    rowWrap.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const dragged = event.dataTransfer?.getData('text/plain') as SubCueId | undefined;
+      const intent = finalizeDropIntent();
+      if (!dragged || !intent) {
+        return;
+      }
+      applySubCueReorder(dragged, intent.insertBeforeSubCueId);
+    });
+
+    titleWrap.append(labelBtn, removeBtn);
+    row.append(titleWrap);
+    rowWrap.append(row);
+    rail.append(rowWrap);
   }
+
+  const endDropTarget = document.createElement('div');
+  endDropTarget.className = 'stream-subcue-rail-end-target';
+  endDropTarget.setAttribute('aria-hidden', 'true');
+  endDropTarget.addEventListener('dragover', (e) => {
+    if (!draggingSubCueId) {
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+    dropIntent = { insertBeforeSubCueId: undefined };
+    const lr = rail.getBoundingClientRect();
+    const er = endDropTarget.getBoundingClientRect();
+    showDropLine(lr.left, er.top - 1.5, lr.width);
+  });
+  endDropTarget.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const dragged = e.dataTransfer?.getData('text/plain') as SubCueId | undefined;
+    const intent = finalizeDropIntent();
+    if (!dragged || !intent) {
+      return;
+    }
+    applySubCueReorder(dragged, intent.insertBeforeSubCueId);
+  });
 
   const addWrap = document.createElement('div');
   addWrap.className = 'stream-subcue-add';
   const addDetails = document.createElement('details');
   addDetails.className = 'stream-subcue-add-details';
   const addSummaryBtn = document.createElement('summary');
-  addSummaryBtn.className = 'stream-section-pill phantom';
+  addSummaryBtn.className = 'stream-section-pill phantom stream-subcue-add-summary';
   addSummaryBtn.textContent = 'Add Sub-Cue';
 
   const menu = document.createElement('div');
@@ -98,24 +223,8 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   );
   addDetails.append(addSummaryBtn, menu);
   addWrap.append(addDetails);
-  rail.append(addWrap);
 
-  function patchScene(update: Partial<PersistedSceneConfig>): Promise<StreamEnginePublicState> {
-    return window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update });
-  }
-
-  function moveSubCue(from: number, to: number): void {
-    if (to < 0 || to >= scene.subCueOrder.length) {
-      return;
-    }
-    const order = [...scene.subCueOrder];
-    const [item] = order.splice(from, 1);
-    if (!item) {
-      return;
-    }
-    order.splice(to, 0, item);
-    void patchScene({ subCueOrder: order }).then(() => requestRender());
-  }
+  rail.append(endDropTarget, addWrap, dropLine);
 
   function removeSubCue(id: SubCueId): void {
     const order = scene.subCueOrder.filter((sid) => sid !== id);

@@ -120,7 +120,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab,
       detailPane,
       headerEditField,
-      mediaPool: mediaPool?.createRenderSignature(state, selectedEntity),
+      mediaPool: mediaPool?.createRenderSignature(state),
       director: {
         visuals: Object.values(state.visuals).map((visual) => ({
           id: visual.id,
@@ -162,6 +162,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     renderHeader();
     mediaPool?.render(currentState);
+    mediaPool?.syncPoolSelectionHighlight(currentState);
     assetPreview?.render(currentState, selectedEntity);
     renderWorkspacePane();
     renderBottomPane();
@@ -257,7 +258,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const ctx: StreamWorkspacePaneContext = {
       streamState,
       selectedSceneId,
-      listDragSceneId,
+      getListDragSceneId: () => listDragSceneId,
       expandedListSceneIds,
       currentState,
       setSelectedSceneId: (id) => {

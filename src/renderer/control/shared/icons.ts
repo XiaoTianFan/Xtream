@@ -10,8 +10,13 @@ import {
   FileJson,
   Film,
   FolderOpen,
+  GamepadDirectional,
   GripVertical,
   Image,
+  LayoutGrid,
+  LayoutPanelLeft,
+  List,
+  ListVideo,
   Monitor,
   Maximize2,
   Music,
@@ -48,8 +53,13 @@ export const icons = {
   FileJson,
   Film,
   FolderOpen,
+  GamepadDirectional,
   GripVertical,
   Image,
+  LayoutGrid,
+  LayoutPanelLeft,
+  List,
+  ListVideo,
   Monitor,
   Maximize2,
   Music,
@@ -90,6 +100,24 @@ export function decorateIconButton(button: HTMLButtonElement, name: ControlIcon,
   button.title = label;
   button.setAttribute('aria-label', label);
   button.replaceChildren(createIcon(name, label), createSrOnlyText(label));
+}
+
+export type DecorateRailButtonOptions = {
+  title?: string;
+  iconSize?: number;
+};
+
+export function decorateRailButton(
+  button: HTMLButtonElement,
+  name: ControlIcon,
+  label: string,
+  options?: DecorateRailButtonOptions,
+): void {
+  const title = options?.title ?? label;
+  const iconSize = options?.iconSize ?? 20;
+  button.title = title;
+  button.setAttribute('aria-label', label);
+  button.replaceChildren(createIcon(name, label, iconSize), createSrOnlyText(label));
 }
 
 function createSrOnlyText(label: string): HTMLSpanElement {

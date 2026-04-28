@@ -794,7 +794,7 @@ export type LaunchShowData = {
 };
 
 /** Per-project persisted control-shell UI (persisted beside app data, keyed by show file path). */
-export type ControlSurfaceId = 'patch' | 'stream' | 'performance' | 'config' | 'logs';
+export type ControlSurfaceId = 'patch' | 'stream' | 'performance' | 'config';
 
 export type ControlProjectUiPatchLayout = {
   mediaWidthPx?: number;

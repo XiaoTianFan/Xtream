@@ -1,13 +1,46 @@
 import type {
   AudioSourceId,
   DisplayZoneId,
+  PersistedAudioSubCueConfig,
   PersistedSceneConfig,
   PersistedStreamConfig,
+  PersistedVisualSubCueConfig,
   SceneId,
   SceneTrigger,
   VisualId,
   VirtualOutputId,
 } from './types';
+import { PATCH_COMPAT_SCENE_ID } from './streamWorkspace';
+
+export type ValidateStreamContentContext = {
+  visuals?: ReadonlySet<VisualId>;
+  audioSources?: ReadonlySet<AudioSourceId>;
+  outputs?: ReadonlySet<VirtualOutputId>;
+  displayZones?: ReadonlyMap<string, ReadonlySet<DisplayZoneId>>;
+  audioSourceLabels?: ReadonlyMap<AudioSourceId, string>;
+  visualLabels?: ReadonlyMap<VisualId, string>;
+};
+
+function sceneContentLabel(scene: PersistedSceneConfig, sceneId: SceneId): string {
+  const t = scene.title?.trim();
+  return t ? `"${t}"` : sceneId;
+}
+
+function audioSubCueValidationLabel(
+  sub: PersistedAudioSubCueConfig,
+  context: Pick<ValidateStreamContentContext, 'audioSourceLabels'>,
+): string {
+  const name = context.audioSourceLabels?.get(sub.audioSourceId) ?? sub.audioSourceId;
+  return `Audio | ${name}`;
+}
+
+function visualSubCueValidationLabel(
+  sub: PersistedVisualSubCueConfig,
+  context: Pick<ValidateStreamContentContext, 'visualLabels'>,
+): string {
+  const name = context.visualLabels?.get(sub.visualId) ?? sub.visualId;
+  return `Visual | ${name}`;
+}
 
 export function computeSceneNumbers(sceneOrder: SceneId[]): Record<SceneId, number> {
   const map: Record<SceneId, number> = {};
@@ -133,15 +166,7 @@ export function validateTriggerReferences(stream: PersistedStreamConfig): string
   return messages;
 }
 
-export function validateStreamContent(
-  stream: PersistedStreamConfig,
-  context: {
-    visuals?: ReadonlySet<VisualId>;
-    audioSources?: ReadonlySet<AudioSourceId>;
-    outputs?: ReadonlySet<VirtualOutputId>;
-    displayZones?: ReadonlyMap<string, ReadonlySet<DisplayZoneId>>;
-  } = {},
-): string[] {
+export function validateStreamContent(stream: PersistedStreamConfig, context: ValidateStreamContentContext = {}): string[] {
   const messages: string[] = [];
   if (stream.sceneOrder.length === 0) {
     messages.push('Stream must contain at least one scene');
@@ -199,8 +224,10 @@ export function validateStreamContent(
         if (context.audioSources && !context.audioSources.has(subCue.audioSourceId)) {
           messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing audio source ${subCue.audioSourceId}`);
         }
-        if (subCue.outputIds.length === 0) {
-          messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} has no output targets`);
+        if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.outputIds.length === 0) {
+          messages.push(
+            `Scene ${sceneContentLabel(scene, sceneId)}: audio sub-cue "${audioSubCueValidationLabel(subCue, context)}" has no output targets`,
+          );
         }
         for (const outputId of subCue.outputIds) {
           if (context.outputs && !context.outputs.has(outputId)) {
@@ -211,8 +238,10 @@ export function validateStreamContent(
         if (context.visuals && !context.visuals.has(subCue.visualId)) {
           messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing visual ${subCue.visualId}`);
         }
-        if (subCue.targets.length === 0) {
-          messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} has no display targets`);
+        if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.targets.length === 0) {
+          messages.push(
+            `Scene ${sceneContentLabel(scene, sceneId)}: visual sub-cue "${visualSubCueValidationLabel(subCue, context)}" has no display targets`,
+          );
         }
         for (const target of subCue.targets) {
           const zone = target.zoneId ?? 'single';

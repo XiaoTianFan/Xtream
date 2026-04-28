@@ -25,6 +25,7 @@ import type {
   PresetResult,
   ControlProjectUiStateV1,
   LaunchShowData,
+  MediaValidationIssue,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -143,6 +144,7 @@ const api = {
       ipcRenderer.invoke('show:choose-embedded-audio-import', candidates),
     open: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open'),
     exportDiagnostics: (): Promise<string | undefined> => ipcRenderer.invoke('show:export-diagnostics'),
+    getMediaValidationIssues: (): Promise<MediaValidationIssue[]> => ipcRenderer.invoke('show:media-validation-issues'),
   },
   controlUi: {
     getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),

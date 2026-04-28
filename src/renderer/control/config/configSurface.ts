@@ -1,5 +1,5 @@
 import { XTREAM_RUNTIME_VERSION } from '../../../shared/version';
-import type { AudioExtractionFormat, DirectorState } from '../../../shared/types';
+import type { AudioExtractionFormat, DirectorState, DisplayWindowState, MediaValidationIssue } from '../../../shared/types';
 import type { ShowActions } from '../app/showActions';
 import type { SurfaceController } from '../app/surfaceRouter';
 import { createSurfaceStateSignature } from '../app/surfaceSignatures';
@@ -12,14 +12,74 @@ type ConfigSurfaceOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
   showActions: ShowActions;
+  getOperationIssues: () => MediaValidationIssue[];
+  getDisplayStatusLabel: (display: DisplayWindowState) => string;
+  getDisplayTelemetry: (display: DisplayWindowState) => string;
 };
 
 export function createConfigSurfaceController(options: ConfigSurfaceOptions): SurfaceController {
   return {
     id: 'config',
-    createRenderSignature: (state) => createSurfaceStateSignature('config', state),
+    createRenderSignature: (state) =>
+      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}`,
     render: (state) => renderConfigSurface(state, options),
   };
+}
+
+function renderDiagnosticsRow(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
+  const issues = [...state.readiness.issues, ...options.getOperationIssues()];
+  const issueCard = createSurfaceCard('Readiness Issues');
+  if (issues.length === 0) {
+    issueCard.append(createHint('No readiness issues reported.'));
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'log-list';
+    for (const issue of issues) {
+      const item = document.createElement('li');
+      item.className = issue.severity === 'error' ? 'warning' : 'hint';
+      item.textContent = `${issue.severity.toUpperCase()} ${issue.target}: ${issue.message}`;
+      list.append(item);
+    }
+    issueCard.append(list);
+  }
+
+  const displayCard = createSurfaceCard('Display Telemetry');
+  const displays = Object.values(state.displays);
+  if (displays.length === 0) {
+    displayCard.append(createHint('No display windows have been created.'));
+  } else {
+    for (const display of displays) {
+      displayCard.append(
+        createDetailLine(display.label ?? display.id, `${options.getDisplayStatusLabel(display)} | ${options.getDisplayTelemetry(display)}`),
+      );
+    }
+  }
+
+  const outputCard = createSurfaceCard('Audio Routing');
+  for (const output of Object.values(state.outputs)) {
+    outputCard.append(
+      createDetailLine(
+        output.label,
+        `${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'empty'} | ${output.physicalRoutingAvailable ? 'physical' : 'fallback'} | ${
+          output.error ?? 'no errors'
+        }`,
+      ),
+    );
+  }
+
+  return wrapSurfaceGrid(issueCard, displayCard, outputCard);
+}
+
+function createDirectorStatePanel(state: DirectorState): HTMLElement {
+  const details = document.createElement('details');
+  details.className = 'surface-card wide director-state-panel';
+  const summary = document.createElement('summary');
+  summary.className = 'director-state-summary';
+  summary.textContent = 'Director State';
+  const pre = document.createElement('pre');
+  pre.textContent = JSON.stringify(state, null, 2);
+  details.append(summary, pre);
+  return details;
 }
 
 function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions): void {
@@ -93,12 +153,15 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
     createDetailLine('Virtual Outputs', String(Object.keys(state.outputs).length)),
   );
 
-  const rawState = createSurfaceCard('Director State', 'wide');
-  const pre = document.createElement('pre');
-  pre.textContent = JSON.stringify(state, null, 2);
-  rawState.append(pre);
+  const workspace = document.createElement('div');
+  workspace.className = 'surface-workspace';
+  workspace.append(
+    wrapSurfaceGrid(summary, showProject, actions, topology),
+    renderDiagnosticsRow(state, options),
+    wrapSurfaceGrid(createDirectorStatePanel(state)),
+  );
 
-  elements.surfacePanel.replaceChildren(wrapSurfaceGrid(summary, showProject, actions, topology, rawState));
+  elements.surfacePanel.replaceChildren(workspace);
 }
 
 function createNumberDetailControl(

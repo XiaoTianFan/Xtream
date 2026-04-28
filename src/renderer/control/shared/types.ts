@@ -6,7 +6,7 @@ export type SelectedEntity =
   | { type: 'display'; id: DisplayWindowId }
   | { type: 'output'; id: VirtualOutputId };
 
-export type ControlSurface = 'patch' | 'stream' | 'performance' | 'config' | 'logs';
+export type ControlSurface = 'patch' | 'stream' | 'performance' | 'config';
 
 export type DisplayPreviewProgressEdge = {
   visualId: VisualId;

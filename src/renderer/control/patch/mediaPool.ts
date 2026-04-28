@@ -4,13 +4,38 @@ import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from './embeddedAudioImport';
+import { mountVisualPoolGridPreview } from './visualPoolGridPreview';
 
 type PoolTab = 'visuals' | 'audio';
 type PoolSort = 'label' | 'duration' | 'status';
+type VisualPoolLayout = 'list' | 'grid';
+
+const VISUAL_POOL_LAYOUT_STORAGE_KEY = 'xtream.visualPoolLayout';
+
+function readStoredVisualPoolLayout(): VisualPoolLayout {
+  try {
+    const v = localStorage.getItem(VISUAL_POOL_LAYOUT_STORAGE_KEY);
+    if (v === 'grid' || v === 'list') {
+      return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'list';
+}
+
+function persistVisualPoolLayout(layout: VisualPoolLayout): void {
+  try {
+    localStorage.setItem(VISUAL_POOL_LAYOUT_STORAGE_KEY, layout);
+  } catch {
+    /* ignore */
+  }
+}
 
 export type MediaPoolController = {
-  createRenderSignature: (state: DirectorState, selectedEntity: SelectedEntity | undefined) => string;
+  createRenderSignature: (state: DirectorState) => string;
   render: (state: DirectorState) => void;
+  syncPoolSelectionHighlight: (state: DirectorState) => void;
   selectEntityPoolTab: (entity: SelectedEntity) => void;
   dismissContextMenu: () => void;
   install: () => void;
@@ -19,12 +44,15 @@ export type MediaPoolController = {
 export type MediaPoolElements = {
   mediaPoolPanel: HTMLElement;
   visualList: HTMLDivElement;
+  visualListListPane: HTMLDivElement;
+  visualListGridPane: HTMLDivElement;
   audioPanel: HTMLDivElement;
   visualTabButton: HTMLButtonElement;
   audioTabButton: HTMLButtonElement;
   poolSearchInput: HTMLInputElement;
   poolSortSelect: HTMLSelectElement;
   addVisualsButton: HTMLButtonElement;
+  visualPoolLayoutToggleButton: HTMLButtonElement;
 };
 
 type MediaPoolControllerOptions = {
@@ -48,27 +76,105 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   let activeLiveCaptureModal: HTMLElement | undefined;
   let activeLiveCaptureModalKeydown: ((event: KeyboardEvent) => void) | undefined;
   let activeLiveCaptureModalCleanups: Array<() => void> = [];
+  let visualPoolLayout: VisualPoolLayout = readStoredVisualPoolLayout();
+  let visualPoolGridCleanups: Array<() => void> = [];
+  let lastListVisualsDomKey: string | undefined;
+  let lastGridVisualsDomKey: string | undefined;
 
-  function render(state: DirectorState): void {
-    syncPoolTabs();
-    const rows =
-      activePoolTab === 'visuals'
-        ? getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual))
-        : getFilteredAudioSources(Object.values(state.audioSources), state).map((source) => createAudioSourceRow(source, state));
-    if (activePoolTab === 'audio') {
-      elements.visualList.hidden = true;
-      elements.audioPanel.hidden = false;
-      elements.audioPanel.replaceChildren(...(rows.length > 0 ? rows : [createHint('No audio sources match this filter.')]));
-    } else {
-      elements.visualList.hidden = false;
-      elements.audioPanel.hidden = true;
-      elements.visualList.replaceChildren(...(rows.length > 0 ? rows : [createHint('No visuals match this filter.')]));
-      elements.audioPanel.replaceChildren();
+  function clearVisualPoolGridCleanups(): void {
+    for (const fn of visualPoolGridCleanups) {
+      try {
+        fn();
+      } catch {
+        /* ignore */
+      }
+    }
+    visualPoolGridCleanups = [];
+  }
+
+  function visualsContentKey(state: DirectorState): string {
+    return `${createVisualRenderSignature(state)}:${poolSearchQuery}:${poolSort}`;
+  }
+
+  function updateVisualPoolPanesVisibility(): void {
+    const listMode = visualPoolLayout === 'list';
+    elements.visualListListPane.hidden = !listMode;
+    elements.visualListGridPane.hidden = listMode;
+  }
+
+  function paneShowsPoolItems(pane: HTMLElement): boolean {
+    const first = pane.firstElementChild;
+    if (!first) {
+      return false;
+    }
+    if (first.classList.contains('hint')) {
+      return false;
+    }
+    return first.classList.contains('asset-row') || first.classList.contains('visual-pool-card');
+  }
+
+  function renderVisualPoolPanes(state: DirectorState): void {
+    const cKey = visualsContentKey(state);
+    updateVisualPoolPanesVisibility();
+
+    if (lastListVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListListPane)) {
+      const listRows = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual));
+      elements.visualListListPane.replaceChildren(
+        ...(listRows.length > 0 ? listRows : [createHint('No visuals match this filter.')]),
+      );
+      lastListVisualsDomKey = cKey;
+    }
+
+    if (lastGridVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListGridPane)) {
+      clearVisualPoolGridCleanups();
+      const gridCards = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualGridCard(visual));
+      elements.visualListGridPane.replaceChildren(
+        ...(gridCards.length > 0 ? gridCards : [createHint('No visuals match this filter.')]),
+      );
+      lastGridVisualsDomKey = cKey;
+    }
+
+    syncPoolSelectionHighlight(state);
+  }
+
+  function syncPoolSelectionHighlight(_state: DirectorState): void {
+    for (const el of elements.visualList.querySelectorAll<HTMLElement>('.asset-row, .visual-pool-card')) {
+      const id = el.dataset.assetId;
+      if (!id) {
+        continue;
+      }
+      el.classList.toggle('selected', options.isSelected('visual', id));
+    }
+    for (const el of elements.audioPanel.querySelectorAll<HTMLElement>('.asset-row')) {
+      const id = el.dataset.assetId;
+      if (!id) {
+        continue;
+      }
+      el.classList.toggle('selected', options.isSelected('audio-source', id));
     }
   }
 
-  function createRenderSignature(state: DirectorState, selectedEntity: SelectedEntity | undefined): string {
-    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${selectedEntity?.type}:${selectedEntity?.id}`;
+  function render(state: DirectorState): void {
+    syncPoolTabs();
+    if (activePoolTab === 'visuals') {
+      elements.visualList.hidden = false;
+      elements.audioPanel.hidden = true;
+      elements.audioPanel.replaceChildren();
+      renderVisualPoolPanes(state);
+      return;
+    }
+
+    elements.visualList.hidden = true;
+    elements.audioPanel.hidden = false;
+    renderVisualPoolPanes(state);
+    const audioRows = getFilteredAudioSources(Object.values(state.audioSources), state).map((source) =>
+      createAudioSourceRow(source, state),
+    );
+    elements.audioPanel.replaceChildren(...(audioRows.length > 0 ? audioRows : [createHint('No audio sources match this filter.')]));
+  }
+
+  function createRenderSignature(state: DirectorState): string {
+    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}`;
   }
 
   function createVisualRow(visual: VisualState): HTMLElement {
@@ -114,9 +220,69 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     return row;
   }
 
+  function createVisualGridCard(visual: VisualState): HTMLElement {
+    const card = document.createElement('article');
+    card.className = `visual-pool-card${options.isSelected('visual', visual.id) ? ' selected' : ''}`;
+    card.tabIndex = 0;
+    card.dataset.assetId = visual.id;
+    card.addEventListener('click', () => selectPoolEntity({ type: 'visual', id: visual.id }));
+    card.addEventListener('contextmenu', (event) => showVisualContextMenu(event, visual));
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectPoolEntity({ type: 'visual', id: visual.id });
+      }
+    });
+    if (visual.error) {
+      card.title = visual.error;
+    }
+
+    const preview = document.createElement('div');
+    preview.className = 'visual-pool-card__preview';
+    mountVisualPoolGridPreview(preview, visual, (cleanup) => {
+      visualPoolGridCleanups.push(cleanup);
+    });
+
+    const footer = document.createElement('div');
+    footer.className = 'visual-pool-card__footer';
+    const status = document.createElement('span');
+    status.className = `status-dot visual-pool-card__status ${visual.ready ? 'ready' : visual.error ? 'blocked' : 'standby'}`;
+    const label = document.createElement('strong');
+    label.className = 'visual-pool-card__label';
+    label.textContent = visual.label;
+    const meta = document.createElement('span');
+    meta.className = 'visual-pool-card__meta';
+    meta.textContent =
+      visual.kind === 'live'
+        ? `live · ${visual.capture.source}`
+        : `${visual.type} · ${formatDuration(visual.durationSeconds)}`;
+    if (visual.error) {
+      meta.title = visual.error;
+    }
+    const textCol = document.createElement('div');
+    textCol.className = 'visual-pool-card__text';
+    textCol.append(label, meta);
+    const remove = createButton('Remove', 'secondary row-action', async () => {
+      if (!confirmPoolRecordRemoval(visual.label)) {
+        return;
+      }
+      await window.xtream.visuals.remove(visual.id);
+      options.clearSelectionIf({ type: 'visual', id: visual.id });
+      const nextState = await window.xtream.director.getState();
+      render(nextState);
+      options.renderState(nextState);
+    });
+    decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
+    remove.addEventListener('click', (event) => event.stopPropagation());
+    footer.append(status, textCol, remove);
+    card.append(preview, footer);
+    return card;
+  }
+
   function createAudioSourceRow(source: AudioSourceState, state: DirectorState): HTMLElement {
     const row = document.createElement('article');
     row.className = `asset-row audio-source-row${options.isSelected('audio-source', source.id) ? ' selected' : ''}`;
+    row.dataset.assetId = source.id;
     row.tabIndex = 0;
     row.addEventListener('click', () => selectPoolEntity({ type: 'audio-source', id: source.id }));
     row.addEventListener('contextmenu', (event) => showAudioSourceContextMenu(event, source));
@@ -618,6 +784,22 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     return left.label.localeCompare(right.label);
   }
 
+  function syncVisualPoolLayoutToggle(): void {
+    const btn = elements.visualPoolLayoutToggleButton;
+    const visualActive = activePoolTab === 'visuals';
+    btn.hidden = !visualActive;
+    if (!visualActive) {
+      return;
+    }
+    const grid = visualPoolLayout === 'grid';
+    btn.setAttribute('aria-pressed', String(grid));
+    if (grid) {
+      decorateIconButton(btn, 'List', 'Show list view');
+    } else {
+      decorateIconButton(btn, 'LayoutGrid', 'Show grid view');
+    }
+  }
+
   function syncPoolTabs(): void {
     const visualActive = activePoolTab === 'visuals';
     elements.visualTabButton.classList.toggle('active', visualActive);
@@ -626,6 +808,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.audioTabButton.setAttribute('aria-selected', String(!visualActive));
     elements.addVisualsButton.title = visualActive ? 'Add visuals' : 'Add external audio';
     elements.addVisualsButton.setAttribute('aria-label', visualActive ? 'Add visuals' : 'Add external audio');
+    syncVisualPoolLayoutToggle();
   }
 
   function setPoolTab(tab: PoolTab): void {
@@ -742,6 +925,12 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       }
       options.renderState(await window.xtream.director.getState());
     });
+    elements.visualPoolLayoutToggleButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      visualPoolLayout = visualPoolLayout === 'list' ? 'grid' : 'list';
+      persistVisualPoolLayout(visualPoolLayout);
+      renderCurrentState();
+    });
     elements.addVisualsButton.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (activePoolTab === 'audio') {
@@ -761,6 +950,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   return {
     createRenderSignature,
     render,
+    syncPoolSelectionHighlight,
     selectEntityPoolTab,
     dismissContextMenu: dismissAudioSourceContextMenu,
     install,
