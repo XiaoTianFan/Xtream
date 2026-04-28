@@ -65,8 +65,11 @@ export function formatSubCueLabel(state: DirectorState | undefined, sub: Persist
 }
 
 export function formatSceneStateLabel(runtimeState: SceneRuntimeState | undefined, scene: PersistedSceneConfig): string {
+  if (scene.disabled) {
+    return 'disabled';
+  }
   if (runtimeState?.status) {
     return runtimeState.status;
   }
-  return scene.disabled ? 'disabled' : 'ready';
+  return 'ready';
 }

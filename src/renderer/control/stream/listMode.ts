@@ -64,7 +64,9 @@ function showSceneRowContextMenu(
 
   const toggleDisabledBtn = createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary context-menu-item', () => {
     dismissSceneRowContextMenu();
-    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } });
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } }).then(() => {
+      ctx.requestRender();
+    });
   });
   toggleDisabledBtn.setAttribute('role', 'menuitem');
 
@@ -166,8 +168,35 @@ export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamL
     }
   });
 
-  root.append(list, endDropTarget);
+  root.append(list, endDropTarget, createSceneListPhantomRow(stream, ctx));
   return root;
+}
+
+function createSceneListPhantomRow(stream: PersistedStreamConfig, ctx: StreamListModeContext): HTMLElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'stream-scene-list-phantom-create';
+  btn.textContent = '+ Create New Scene';
+  btn.addEventListener('click', () => {
+    const lastId = stream.sceneOrder.length > 0 ? stream.sceneOrder[stream.sceneOrder.length - 1] : undefined;
+    void window.xtream.stream.edit({ type: 'create-scene', afterSceneId: lastId }).then((s) => {
+      const order = s.stream.sceneOrder;
+      let newId: SceneId | undefined;
+      if (lastId !== undefined) {
+        const idx = order.indexOf(lastId);
+        newId = idx >= 0 ? order[idx + 1] : order[order.length - 1];
+      } else {
+        newId = order[order.length - 1];
+      }
+      if (newId) {
+        ctx.setSelectedSceneId(newId);
+      }
+      ctx.setBottomTab('scene');
+      ctx.clearDetailPane();
+      ctx.requestRender();
+    });
+  });
+  return btn;
 }
 
 function createSceneRowWrap(
@@ -177,7 +206,8 @@ function createSceneRowWrap(
   ctx: StreamListModeContext,
 ): HTMLElement {
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
-  const statusClass = runtimeState?.status ?? (scene.disabled ? 'disabled' : 'ready');
+  const runtimeRowStatus = runtimeState?.status ?? 'ready';
+  const statusClass = scene.disabled ? 'disabled' : runtimeRowStatus;
   const wrap = document.createElement('div');
   wrap.className = `stream-scene-row-wrap status-${statusClass}${scene.id === ctx.selectedSceneId ? ' focused' : ''}`;
   wrap.dataset.sceneId = scene.id;
