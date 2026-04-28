@@ -1,5 +1,5 @@
+import { decorateIconButton } from '../shared/icons';
 import { elements } from './elements';
-import { decorateIconButton } from './icons';
 
 export function installShellIcons(): void {
   decorateIconButton(elements.playButton, 'Play', 'Play');

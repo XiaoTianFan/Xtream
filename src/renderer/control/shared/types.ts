@@ -1,4 +1,4 @@
-import type { AudioSourceId, DisplayWindowId, VisualId, VirtualOutputId } from '../../shared/types';
+import type { AudioSourceId, DisplayWindowId, VisualId, VirtualOutputId } from '../../../shared/types';
 
 export type SelectedEntity =
   | { type: 'visual'; id: VisualId }

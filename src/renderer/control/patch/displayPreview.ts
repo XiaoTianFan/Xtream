@@ -1,9 +1,9 @@
-import { getDirectorSeconds, getMediaEffectiveTime } from '../../shared/timeline';
-import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../../shared/types';
-import { createPreviewLabel } from './dom';
-import { elements } from './elements';
-import { createPlaybackSyncKey, syncTimedMediaElement } from './mediaSync';
-import type { DisplayPreviewProgressEdge } from './types';
+import { getDirectorSeconds, getMediaEffectiveTime } from '../../../shared/timeline';
+import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
+import { createPreviewLabel } from '../shared/dom';
+import { elements } from '../shell/elements';
+import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
+import type { DisplayPreviewProgressEdge } from '../shared/types';
 
 const DISPLAY_PREVIEW_MAX_WIDTH = 854;
 const DISPLAY_PREVIEW_MAX_HEIGHT = 480;

@@ -6,12 +6,12 @@ import type {
   VisualId,
   VisualState,
   VirtualOutputState,
-} from '../../shared/types';
-import { OUTPUT_BUS_DELAY_MAX_MS, playOutputTestTone } from './audioRuntime';
-import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from './dom';
-import { elements } from './elements';
-import { formatAudioChannelDetail, formatBytes, formatDuration } from './formatters';
-import type { SelectedEntity } from './types';
+} from '../../../shared/types';
+import { OUTPUT_BUS_DELAY_MAX_MS, playOutputTestTone } from '../media/audioRuntime';
+import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
+import { elements } from '../shell/elements';
+import { formatAudioChannelDetail, formatBytes, formatDuration } from '../shared/formatters';
+import type { SelectedEntity } from '../shared/types';
 
 type DetailsPaneControllerOptions = {
   getSelectedEntity: () => SelectedEntity | undefined;

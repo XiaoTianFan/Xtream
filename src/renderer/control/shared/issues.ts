@@ -1,4 +1,4 @@
-import type { MediaValidationIssue } from '../../shared/types';
+import type { MediaValidationIssue } from '../../../shared/types';
 
 export function renderIssues(container: HTMLElement, issues: MediaValidationIssue[]): void {
   container.replaceChildren(

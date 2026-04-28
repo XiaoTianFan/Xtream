@@ -1,15 +1,15 @@
-import { describeLayout } from '../../shared/layouts';
-import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile } from '../../shared/types';
+import { describeLayout } from '../../../shared/layouts';
+import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile } from '../../../shared/types';
 import {
   applyDisplayBlackoutFadeStyle,
   applyVisualStyle,
   createDisplayPreview,
   getPreviewVisualIds,
 } from './displayPreview';
-import { createButton, createSelect, setSelectEnabled } from './dom';
-import { elements } from './elements';
-import { formatMilliseconds } from './formatters';
-import type { SelectedEntity } from './types';
+import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
+import { elements } from '../shell/elements';
+import { formatMilliseconds } from '../shared/formatters';
+import type { SelectedEntity } from '../shared/types';
 
 export type DisplayWorkspaceController = {
   createRenderSignature: (state: DirectorState) => string;

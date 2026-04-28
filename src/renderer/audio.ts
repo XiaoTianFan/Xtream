@@ -7,8 +7,8 @@ import {
   setSoloOutputIds,
   syncAudioRuntimeToDirector,
   syncVirtualAudioGraph,
-} from './control/audioRuntime';
-import { getMediaSyncState } from './control/mediaSync';
+} from './control/media/audioRuntime';
+import { getMediaSyncState } from './control/media/mediaSync';
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;

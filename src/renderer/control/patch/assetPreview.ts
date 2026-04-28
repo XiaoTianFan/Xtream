@@ -1,8 +1,8 @@
-import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../shared/types';
+import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../../shared/types';
 import { applyVisualStyle } from './displayPreview';
-import { createButton, createHint, createSlider, syncSliderProgress } from './dom';
-import { elements } from './elements';
-import type { SelectedEntity } from './types';
+import { createButton, createHint, createSlider, syncSliderProgress } from '../shared/dom';
+import { elements } from '../shell/elements';
+import type { SelectedEntity } from '../shared/types';
 
 export type AssetPreviewController = {
   render: (state: DirectorState, selectedEntity: SelectedEntity | undefined) => void;

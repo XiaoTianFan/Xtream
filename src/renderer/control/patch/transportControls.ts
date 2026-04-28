@@ -1,7 +1,7 @@
-import { formatTimecode, getDirectorSeconds, parseTimecodeInput } from '../../shared/timeline';
-import type { DirectorState, TransportCommand } from '../../shared/types';
-import { syncSliderProgress } from './dom';
-import { elements } from './elements';
+import { formatTimecode, getDirectorSeconds, parseTimecodeInput } from '../../../shared/timeline';
+import type { DirectorState, TransportCommand } from '../../../shared/types';
+import { syncSliderProgress } from '../shared/dom';
+import { elements } from '../shell/elements';
 
 type TransportControllerOptions = {
   getState: () => DirectorState | undefined;

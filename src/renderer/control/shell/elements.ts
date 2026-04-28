@@ -1,4 +1,4 @@
-import { assertElement } from './dom';
+import { assertElement } from '../shared/dom';
 
 export const elements = {
   appFrame: assertElement(document.querySelector<HTMLDivElement>('.app-frame'), 'appFrame'),

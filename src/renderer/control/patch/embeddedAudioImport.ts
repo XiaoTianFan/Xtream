@@ -1,6 +1,6 @@
-import type { AudioExtractionFormat, DirectorState, VisualId, VisualState } from '../../shared/types';
-import type { SelectedEntity } from './types';
-import { hasEmbeddedAudioTrack } from '../mediaMetadata';
+import type { AudioExtractionFormat, DirectorState, VisualId, VisualState } from '../../../shared/types';
+import { hasEmbeddedAudioTrack } from '../media/mediaMetadata';
+import type { SelectedEntity } from '../shared/types';
 
 export type EmbeddedAudioImportController = {
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;

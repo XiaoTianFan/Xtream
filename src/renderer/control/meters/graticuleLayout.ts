@@ -1,4 +1,4 @@
-import { meterVisualUToDb } from './audioRuntime';
+import { meterVisualUToDb } from '../media/audioRuntime';
 import { busNormToDb } from './busFaderLaw';
 
 /** Minimum vertical gap between graticule tick marks (px). */

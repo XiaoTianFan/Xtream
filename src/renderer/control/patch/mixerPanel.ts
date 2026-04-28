@@ -5,12 +5,12 @@ import type {
   OutputMeterReport,
   VirtualOutputId,
   VirtualOutputState,
-} from '../../shared/types';
+} from '../../../shared/types';
 import {
   meterLevelPercent,
   METER_DISPLAY_CEIL_DB,
   METER_DISPLAY_FLOOR_DB,
-} from './audioRuntime';
+} from '../media/audioRuntime';
 import {
   busDbToFaderSliderValue,
   faderMaxSteps,
@@ -19,17 +19,17 @@ import {
   faderSliderValueToBusDb,
   faderZeroSliderValue,
   quantizeBusFaderDb,
-} from './busFaderLaw';
-import { createButton, createDbFader, createHint, createPanKnob, createSelect, createSlider, syncSliderProgress } from './dom';
-import { elements } from './elements';
-import { formatAudioChannelLabel } from './formatters';
+} from '../meters/busFaderLaw';
+import { createButton, createDbFader, createHint, createPanKnob, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
+import { elements } from '../shell/elements';
+import { formatAudioChannelLabel } from '../shared/formatters';
 import {
   labelCountFromHeight,
   observeElementHeight,
   renderAudioFaderGraticule,
   renderOutputMeterGraticule,
-} from './graticuleLayout';
-import type { SelectedEntity } from './types';
+} from '../meters/graticuleLayout';
+import type { SelectedEntity } from '../shared/types';
 
 export type MixerPanelController = {
   createRenderSignature: (state: DirectorState) => string;

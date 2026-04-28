@@ -1,5 +1,5 @@
-import { formatTimecode } from '../../shared/timeline';
-import type { AudioSourceState } from '../../shared/types';
+import { formatTimecode } from '../../../shared/timeline';
+import type { AudioSourceState } from '../../../shared/types';
 
 export function formatDuration(seconds: number | undefined): string {
   return seconds === undefined ? 'duration --' : formatTimecode(seconds);

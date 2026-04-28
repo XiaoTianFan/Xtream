@@ -1,9 +1,9 @@
-import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../shared/types';
-import { createButton, createHint } from './dom';
-import { elements } from './elements';
-import { formatAudioChannelLabel, formatDuration } from './formatters';
-import { decorateIconButton } from './icons';
-import type { SelectedEntity } from './types';
+import type { AudioSourceState, DirectorState, VisualId, VisualState } from '../../../shared/types';
+import { createButton, createHint } from '../shared/dom';
+import { elements } from '../shell/elements';
+import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
+import { decorateIconButton } from '../shared/icons';
+import type { SelectedEntity } from '../shared/types';
 
 type PoolTab = 'visuals' | 'audio';
 type PoolSort = 'label' | 'duration' | 'status';

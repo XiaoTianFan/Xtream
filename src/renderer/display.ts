@@ -3,8 +3,8 @@ import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../shared/types';
-import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/mediaSync';
-import { hasEmbeddedAudioTrack } from './mediaMetadata';
+import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/media/mediaSync';
+import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);

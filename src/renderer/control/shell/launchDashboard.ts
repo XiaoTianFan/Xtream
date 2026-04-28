@@ -1,4 +1,4 @@
-import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../shared/types';
+import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
 import { elements } from './elements';
 
 type LaunchDashboardOptions = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DirectorState } from '../../shared/types';
+import type { DirectorState } from '../../../shared/types';
 import { clampAudioPan, computeAudioGraphSignature, getEffectiveOutputGain } from './audioRuntime';
 
 const output = {

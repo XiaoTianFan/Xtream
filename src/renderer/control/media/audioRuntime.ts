@@ -1,5 +1,5 @@
-import { getAudioEffectiveTime, getDirectorSeconds } from '../../shared/timeline';
-import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputState } from '../../shared/types';
+import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
+import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputState } from '../../../shared/types';
 import { createPlaybackSyncKey, requestMediaPlay, syncTimedMediaElement } from './mediaSync';
 
 type SinkCapableAudioElement = HTMLAudioElement & {

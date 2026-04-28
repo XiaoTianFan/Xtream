@@ -1,4 +1,4 @@
-import type { DirectorState } from '../../shared/types';
+import type { DirectorState } from '../../../shared/types';
 
 export type MediaSyncState = {
   pendingSeekSeconds?: number;
