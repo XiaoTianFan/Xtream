@@ -1,4 +1,4 @@
-import type { DirectorState, MediaValidationIssue } from '../../../shared/types';
+import type { DirectorState, MediaValidationIssue, ShowConfigOperationResult } from '../../../shared/types';
 
 type ShowActionsOptions = {
   renderState: (state: DirectorState) => void;
@@ -6,6 +6,7 @@ type ShowActionsOptions = {
   clearSelection: () => void;
   onShowOpened: () => void;
   onShowCreated: () => void;
+  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
 };
 
 export type ShowActions = ReturnType<typeof createShowActions>;
@@ -29,6 +30,8 @@ export function createShowActions(options: ShowActionsOptions) {
     const result = await window.xtream.show.open();
     if (result) {
       options.renderState(result.state);
+      await options.hydrateAfterShowLoaded?.(result);
+      options.renderState(result.state);
       options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
       options.onShowOpened();
     }
@@ -38,6 +41,8 @@ export function createShowActions(options: ShowActionsOptions) {
     const result = await window.xtream.show.createProject();
     if (result) {
       options.clearSelection();
+      options.renderState(result.state);
+      await options.hydrateAfterShowLoaded?.(result);
       options.renderState(result.state);
       options.setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
       options.onShowCreated();

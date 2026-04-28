@@ -1,6 +1,7 @@
 import { formatTimecode } from '../../../shared/timeline';
 import { resolveFollowsSceneId } from '../../../shared/streamSchedule';
 import type {
+  ControlProjectUiStreamState,
   DirectorState,
   DisplayMonitorInfo,
   DisplayWindowState,
@@ -43,6 +44,12 @@ type StreamSurfaceOptions = {
 export type StreamSurfaceController = SurfaceController & {
   applyOutputMeterReport: (report: OutputMeterReport) => void;
   syncPreviewElements: () => void;
+  exportProjectUiSnapshot: () => ControlProjectUiStreamState;
+  applyImportedProjectUi: (
+    snapshot: ControlProjectUiStreamState | undefined,
+    directorState: DirectorState,
+    streamPublic: StreamEnginePublicState,
+  ) => void;
 };
 
 const STREAM_LAYOUT_PREF_KEY = 'xtream.control.stream.layout.v1';
@@ -1531,6 +1538,71 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
   }
 
+  function exportProjectUiSnapshot(): ControlProjectUiStreamState {
+    return {
+      mode,
+      bottomTab,
+      selectedSceneId,
+      expandedListSceneIds: [...expandedListSceneIds],
+      layout: readStreamLayoutPrefs(),
+      detailPane: detailPane
+        ? {
+            type: detailPane.type,
+            id: detailPane.id,
+            returnTab: detailPane.returnTab,
+          }
+        : undefined,
+    };
+  }
+
+  function applyImportedProjectUi(
+    snapshot: ControlProjectUiStreamState | undefined,
+    directorState: DirectorState,
+    streamPublic: StreamEnginePublicState,
+  ): void {
+    if (!snapshot) {
+      return;
+    }
+    const streamCfg = streamPublic.stream;
+    if (snapshot.mode === 'list' || snapshot.mode === 'flow') {
+      mode = snapshot.mode;
+    }
+    if (snapshot.bottomTab === 'scene' || snapshot.bottomTab === 'mixer' || snapshot.bottomTab === 'displays') {
+      bottomTab = snapshot.bottomTab;
+    }
+    if (snapshot.selectedSceneId && streamCfg.scenes[snapshot.selectedSceneId]) {
+      selectedSceneId = snapshot.selectedSceneId;
+    }
+    expandedListSceneIds.clear();
+    for (const sid of snapshot.expandedListSceneIds ?? []) {
+      if (streamCfg.scenes[sid]) {
+        expandedListSceneIds.add(sid);
+      }
+    }
+    detailPane = undefined;
+    if (snapshot.detailPane) {
+      const d = snapshot.detailPane;
+      if (d.type === 'display' && directorState.displays[d.id]) {
+        detailPane = { type: 'display', id: d.id, returnTab: d.returnTab };
+      } else if (d.type === 'output' && directorState.outputs[d.id]) {
+        detailPane = { type: 'output', id: d.id, returnTab: d.returnTab };
+      }
+    }
+    headerEditField = undefined;
+    if (snapshot.layout && Object.keys(snapshot.layout).length > 0) {
+      try {
+        const merged = {
+          ...(JSON.parse(localStorage.getItem(STREAM_LAYOUT_PREF_KEY) ?? '{}') as Record<string, unknown>),
+          ...snapshot.layout,
+        };
+        localStorage.setItem(STREAM_LAYOUT_PREF_KEY, JSON.stringify(merged));
+      } catch {
+        localStorage.setItem(STREAM_LAYOUT_PREF_KEY, JSON.stringify(snapshot.layout));
+      }
+      applyStreamLayoutPrefs(readStreamLayoutPrefs());
+    }
+  }
+
   function saveStreamLayoutPrefs(update: { mediaWidthPx?: number; bottomHeightPx?: number; assetPreviewHeightPx?: number }): void {
     const prefs = { ...readStreamLayoutPrefs(), ...update };
     localStorage.setItem(STREAM_LAYOUT_PREF_KEY, JSON.stringify(prefs));
@@ -1657,5 +1729,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         syncPreviewElements(currentState);
       }
     },
+    exportProjectUiSnapshot,
+    applyImportedProjectUi,
   };
 }

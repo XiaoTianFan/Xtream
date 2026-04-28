@@ -19,6 +19,8 @@ type SurfaceRouterOptions = {
 export type SurfaceRouter = {
   getActiveSurface: () => ControlSurface;
   setActiveSurface: (surface: ControlSurface) => void;
+  /** Apply saved focus without a full render cycle; call `render` with state immediately after. */
+  setPersistedActiveSurface: (surface: ControlSurface) => void;
   render: (state: DirectorState) => void;
 };
 
@@ -44,6 +46,16 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
     } else {
       syncShellState();
     }
+  }
+
+  function setPersistedActiveSurface(surface: ControlSurface): void {
+    if (!surfaceById.has(surface)) {
+      return;
+    }
+    activeSurface = surface;
+    surfaceRenderSignature = '';
+    mountedSurface = undefined;
+    syncShellState();
   }
 
   function render(state: DirectorState): void {
@@ -97,6 +109,7 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
   return {
     getActiveSurface,
     setActiveSurface,
+    setPersistedActiveSurface,
     render,
   };
 }

@@ -1,4 +1,4 @@
-import type { DirectorState, DisplayMonitorInfo, MediaValidationIssue } from '../../../shared/types';
+import type { ControlProjectUiPatchLayout, DirectorState, DisplayMonitorInfo, MediaValidationIssue } from '../../../shared/types';
 import type { ShowActions } from '../app/showActions';
 import { patchElements as elements } from './elements';
 import type { ControlSurface, SelectedEntity } from '../shared/types';
@@ -11,6 +11,7 @@ import {
   applyLayoutPrefs,
   getMaxMixerWidth,
   installSplitters,
+  mergeImportedLayoutPrefs,
   readLayoutPrefs,
   restoreTemporaryMixerExpansion,
   setTemporaryMixerWidth,
@@ -216,6 +217,17 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     );
   }
 
+  function exportLayoutUiSnapshot(): ControlProjectUiPatchLayout {
+    return { ...readLayoutPrefs() };
+  }
+
+  function applyImportedLayoutUi(prefs: ControlProjectUiPatchLayout | undefined): void {
+    if (!prefs || Object.keys(prefs).length === 0) {
+      return;
+    }
+    mergeImportedLayoutPrefs(prefs);
+  }
+
   return {
     id: 'patch' as const,
     render,
@@ -231,5 +243,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     applyOutputMeterReport: mixerPanel.applyOutputMeterReport,
     getDisplayStatusLabel: displayWorkspace.getDisplayStatusLabel,
     getDisplayTelemetry: displayWorkspace.getDisplayTelemetry,
+    exportLayoutUiSnapshot,
+    applyImportedLayoutUi,
   };
 }

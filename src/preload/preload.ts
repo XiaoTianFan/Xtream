@@ -23,6 +23,7 @@ import type {
   OutputMeterReport,
   PresetId,
   PresetResult,
+  ControlProjectUiStateV1,
   LaunchShowData,
   RendererReadyReport,
   ShowSettingsUpdate,
@@ -135,13 +136,17 @@ const api = {
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
     createProject: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:create-project'),
     getLaunchData: (): Promise<LaunchShowData> => ipcRenderer.invoke('show:get-launch-data'),
-    openDefault: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:open-default'),
+    openDefault: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-default'),
     openRecent: (filePath: string): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-recent', filePath),
     updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),
     chooseEmbeddedAudioImport: (candidates: EmbeddedAudioImportCandidate[]): Promise<EmbeddedAudioImportChoice> =>
       ipcRenderer.invoke('show:choose-embedded-audio-import', candidates),
     open: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open'),
     exportDiagnostics: (): Promise<string | undefined> => ipcRenderer.invoke('show:export-diagnostics'),
+  },
+  controlUi: {
+    getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),
+    saveSnapshot: (filePath: string, snapshot: ControlProjectUiStateV1): Promise<void> => ipcRenderer.invoke('controlUi:save-snapshot', filePath, snapshot),
   },
   renderer: {
     ready: (report: RendererReadyReport): Promise<void> => ipcRenderer.invoke('renderer:ready', report),

@@ -788,6 +788,40 @@ export type LaunchShowData = {
   };
 };
 
+/** Per-project persisted control-shell UI (persisted beside app data, keyed by show file path). */
+export type ControlSurfaceId = 'patch' | 'stream' | 'performance' | 'config' | 'logs';
+
+export type ControlProjectUiPatchLayout = {
+  mediaWidthPx?: number;
+  footerHeightPx?: number;
+  mixerWidthPx?: number;
+  assetPreviewHeightPx?: number;
+};
+
+export type ControlProjectUiStreamDetail =
+  | { type: 'display'; id: string; returnTab: 'scene' | 'mixer' | 'displays' }
+  | { type: 'output'; id: string; returnTab: 'scene' | 'mixer' | 'displays' };
+
+export type ControlProjectUiStreamState = {
+  mode?: 'list' | 'flow';
+  bottomTab?: 'scene' | 'mixer' | 'displays';
+  selectedSceneId?: string;
+  expandedListSceneIds?: string[];
+  layout?: {
+    mediaWidthPx?: number;
+    bottomHeightPx?: number;
+    assetPreviewHeightPx?: number;
+  };
+  detailPane?: ControlProjectUiStreamDetail;
+};
+
+export type ControlProjectUiStateV1 = {
+  v: 1;
+  activeSurface: ControlSurfaceId;
+  patch?: ControlProjectUiPatchLayout;
+  stream?: ControlProjectUiStreamState;
+};
+
 export type IpcChannels = {
   'director:get-state': () => DirectorState;
   'director:apply-preset': (preset: PresetId) => PresetResult;
@@ -826,7 +860,7 @@ export type IpcChannels = {
   'show:save-as': () => ShowConfigOperationResult | undefined;
   'show:create-project': () => ShowConfigOperationResult | undefined;
   'show:get-launch-data': () => LaunchShowData;
-  'show:open-default': () => ShowConfigOperationResult;
+  'show:open-default': () => ShowConfigOperationResult | undefined;
   'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
   'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
@@ -844,6 +878,8 @@ export type IpcChannels = {
   'stream:get-state': () => StreamEnginePublicState;
   'stream:edit': (command: StreamEditCommand) => StreamEnginePublicState;
   'stream:transport': (command: StreamCommand) => StreamEnginePublicState;
+  'controlUi:get-for-path': (filePath: string) => ControlProjectUiStateV1 | undefined;
+  'controlUi:save-snapshot': (filePath: string, snapshot: ControlProjectUiStateV1) => void;
 };
 
 export type DirectorEventName = 'director:state';

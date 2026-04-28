@@ -1,5 +1,5 @@
 import './control.css';
-import type { DirectorState, DisplayMonitorInfo, MediaValidationIssue } from '../shared/types';
+import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult } from '../shared/types';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import { combineVisibleIssues } from './control/app/appStatus';
 import { installInteractionLock, isPanelInteractionActive } from './control/app/interactionLocks';
@@ -17,6 +17,7 @@ import { createLaunchDashboardController } from './control/shell/launchDashboard
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
 import { renderIssues as renderIssueList } from './control/shared/issues';
+import type { ControlSurface } from './control/shared/types';
 
 let currentState: DirectorState | undefined;
 let animationFrame: number | undefined;
@@ -58,6 +59,9 @@ function tick(): void {
   animationFrame = window.requestAnimationFrame(tick);
 }
 
+/** Replaced after surfaces exist; always called only after full init. */
+let hydrateControlShellAfterShow: (result: ShowConfigOperationResult) => Promise<void> = async () => undefined;
+
 const showActions = createShowActions({
   renderState,
   setShowStatus,
@@ -72,6 +76,7 @@ const showActions = createShowActions({
       launchDashboard.hide();
     }
   },
+  hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
 });
 
 const patchSurface = createPatchSurfaceController({
@@ -109,10 +114,50 @@ const surfaceRouter = createSurfaceRouter({
   ],
 });
 
+hydrateControlShellAfterShow = async (result: ShowConfigOperationResult) => {
+  const filePath = result.filePath;
+  if (!filePath) {
+    return;
+  }
+  const snapshot = await window.xtream.controlUi.getForPath(filePath);
+  if (!snapshot || snapshot.v !== 1) {
+    return;
+  }
+  if (snapshot.patch && Object.keys(snapshot.patch).length > 0) {
+    patchSurface.applyImportedLayoutUi(snapshot.patch);
+  }
+  const streamPublic = await window.xtream.stream.getState();
+  streamSurface.applyImportedProjectUi(snapshot.stream, result.state, streamPublic);
+  const surfaceId = snapshot.activeSurface as ControlSurface;
+  if (
+    surfaceId === 'patch' ||
+    surfaceId === 'stream' ||
+    surfaceId === 'performance' ||
+    surfaceId === 'config' ||
+    surfaceId === 'logs'
+  ) {
+    surfaceRouter.setPersistedActiveSurface(surfaceId);
+  }
+};
+
+window.__xtreamGetControlUiSnapshot = (): ControlProjectUiStateV1 | null => {
+  if (!currentState) {
+    return null;
+  }
+  const snap: ControlProjectUiStateV1 = {
+    v: 1,
+    activeSurface: surfaceRouter.getActiveSurface(),
+    patch: patchSurface.exportLayoutUiSnapshot(),
+    stream: streamSurface.exportProjectUiSnapshot(),
+  };
+  return snap;
+};
+
 const launchDashboard = createLaunchDashboardController({
   renderState,
   setShowStatus,
   clearSelection: patchSurface.clearSelection,
+  hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
 });
 
 installInteractionLock(patchElements.visualList);
@@ -136,7 +181,7 @@ installRailNavigation(surfaceRouter.setActiveSurface);
 elements.launchOpenShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.open();
   if (result) {
-    launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
+    await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
     return;
   }
   await launchDashboard.load();
@@ -144,14 +189,18 @@ elements.launchOpenShowButton.addEventListener('click', async () => {
 elements.launchCreateShowButton.addEventListener('click', async () => {
   const result = await window.xtream.show.createProject();
   if (result) {
-    launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
+    await launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
     return;
   }
   await launchDashboard.load();
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
   const result = await window.xtream.show.openDefault();
-  launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
+  if (!result) {
+    await launchDashboard.load();
+    return;
+  }
+  await launchDashboard.complete(result, `Opened default show: ${result.filePath ?? 'default location'}`);
 });
 patchElements.refreshOutputsButton.addEventListener('click', async () => {
   await loadAudioDevices();

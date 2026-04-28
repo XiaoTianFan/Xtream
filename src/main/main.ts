@@ -48,6 +48,7 @@ import type {
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
+  ControlProjectUiStateV1,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
@@ -72,7 +73,59 @@ let currentShowConfigPath: string | undefined;
 let autoSaveTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
 let soloOutputIds: VirtualOutputId[] = [];
-let hasShowChanges = false;
+/** Edited since explicit save or successful load/create; unrelated to autosave completion. */
+let showExplicitDirty = false;
+/** Skip flushing pending autosave on shutdown (Don't save branch). */
+let skipAutoSaveFlushOnShutdown = false;
+
+function normalizeShowProjectKey(configPath: string): string {
+  return path.resolve(configPath).toLowerCase();
+}
+
+function getControlUiStateFilePath(): string {
+  return path.join(app.getPath('userData'), CONTROL_PROJECT_UI_STATE_FILENAME);
+}
+
+function readControlUiStateStore(): Record<string, ControlProjectUiStateV1> {
+  try {
+    const raw = fs.readFileSync(getControlUiStateFilePath(), 'utf8');
+    return JSON.parse(raw) as Record<string, ControlProjectUiStateV1>;
+  } catch {
+    return {};
+  }
+}
+
+function writeControlUiStateStore(store: Record<string, ControlProjectUiStateV1>): void {
+  const filePath = getControlUiStateFilePath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, 'utf8');
+}
+
+function getControlUiStateForPath(showFilePath: string): ControlProjectUiStateV1 | undefined {
+  return readControlUiStateStore()[normalizeShowProjectKey(showFilePath)];
+}
+
+function saveControlUiStateForPath(showFilePath: string, snapshot: ControlProjectUiStateV1): void {
+  const key = normalizeShowProjectKey(showFilePath);
+  const store = readControlUiStateStore();
+  store[key] = snapshot;
+  writeControlUiStateStore(store);
+}
+
+async function persistControlUiSnapshotFromRenderer(showFilePath: string | undefined): Promise<void> {
+  if (!controlWindow || controlWindow.isDestroyed() || controlWindow.webContents.isDestroyed() || !showFilePath) {
+    return;
+  }
+  try {
+    const raw = await controlWindow.webContents.executeJavaScript('window.__xtreamGetControlUiSnapshot?.() ?? null', true);
+    if (!raw || typeof raw !== 'object') {
+      return;
+    }
+    saveControlUiStateForPath(showFilePath, raw as ControlProjectUiStateV1);
+  } catch (error: unknown) {
+    console.warn('Could not persist control UI snapshot.', error);
+  }
+}
 type PendingDisplayMediaGrant = { visualId: string; sourceId?: string; createdAtWallTimeMs: number };
 const pendingDisplayMediaGrants = new Map<number, PendingDisplayMediaGrant[]>();
 
@@ -83,10 +136,12 @@ const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'p
 /** Matches add-file dialog: Audio + Video/Audio groups (excludes * catch-all) */
 const AUDIO_FILE_IMPORT_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'm4v', 'webm']);
 const LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS = 30 * 60;
+const CONTROL_PROJECT_UI_STATE_FILENAME = 'control-project-ui-state.json';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 function createControlWindow(): BrowserWindow {
+  let suppressCloseGuard = false;
   const iconPath = getAppIconPath();
   const window = new BrowserWindow({
     width: 1280,
@@ -107,6 +162,21 @@ function createControlWindow(): BrowserWindow {
   } else {
     void window.loadFile(path.join(rendererRoot, 'index.html'));
   }
+  window.on('close', (e) => {
+    if (suppressCloseGuard || isShuttingDown) {
+      return;
+    }
+    e.preventDefault();
+    void (async () => {
+      const outcome = await runCloseOrQuitConfirmation();
+      if (outcome === 'abort') {
+        return;
+      }
+      await persistControlUiSnapshotFromRenderer(currentShowConfigPath);
+      suppressCloseGuard = true;
+      window.close();
+    })();
+  });
   window.on('closed', () => {
     controlWindow = undefined;
     if (!isShuttingDown) {
@@ -310,18 +380,34 @@ function setSoloOutputIds(outputIds: VirtualOutputId[]): void {
 }
 
 function beginAppShutdown(): void {
+  if (isShuttingDown) {
+    return;
+  }
   isShuttingDown = true;
-  flushShowConfigAutoSave();
+  const skipFlush = skipAutoSaveFlushOnShutdown;
+  skipAutoSaveFlushOnShutdown = false;
+  if (!skipFlush) {
+    flushShowConfigAutoSave();
+  } else {
+    cancelPendingAutosaveWithoutFlush();
+  }
   displayRegistry?.closeAll();
   audioWindow?.close();
   app.quit();
 }
 
+function cancelPendingAutosaveWithoutFlush(): void {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = undefined;
+  }
+}
+
 function scheduleShowConfigAutoSave(): void {
-  hasShowChanges = true;
   if (isShuttingDown || !currentShowConfigPath) {
     return;
   }
+  showExplicitDirty = true;
   if (autoSaveTimer) {
     clearTimeout(autoSaveTimer);
   }
@@ -330,9 +416,6 @@ function scheduleShowConfigAutoSave(): void {
     if (currentShowConfigPath) {
       void ensureShowProjectStructure(currentShowConfigPath)
         .then(() => writeShowConfig(currentShowConfigPath!, createPersistedShowForDisk()))
-        .then(() => {
-          hasShowChanges = false;
-        })
         .catch((error: unknown) => {
           console.error('Failed to auto-save show config.', error);
         });
@@ -350,7 +433,6 @@ function flushShowConfigAutoSave(): void {
     fs.mkdirSync(path.dirname(currentShowConfigPath), { recursive: true });
     ensureShowProjectStructureSync(currentShowConfigPath);
     fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(createPersistedShowForDisk(), null, 2)}\n`, 'utf8');
-    hasShowChanges = false;
   } catch (error: unknown) {
     console.error('Failed to save show config before shutdown.', error);
   }
@@ -442,7 +524,7 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
     director.registerDisplay(state);
   }
   currentShowConfigPath = configPath;
-  hasShowChanges = false;
+  showExplicitDirty = false;
   streamEngine.loadFromShow(config);
   return { state: director.getState(), filePath: currentShowConfigPath, issues };
 }
@@ -465,7 +547,7 @@ async function createEmptyShowProject(configPath: string): Promise<void> {
   const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
   director.registerDisplay(display);
   await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
-  hasShowChanges = false;
+  showExplicitDirty = false;
 }
 
 function getProjectAudioDirectory(): string | undefined {
@@ -588,39 +670,121 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
   }
 }
 
-async function promptBeforeCreateShowIfNeeded(): Promise<boolean> {
-  if (!hasShowChanges) {
+type UnsavedPromptKind = 'create' | 'open' | 'openDefault' | 'openRecent';
+
+function unsavedPromptCopy(kind: UnsavedPromptKind): { title: string; message: string; detail: string } {
+  switch (kind) {
+    case 'create':
+      return {
+        title: 'Create new show project',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before creating a new show project or discard changes to continue.',
+      };
+    case 'openDefault':
+      return {
+        title: 'Open default show',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before opening the default show or discard changes to continue.',
+      };
+    case 'openRecent':
+      return {
+        title: 'Open recent show',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before opening another project or discard changes to continue.',
+      };
+    default:
+      return {
+        title: 'Open show project',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before opening another project or discard changes to continue.',
+      };
+  }
+}
+
+async function saveCurrentShowToDiskExplicitly(): Promise<void> {
+  currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
+  cancelPendingAutosaveWithoutFlush();
+  await ensureShowProjectStructure(currentShowConfigPath);
+  await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
+  showExplicitDirty = false;
+}
+
+/** Returns whether to continue the attempted action (`true`) or abort (`false`). */
+async function promptUnsavedChangesIfNeeded(kind: UnsavedPromptKind): Promise<boolean> {
+  if (!showExplicitDirty) {
     return true;
   }
+  const { title, message, detail } = unsavedPromptCopy(kind);
   const result = controlWindow
     ? await dialog.showMessageBox(controlWindow, {
         type: 'question',
-        buttons: ['Save', 'Discard', 'Cancel'],
+        buttons: ['Save', "Don't Save", 'Cancel'],
         defaultId: 0,
         cancelId: 2,
-        title: 'Create new show',
-        message: 'Create a new show project?',
-        detail: 'Save or discard the current show before creating an empty project.',
+        title,
+        message,
+        detail,
       })
     : await dialog.showMessageBox({
         type: 'question',
-        buttons: ['Save', 'Discard', 'Cancel'],
+        buttons: ['Save', "Don't Save", 'Cancel'],
         defaultId: 0,
         cancelId: 2,
-        title: 'Create new show',
-        message: 'Create a new show project?',
-        detail: 'Save or discard the current show before creating an empty project.',
+        title,
+        message,
+        detail,
       });
   if (result.response === 2) {
     return false;
   }
   if (result.response === 0) {
-    currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
-    await ensureShowProjectStructure(currentShowConfigPath);
-    await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
-    hasShowChanges = false;
+    await saveCurrentShowToDiskExplicitly();
+  }
+  if (result.response === 1) {
+    cancelPendingAutosaveWithoutFlush();
   }
   return true;
+}
+
+async function runCloseOrQuitConfirmation(): Promise<'abort' | 'quit'> {
+  if (!showExplicitDirty) {
+    skipAutoSaveFlushOnShutdown = false;
+    return 'quit';
+  }
+  const result = controlWindow
+    ? await dialog.showMessageBox(controlWindow, {
+        type: 'question',
+        buttons: ['Save', "Don't Save", 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Quit Xtream',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before quitting or discard changes without saving.',
+      })
+    : await dialog.showMessageBox({
+        type: 'question',
+        buttons: ['Save', "Don't Save", 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Quit Xtream',
+        message: 'The current show has unsaved changes.',
+        detail: 'Save your changes before quitting or discard changes without saving.',
+      });
+  if (result.response === 2) {
+    return 'abort';
+  }
+  if (result.response === 0) {
+    try {
+      await saveCurrentShowToDiskExplicitly();
+    } catch (error: unknown) {
+      console.error('Save before quit failed.', error);
+      return 'abort';
+    }
+    skipAutoSaveFlushOnShutdown = false;
+    return 'quit';
+  }
+  skipAutoSaveFlushOnShutdown = true;
+  return 'quit';
 }
 
 function registerIpcHandlers(): void {
@@ -857,7 +1021,8 @@ function registerIpcHandlers(): void {
     currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
     await ensureShowProjectStructure(currentShowConfigPath);
     await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
-    hasShowChanges = false;
+    cancelPendingAutosaveWithoutFlush();
+    showExplicitDirty = false;
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
 
@@ -873,13 +1038,14 @@ function registerIpcHandlers(): void {
     currentShowConfigPath = result.filePath;
     await ensureShowProjectStructure(currentShowConfigPath);
     await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
-    hasShowChanges = false;
+    cancelPendingAutosaveWithoutFlush();
+    showExplicitDirty = false;
     await addRecentShow(app.getPath('userData'), currentShowConfigPath);
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
 
   ipcMain.handle('show:create-project', async (): Promise<ShowConfigOperationResult | undefined> => {
-    if (!(await promptBeforeCreateShowIfNeeded())) {
+    if (!(await promptUnsavedChangesIfNeeded('create'))) {
       return undefined;
     }
     const result = await showOpenDialog({
@@ -906,8 +1072,11 @@ function registerIpcHandlers(): void {
     };
   });
 
-  ipcMain.handle('show:open-default', async (): Promise<ShowConfigOperationResult> => {
+  ipcMain.handle('show:open-default', async (): Promise<ShowConfigOperationResult | undefined> => {
     const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
+    if (!(await promptUnsavedChangesIfNeeded('openDefault'))) {
+      return undefined;
+    }
     if (!fs.existsSync(defaultShowPath)) {
       await createEmptyShowProject(defaultShowPath);
     }
@@ -917,6 +1086,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('show:open-recent', async (_event, filePath: string): Promise<ShowConfigOperationResult | undefined> => {
     if (!fs.existsSync(filePath)) {
       await readRecentShows(app.getPath('userData'));
+      return undefined;
+    }
+    if (!(await promptUnsavedChangesIfNeeded('openRecent'))) {
       return undefined;
     }
     return openShowConfigPath(filePath);
@@ -965,6 +1137,9 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle('show:open', async (): Promise<ShowConfigOperationResult | undefined> => {
+    if (!(await promptUnsavedChangesIfNeeded('open'))) {
+      return undefined;
+    }
     const result = await showOpenDialog({
       title: 'Open Xtream show config',
       properties: ['openFile'],
@@ -974,6 +1149,12 @@ function registerIpcHandlers(): void {
       return undefined;
     }
     return openShowConfigPath(result.filePaths[0]);
+  });
+
+  ipcMain.handle('controlUi:get-for-path', (_event, filePath: string) => getControlUiStateForPath(filePath));
+
+  ipcMain.handle('controlUi:save-snapshot', (_event, filePath: string, snapshot: ControlProjectUiStateV1) => {
+    saveControlUiStateForPath(filePath, snapshot);
   });
 
   ipcMain.handle('show:export-diagnostics', async (): Promise<string | undefined> => {
@@ -1118,11 +1299,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
-  isShuttingDown = true;
-  flushShowConfigAutoSave();
-  displayRegistry?.closeAll();
-  audioWindow?.close();
+app.on('before-quit', (e) => {
+  if (!isShuttingDown && controlWindow && !controlWindow.isDestroyed()) {
+    e.preventDefault();
+    controlWindow.close();
+    return;
+  }
 });
 
 app.on('window-all-closed', () => {

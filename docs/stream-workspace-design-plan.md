@@ -879,6 +879,20 @@ Exit: Stream Workspace can display and select real scenes.
 
 Exit: users can build a Stream sequence in List mode.
 
+### Phase 5.1: Stream Control Module Layout
+
+Refactor the Stream control renderer so it follows the same pattern as Patch (`patchSurface.ts` stays thin; feature areas live in dedicated modules). This phase is **structure only**: behavior and UX from Phase 4–5 remain unchanged unless a split fixes a real bug.
+
+- Extract `streamSurface.ts` into an orchestrator that owns lifecycle, shared UI state (selection, mode, bottom tab, detail overlay), and wiring to existing Patch controllers (`mediaPool`, `mixerPanel`, `displayWorkspace`, `assetPreview`, embedded audio import).
+- Move layout persistence and splitters into a dedicated module (parallel to `patch/layoutPrefs.ts`).
+- Move DOM assembly for the Stream shell (media pool and asset-preview element trees, splitter nodes, mixer/display host nodes) out of the orchestrator.
+- Move the Stream header, List mode, Flow placeholder canvas, bottom pane chrome, and temporary display/output detail overlay each into their own modules.
+- Move pure formatters (trigger summary, duration labels, sub-cue labels, state labels) into a small shared file for List, Flow, and Scene Edit.
+- Move Scene Edit layout and the scene-level form (title, note, trigger, loop, preload) under `stream/sceneEdit/` so Phase 6 sub-cue editors can grow without a second mega-file.
+- Prefer incremental extraction (formatters and layout first, then header and list, then scene form) to keep reviews small.
+
+Exit: no single Stream control file dominates maintenance; later phases add features in the mapped locations below instead of growing one TypeScript file without bound.
+
 ### Phase 6: Sub-Cue Editing
 
 - Implement audio sub-cue editor and routing to virtual outputs.
@@ -929,6 +943,37 @@ Exit: Stream Workspace reaches the advanced flexible shell queue target.
 - Add Playwright smoke tests for List and Flow surfaces.
 
 Exit: Stream Workspace is production-ready.
+
+### Stream workspace control code layout (`src/renderer/control/stream/`)
+
+The Patch workspace uses `patchSurface.ts` plus `patch/*.ts` modules. Stream should mirror that: **one orchestrator** plus **feature modules**. Paths below are the intended homes as phases land; names can be adjusted (e.g. `streamHeader.ts` vs `header.ts`) but the split should stay coarse enough to navigate and fine enough that no file returns to multi-thousand-line scale.
+
+| Module | Purpose | Primary phases |
+| --- | --- | --- |
+| `streamSurface.ts` | Mount/unmount, `render` pipeline, shared closure state, child controller wiring, `StreamSurfaceController` export | All |
+| `streamTypes.ts` | UI-only types: mode, bottom tab, detail overlay shape, options | 5.1 |
+| `layoutPrefs.ts` | Stream layout localStorage key, read/save/apply, splitter install and ARIA sync | 5.1 |
+| `shell.ts` | Build Stream DOM shell: sections, splitters, `MediaPoolElements` / `AssetPreviewElements` factories for this surface | 5.1 |
+| `streamHeader.ts` | Timecode, transport cluster, inline scene title/note editing, show file actions | 5.1 |
+| `workspacePane.ts` | Outer List / Flow tab bar; delegates body to list or flow module | 5.1 |
+| `listMode.ts` | Scene list toolbar, columns, row expansion, drag reorder, row actions, end-drop target | 5, 5.1 |
+| `flowMode.ts` | Flow canvas host: placeholder cards today; Rete area, pan/zoom, and Xtream-owned card/link rendering later | 5.1, 8 |
+| `bottomPane.ts` | Bottom tab row (Scene Edit, Mixer, Displays), mixer/display pane glue, tab-specific actions (e.g. create output/display) | 5.1 |
+| `streamDetailOverlay.ts` | Full-bleed display or output detail with close → restore previous bottom tab; bridge toward Patch detail controls | 5.1, 6, 9 |
+| `formatting.ts` | Pure helpers: trigger summary, scene duration, sub-cue labels, runtime state labels | 5.1 |
+| `dom.ts` | Stream-specific tab bars, table cells, detail field wrappers (or fold into `../shared/dom.ts` if duplication with Patch becomes painful) | 5.1 |
+| `sceneEdit/sceneEditPane.ts` | Rail + detail shell; selection between scene vs sub-cue section | 5.1, 6 |
+| `sceneEdit/sceneForm.ts` | Scene-level fields only (title, note, disabled, trigger, loop, preload, duplicate/remove) | 5, 5.1 |
+| `sceneEdit/subCueRail.ts` | Reorderable sub-cue stack, Add Sub-Cue entry, focus/selection | 6 |
+| `sceneEdit/audioSubCueForm.ts` | Audio sub-cue editor (outputs, fades, loop, rate, routing) | 6, 9 |
+| `sceneEdit/visualSubCueForm.ts` | Visual sub-cue editor (targets, zones, fades, freeze, loop, rate) | 6, 9 |
+| `sceneEdit/controlSubCueForm.ts` | Control sub-cue editor (actions, targets, validation) | 6, 9 |
+| `sceneEdit/waveform.ts` (or similar) | Waveform visualization for audio sub-cues | 9 |
+| `flow/reteHost.ts` (optional) | Rete editor lifecycle, serialization boundary between graph UI and `PersistedSceneConfig` / triggers | 8 |
+
+**Phase 7 (runtime)** is mostly main-process (`StreamEngine`, adapters) and IPC; the control renderer only gains incidental UI (e.g. preload or failure badges on list rows) in `listMode.ts`, `formatting.ts`, or small additions to `streamHeader.ts`.
+
+**Phase 10** adds tests (`*.test.ts` beside modules or under `tests/`), validation/diagnostics surfacing that may live in shared control chrome, and Playwright specs that target Stream routes—not new monoliths under `stream/`.
 
 ## 17. Resolved Decisions
 

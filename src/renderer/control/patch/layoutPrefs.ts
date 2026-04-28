@@ -154,6 +154,13 @@ export function restoreTemporaryMixerExpansion(): void {
   applyLayoutPrefs(prefs);
 }
 
+/** Merge project-saved layout prefs with current storage and apply CSS variables. */
+export function mergeImportedLayoutPrefs(imported: LayoutPrefs): void {
+  const merged = { ...readLayoutPrefs(), ...imported };
+  localStorage.setItem(UI_PREF_KEY, JSON.stringify(merged));
+  applyLayoutPrefs(merged);
+}
+
 export function applyLayoutPrefs(prefs: LayoutPrefs): void {
   const root = document.documentElement;
   if (prefs.mediaWidthPx !== undefined) {

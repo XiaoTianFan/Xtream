@@ -5,11 +5,12 @@ type LaunchDashboardOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: ShowConfigOperationResult['issues']) => void;
   clearSelection: () => void;
+  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
 };
 
 export type LaunchDashboardController = ReturnType<typeof createLaunchDashboardController>;
 
-export function createLaunchDashboardController({ renderState, setShowStatus, clearSelection }: LaunchDashboardOptions) {
+export function createLaunchDashboardController({ renderState, setShowStatus, clearSelection, hydrateAfterShowLoaded }: LaunchDashboardOptions) {
   let visible = true;
 
   const show = (): void => {
@@ -28,8 +29,10 @@ export function createLaunchDashboardController({ renderState, setShowStatus, cl
     render(await window.xtream.show.getLaunchData());
   };
 
-  const complete = (result: ShowConfigOperationResult, message: string): void => {
+  const complete = async (result: ShowConfigOperationResult, message: string): Promise<void> => {
     clearSelection();
+    renderState(result.state);
+    await hydrateAfterShowLoaded?.(result);
     renderState(result.state);
     setShowStatus(message, result.issues);
     hide();
@@ -64,7 +67,7 @@ export function createLaunchDashboardController({ renderState, setShowStatus, cl
     row.addEventListener('click', async () => {
       const result = await window.xtream.show.openRecent(entry.filePath);
       if (result) {
-        complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
+        await complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
         return;
       }
       setShowStatus(`Recent show is no longer available: ${entry.filePath}`);
