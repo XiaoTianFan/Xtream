@@ -52,7 +52,6 @@
   --mixer-width: 42vw;
   /* Fixed width per output strip (mixer columns do not grow with the pane) */
   --mixer-strip-w: 6.85rem;
-  --asset-preview-height: 9rem;
   --splitter-hit: 4px;
   --scrollbar-size: 6px;
   --scrollbar-track: var(--surface-low);
@@ -272,6 +271,58 @@ input[type="range"].mini-slider:disabled {
 
 .app-frame.surface-mode {
   grid-template-rows: minmax(0, 1fr);
+}
+
+.workspace-presentation-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+}
+
+.app-frame[data-workspace-loading="active"] .workspace-presentation-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace-presentation-overlay-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-base);
+}
+
+.workspace-presentation-overlay-center {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.workspace-presentation-overlay .presentation-loading-status {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--accent-teal);
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-frame[data-workspace-loading="active"] .presentation-loading-status::before {
+  content: "";
+  grid-row: 2;
+  justify-self: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50% !important;
+  border: 2px solid color-mix(in srgb, var(--accent-teal) 28%, transparent);
+  border-top-color: var(--accent-teal);
+  animation: extraction-spin 0.9s linear infinite;
 }
 
 .surface-mount {
@@ -2176,61 +2227,6 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   background: #000;
 }
 
-.asset-preview-region {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-rows: var(--splitter-hit) minmax(0, 1fr);
-  height: calc(var(--asset-preview-height) + var(--splitter-hit));
-  margin-top: var(--gutter);
-  min-height: calc(110px + var(--splitter-hit));
-  max-height: calc(320px + var(--splitter-hit));
-}
-
-.asset-preview-region[hidden] {
-  display: none;
-}
-
-.asset-preview {
-  display: grid;
-  min-height: 0;
-  max-height: none;
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  background: #0e0e0f;
-}
-
-.asset-preview-shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: var(--compact);
-  min-height: 0;
-  padding: var(--gutter);
-}
-
-.asset-preview-shell h3,
-.asset-preview-shell h4 {
-  margin: 0;
-  color: var(--text-secondary);
-  font-family: var(--font-data);
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.asset-preview img,
-.asset-preview video {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  max-height: 100%;
-  object-fit: contain;
-  background: #000;
-}
-
-.asset-preview audio {
-  width: 100%;
-}
-
 .local-preview-controls {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2463,6 +2459,80 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   margin-top: var(--gutter);
   min-height: 0;
   min-width: 0;
+}
+
+.media-detail-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gutter);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 11rem;
+  min-width: 0;
+}
+
+.media-detail-layout__preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  background: #0e0e0f;
+}
+
+.media-detail-layout__meta {
+  min-width: 0;
+  overflow: auto;
+}
+
+.media-detail-layout__meta .detail-card {
+  margin: 0;
+}
+
+.media-detail-preview-mount {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.media-detail-preview-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--compact);
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--gutter);
+}
+
+.media-detail-preview-shell .local-preview-controls {
+  align-self: stretch;
+}
+
+.media-detail-layout__preview img,
+.media-detail-layout__preview video {
+  width: 100%;
+  height: 100%;
+  min-height: 5rem;
+  max-height: min(50vh, 18rem);
+  object-fit: contain;
+  background: #000;
+}
+
+.media-detail-layout__preview audio {
+  width: 100%;
+}
+
+.stream-detail-body .media-detail-layout {
+  flex: 1 1 auto;
+  min-height: 12rem;
+}
+
+@media (max-width: 780px) {
+  .media-detail-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .details-body {

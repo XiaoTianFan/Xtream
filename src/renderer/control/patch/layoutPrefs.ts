@@ -23,10 +23,6 @@ export function installSplitters(): void {
     const current = readLayoutPrefs().mixerWidthPx ?? footer.querySelector<HTMLElement>('.mixer-panel')!.getBoundingClientRect().width;
     saveLayoutPrefs({ mixerWidthPx: clamp(current + delta, 260, getMaxMixerWidth()) });
   });
-  installSplitter(elements.assetPreviewSplitter, 'y', (delta) => {
-    const current = readLayoutPrefs().assetPreviewHeightPx ?? elements.assetPreview.getBoundingClientRect().height;
-    saveLayoutPrefs({ assetPreviewHeightPx: clamp(current - delta, 110, 320) });
-  });
   syncSplitterAria();
 }
 
@@ -60,11 +56,6 @@ export function syncSplitterAria(): void {
     const mNow = clamp(mixer.getBoundingClientRect().width, minM, maxM);
     setSeparatorValue(elements.footerSplitter, 'vertical', minM, maxM, mNow);
   }
-
-  const minA = 110;
-  const maxA = 320;
-  const aNow = clamp(elements.assetPreview.getBoundingClientRect().height, minA, maxA);
-  setSeparatorValue(elements.assetPreviewSplitter, 'horizontal', minA, maxA, aNow);
 }
 
 function setSeparatorValue(
@@ -171,9 +162,6 @@ export function applyLayoutPrefs(prefs: LayoutPrefs): void {
   }
   if (prefs.mixerWidthPx !== undefined) {
     root.style.setProperty('--mixer-width', `${prefs.mixerWidthPx}px`);
-  }
-  if (prefs.assetPreviewHeightPx !== undefined) {
-    root.style.setProperty('--asset-preview-height', `${prefs.assetPreviewHeightPx}px`);
   }
   syncSplitterAria();
 }

@@ -847,7 +847,9 @@ export type ControlProjectUiPatchLayout = {
 
 export type ControlProjectUiStreamDetail =
   | { type: 'display'; id: string; returnTab: 'scene' | 'mixer' | 'displays' }
-  | { type: 'output'; id: string; returnTab: 'scene' | 'mixer' | 'displays' };
+  | { type: 'output'; id: string; returnTab: 'scene' | 'mixer' | 'displays' }
+  | { type: 'visual'; id: string; returnTab: 'scene' | 'mixer' | 'displays' }
+  | { type: 'audio-source'; id: string; returnTab: 'scene' | 'mixer' | 'displays' };
 
 export type ControlProjectUiStreamState = {
   mode?: 'list' | 'flow';

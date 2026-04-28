@@ -2,6 +2,10 @@ import { assertElement } from '../shared/dom';
 
 export const elements = {
   appFrame: assertElement(document.querySelector<HTMLDivElement>('.app-frame'), 'appFrame'),
+  workspacePresentationOverlay: assertElement(
+    document.querySelector<HTMLElement>('#workspacePresentationOverlay'),
+    'workspacePresentationOverlay',
+  ),
   surfaceMount: assertElement(document.querySelector<HTMLElement>('#surfaceMount'), 'surfaceMount'),
   patchSurface: assertElement(document.querySelector<HTMLElement>('#patchSurface'), 'patchSurface'),
   surfacePanel: assertElement(document.querySelector<HTMLElement>('#surfacePanel'), 'surfacePanel'),

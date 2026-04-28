@@ -10,8 +10,8 @@ import type {
 import { OUTPUT_BUS_DELAY_MAX_MS, playOutputTestTone } from '../media/audioRuntime';
 import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
-import { formatAudioChannelDetail, formatBytes, formatDuration } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
+import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from './mediaDetailSharedForms';
 
 type DetailsPaneControllerOptions = {
   getSelectedEntity: () => SelectedEntity | undefined;
@@ -24,6 +24,7 @@ type DetailsPaneControllerOptions = {
   confirmPoolRecordRemoval: (label: string) => boolean;
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
   probeVisualMetadata: (visual: VisualState) => void;
+  reportVisualMetadataFromVideo: (visualId: VisualId, video: HTMLVideoElement) => void;
   getDisplayStatusLabel: (display: DisplayWindowState) => string;
   getDisplayTelemetry: (display: DisplayWindowState) => string;
   createMappingControls: (display: DisplayWindowState, visualIds: VisualId[], enabled?: boolean) => HTMLDivElement;
@@ -37,6 +38,12 @@ export type DetailsPaneController = {
 
 export function createDetailsPaneController(options: DetailsPaneControllerOptions): DetailsPaneController {
   let detailsRenderSignature = '';
+  let disposeMediaPreview: (() => void) | undefined;
+
+  function clearMediaPreview(): void {
+    disposeMediaPreview?.();
+    disposeMediaPreview = undefined;
+  }
 
   function render(state: DirectorState, force = false): void {
     const selectedEntity = options.getSelectedEntity();
@@ -53,6 +60,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
       return;
     }
     detailsRenderSignature = signature;
+    clearMediaPreview();
     updateDetailsHeading();
     if (!selectedEntity) {
       renderDefaultDetails(state);
@@ -65,7 +73,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
         renderDefaultDetails(state);
         return;
       }
-      renderVisualDetails(visual);
+      renderVisualDetails(visual, state);
       return;
     }
     if (selectedEntity.type === 'audio-source') {
@@ -128,6 +136,7 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
       Object.entries(state.displays).map(([id, display]) => [id, stableDisplayForDetailsSignature(display)]),
     );
     const base = {
+      performanceMode: state.performanceMode,
       visuals: state.visuals,
       audioSources: state.audioSources,
       displays: stableDisplays,
@@ -151,117 +160,35 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     elements.detailsContent.replaceChildren(summary);
   }
 
-  function renderVisualDetails(visual: VisualState): void {
-    const card = document.createElement('div');
-    card.className = 'detail-card';
-    const label = createLabelInput(visual.label, (nextLabel) => window.xtream.visuals.update(visual.id, { label: nextLabel }));
-    const toolbar = document.createElement('div');
-    toolbar.className = 'detail-toolbar';
-    const toolbarStart = document.createElement('div');
-    toolbarStart.className = 'detail-toolbar-start';
-    toolbarStart.append(createDetailField('Label', label));
-    const toolbarActions = document.createElement('div');
-    toolbarActions.className = 'detail-toolbar-actions button-row';
-    if (visual.kind === 'file') {
-      toolbarActions.append(
-        createButton('Replace', 'secondary', async () => {
-        const replaced = await window.xtream.visuals.replace(visual.id);
-        if (replaced) {
-          options.queueEmbeddedAudioImportPrompt([replaced]);
-          options.probeVisualMetadata(replaced);
-        }
-        options.renderState(await window.xtream.director.getState());
-        }),
-      );
-    }
-    const removeFromPool = createButton('Remove', 'secondary', async () => {
-      if (!options.confirmPoolRecordRemoval(visual.label)) {
-        return;
-      }
-      await window.xtream.visuals.remove(visual.id);
-      options.clearSelectionIf({ type: 'visual', id: visual.id });
-      options.renderState(await window.xtream.director.getState());
-    });
-    removeFromPool.title = `Remove ${visual.label} from the media pool (does not delete the file on disk)`;
-    toolbarActions.append(removeFromPool);
-    toolbar.append(toolbarStart, toolbarActions);
-    card.append(
-      toolbar,
-      createDetailLine('Type', visual.kind === 'live' ? `live ${visual.capture.source}` : visual.type),
-      createDetailLine('Path', visual.kind === 'file' ? visual.path ?? '--' : '--'),
-      createDetailLine('Duration', formatDuration(visual.durationSeconds)),
-      createDetailLine('Dimensions', visual.width && visual.height ? `${visual.width}x${visual.height}` : '--'),
-      ...(visual.kind === 'live'
-        ? [
-            createDetailLine('Source', visual.capture.label ?? visual.capture.source),
-            createDetailLine('Readiness', visual.ready ? 'ready' : visual.error ?? 'standby'),
-          ]
-        : [
-            createDetailLine('File Size', formatBytes(visual.fileSizeBytes)),
-            createDetailLine('Embedded Audio', visual.hasEmbeddedAudio === undefined ? 'unknown' : visual.hasEmbeddedAudio ? 'yes' : 'no'),
-          ]),
-      createNumberDetailControl('Opacity', visual.opacity ?? 1, 0, 1, 0.01, (opacity) => window.xtream.visuals.update(visual.id, { opacity })),
-      createNumberDetailControl('Brightness', visual.brightness ?? 1, 0, 2, 0.01, (brightness) => window.xtream.visuals.update(visual.id, { brightness })),
-      createNumberDetailControl('Contrast', visual.contrast ?? 1, 0, 2, 0.01, (contrast) => window.xtream.visuals.update(visual.id, { contrast })),
-      createNumberDetailControl('Playback Rate', visual.playbackRate ?? 1, 0.1, 4, 0.01, (playbackRate) =>
-        window.xtream.visuals.update(visual.id, { playbackRate }),
-      ),
-    );
-    elements.detailsContent.replaceChildren(card);
+  function sharedMediaDeps(): MediaDetailSharedDeps {
+    return {
+      renderState: options.renderState,
+      clearSelectionIf: options.clearSelectionIf,
+      confirmPoolRecordRemoval: options.confirmPoolRecordRemoval,
+      queueEmbeddedAudioImportPrompt: options.queueEmbeddedAudioImportPrompt,
+      probeVisualMetadata: options.probeVisualMetadata,
+      reportVisualMetadataFromVideo: options.reportVisualMetadataFromVideo,
+    };
+  }
+
+  function renderVisualDetails(visual: VisualState, state: DirectorState): void {
+    const disposeRef: { current?: () => void } = {};
+    disposeMediaPreview = () => {
+      disposeRef.current?.();
+      disposeRef.current = undefined;
+    };
+    const layout = attachVisualMediaDetailMount(state, visual, sharedMediaDeps(), disposeRef);
+    elements.detailsContent.replaceChildren(layout);
   }
 
   function renderAudioSourceDetails(source: AudioSourceState, state: DirectorState): void {
-    const card = document.createElement('div');
-    card.className = 'detail-card';
-    const label = createLabelInput(source.label, (nextLabel) => window.xtream.audioSources.update(source.id, { label: nextLabel }));
-    const toolbar = document.createElement('div');
-    toolbar.className = 'detail-toolbar';
-    const toolbarStart = document.createElement('div');
-    toolbarStart.className = 'detail-toolbar-start';
-    toolbarStart.append(createDetailField('Label', label));
-    const toolbarActions = document.createElement('div');
-    toolbarActions.className = 'detail-toolbar-actions button-row';
-    toolbarActions.append(
-      ...(source.type === 'external-file'
-        ? [
-            createButton('Replace', 'secondary', async () => {
-              await window.xtream.audioSources.replaceFile(source.id);
-              options.renderState(await window.xtream.director.getState());
-            }),
-          ]
-        : []),
-    );
-    const removeFromPool = createButton('Remove', 'secondary', async () => {
-      if (!options.confirmPoolRecordRemoval(source.label)) {
-        return;
-      }
-      await window.xtream.audioSources.remove(source.id);
-      options.clearSelectionIf({ type: 'audio-source', id: source.id });
-      options.renderState(await window.xtream.director.getState());
-    });
-    removeFromPool.title = `Remove ${source.label} from the audio pool (does not delete the file on disk)`;
-    toolbarActions.append(removeFromPool);
-    toolbar.append(toolbarStart, toolbarActions);
-    card.append(
-      toolbar,
-      createDetailLine('Type', source.type),
-      createDetailLine('Path', source.type === 'external-file' ? source.path ?? '--' : state.visuals[source.visualId]?.path ?? source.visualId),
-      ...(source.type === 'embedded-visual'
-        ? [
-            createDetailLine('Extraction', source.extractionMode === 'file' ? `file ${source.extractionStatus ?? 'pending'}` : 'representation'),
-            createDetailLine('Extracted File', source.extractedPath ?? '--'),
-          ]
-        : []),
-      createDetailLine('Duration', formatDuration(source.durationSeconds)),
-      createDetailLine('Channels', formatAudioChannelDetail(source)),
-      createDetailLine('File Size', formatBytes(source.fileSizeBytes)),
-      createDetailLine('Readiness', source.ready ? 'ready' : source.error ?? 'loading'),
-      createNumberDetailControl('Source Level dB', source.levelDb ?? 0, -60, 12, 1, (levelDb) => window.xtream.audioSources.update(source.id, { levelDb })),
-      createNumberDetailControl('Playback Rate', source.playbackRate ?? 1, 0.1, 4, 0.01, (playbackRate) =>
-        window.xtream.audioSources.update(source.id, { playbackRate }),
-      ),
-    );
-    elements.detailsContent.replaceChildren(card);
+    const disposeRef: { current?: () => void } = {};
+    disposeMediaPreview = () => {
+      disposeRef.current?.();
+      disposeRef.current = undefined;
+    };
+    const layout = attachAudioMediaDetailMount(state, source, sharedMediaDeps(), disposeRef);
+    elements.detailsContent.replaceChildren(layout);
   }
 
   function renderDisplayDetails(display: DisplayWindowState, state: DirectorState): void {

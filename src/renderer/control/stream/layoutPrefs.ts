@@ -57,9 +57,6 @@ export function applyStreamLayoutPrefs(refs: StreamSurfaceRefs, prefs: StreamLay
   if (prefs.bottomHeightPx !== undefined) {
     root.style.setProperty('--stream-bottom-height', `${prefs.bottomHeightPx}px`);
   }
-  if (prefs.assetPreviewHeightPx !== undefined) {
-    root.style.setProperty('--asset-preview-height', `${prefs.assetPreviewHeightPx}px`);
-  }
 }
 
 export function syncStreamSplitterAria(refs: StreamSurfaceRefs): void {
@@ -77,17 +74,6 @@ export function syncStreamSplitterAria(refs: StreamSurfaceRefs): void {
     const min = 220;
     const max = Math.max(260, root.getBoundingClientRect().height - 280);
     setSeparatorAriaValue(bottomSplitter, 'horizontal', min, max, clampStreamLayout(bottom.getBoundingClientRect().height, min, max));
-  }
-  const assetPreview = refs.assetPreview;
-  const assetPreviewSplitter = refs.streamAssetPreviewSplitter;
-  if (assetPreview && assetPreviewSplitter) {
-    setSeparatorAriaValue(
-      assetPreviewSplitter,
-      'horizontal',
-      110,
-      320,
-      clampStreamLayout(assetPreview.getBoundingClientRect().height, 110, 320),
-    );
   }
 }
 
@@ -153,11 +139,6 @@ export function createStreamLayoutController(refs: StreamSurfaceRefs): StreamLay
       const root = requireRef('root');
       const height = clampStreamLayout(bottom.getBoundingClientRect().height - delta, 220, Math.max(260, root.getBoundingClientRect().height - 280));
       savePrefs({ bottomHeightPx: height });
-    });
-    installSplitter(requireRef('streamAssetPreviewSplitter'), 'y', (delta) => {
-      const assetPreview = requireRef('assetPreview');
-      const current = readStreamLayoutPrefs().assetPreviewHeightPx ?? assetPreview.getBoundingClientRect().height;
-      savePrefs({ assetPreviewHeightPx: clampStreamLayout(current - delta, 110, 320) });
     });
     syncStreamSplitterAria(refs);
   }

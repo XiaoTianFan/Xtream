@@ -11,9 +11,9 @@ import type {
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
 import { createEmbeddedAudioImportController } from '../patch/embeddedAudioImport';
+import type { MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import { createMediaPoolController, type MediaPoolController } from '../patch/mediaPool';
 import { createMixerPanelController, type MixerPanelController } from '../patch/mixerPanel';
-import { createAssetPreviewController, type AssetPreviewController } from '../patch/assetPreview';
 import type { SelectedEntity } from '../shared/types';
 import { elements } from '../shell/elements';
 import { renderStreamBottomPane, type StreamBottomPaneContext } from './bottomPane';
@@ -24,11 +24,7 @@ import {
   readStreamLayoutPrefs,
 } from './layoutPrefs';
 import { scenesExplicitlyFollowing } from './listMode';
-import {
-  createStreamAssetPreviewElements,
-  createStreamMediaPoolElements,
-  createStreamShellLayout,
-} from './shell';
+import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
@@ -48,7 +44,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let mounted = false;
   let unsubscribeStreamState: (() => void) | undefined;
   let mediaPool: MediaPoolController | undefined;
-  let assetPreview: AssetPreviewController | undefined;
+  let streamDetailOverlayCleanup: (() => void) | undefined;
   let mixerPanel: MixerPanelController | undefined;
   let displayWorkspace: DisplayWorkspaceController | undefined;
   let bottomRenderSignature = '';
@@ -70,6 +66,23 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
   });
+
+  function confirmPoolRecordRemoval(label: string): boolean {
+    return window.confirm(
+      `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+    );
+  }
+
+  function streamMediaDetailDeps(): MediaDetailSharedDeps {
+    return {
+      renderState: options.renderState,
+      clearSelectionIf,
+      confirmPoolRecordRemoval,
+      queueEmbeddedAudioImportPrompt: embeddedAudioImport.queueEmbeddedAudioImportPrompt,
+      probeVisualMetadata: embeddedAudioImport.probeVisualMetadata,
+      reportVisualMetadataFromVideo: embeddedAudioImport.reportVisualMetadataFromVideo,
+    };
+  }
 
   function requireRef(name: string): HTMLElement {
     const ref = refs[name];
@@ -108,7 +121,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function unmount(): void {
     mediaPool?.dismissContextMenu();
-    assetPreview?.cleanup();
+    streamDetailOverlayCleanup?.();
+    streamDetailOverlayCleanup = undefined;
     unsubscribeStreamState?.();
     unsubscribeStreamState = undefined;
     mounted = false;
@@ -236,7 +250,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderHeader();
     mediaPool?.render(mediaState);
     mediaPool?.syncPoolSelectionHighlight(mediaState);
-    assetPreview?.render(mediaState, selectedEntity);
     renderWorkspacePane();
     renderBottomPaneIfNeeded();
     mixerPanel?.syncOutputMeters(currentState);
@@ -317,6 +330,16 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       getState: () => currentState,
       setSelectedEntity: (entity) => {
         selectedEntity = entity;
+        if (!entity) {
+          return;
+        }
+        if (entity.type === 'visual') {
+          detailPane = { type: 'visual', id: entity.id, returnTab: bottomTab };
+          bottomRenderSignature = '';
+        } else if (entity.type === 'audio-source') {
+          detailPane = { type: 'audio-source', id: entity.id, returnTab: bottomTab };
+          bottomRenderSignature = '';
+        }
       },
       isSelected,
       clearSelectionIf,
@@ -328,9 +351,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       extractEmbeddedAudioFile: embeddedAudioImport.extractEmbeddedAudioFile,
     });
     mediaPool.install();
-    assetPreview = createAssetPreviewController(createStreamAssetPreviewElements(shell.media, refs), {
-      reportVisualMetadataFromVideo: embeddedAudioImport.reportVisualMetadataFromVideo,
-    });
     mixerPanel = createMixerPanelController({ outputPanel: shell.outputPanel }, {
       getState: () => currentState,
       getAudioDevices: options.getAudioDevices,
@@ -442,6 +462,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function renderBottomPane(): void {
+    streamDetailOverlayCleanup?.();
+    streamDetailOverlayCleanup = undefined;
     const panel = requireRef('bottom');
     const ctx: StreamBottomPaneContext = {
       bottomTab,
@@ -502,6 +524,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           },
           requestRender: renderCurrent,
           refreshDirector,
+          mediaDetailDeps: streamMediaDetailDeps(),
+          registerStreamDetailUnmount: (fn) => {
+            streamDetailOverlayCleanup = fn;
+          },
         }),
     );
   }
@@ -523,6 +549,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       selectedEntity,
       selectedSceneId,
       sceneEditSelection,
+      performanceMode: currentState!.performanceMode,
       sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
       mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(currentState!) : undefined,
       displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(currentState!) : undefined,
@@ -611,6 +638,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab = 'displays';
       bottomRenderSignature = '';
     }
+    if (entity.type === 'visual') {
+      detailPane = { type: 'visual', id: entity.id, returnTab: bottomTab };
+      bottomRenderSignature = '';
+    }
+    if (entity.type === 'audio-source') {
+      detailPane = { type: 'audio-source', id: entity.id, returnTab: bottomTab };
+      bottomRenderSignature = '';
+    }
     renderCurrent();
   }
 
@@ -623,7 +658,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       selectedEntity = undefined;
       if (
         (entity.type === 'output' && detailPane?.type === 'output' && detailPane.id === entity.id) ||
-        (entity.type === 'display' && detailPane?.type === 'display' && detailPane.id === entity.id)
+        (entity.type === 'display' && detailPane?.type === 'display' && detailPane.id === entity.id) ||
+        (entity.type === 'visual' && detailPane?.type === 'visual' && detailPane.id === entity.id) ||
+        (entity.type === 'audio-source' && detailPane?.type === 'audio-source' && detailPane.id === entity.id)
       ) {
         bottomTab = detailPane.returnTab;
         detailPane = undefined;
@@ -691,6 +728,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         detailPane = { type: 'display', id: d.id, returnTab: d.returnTab };
       } else if (d.type === 'output' && directorState.outputs[d.id]) {
         detailPane = { type: 'output', id: d.id, returnTab: d.returnTab };
+      } else if (d.type === 'visual' && directorState.visuals[d.id]) {
+        detailPane = { type: 'visual', id: d.id, returnTab: d.returnTab };
+      } else if (d.type === 'audio-source' && directorState.audioSources[d.id]) {
+        detailPane = { type: 'audio-source', id: d.id, returnTab: d.returnTab };
       }
     }
     headerEditField = undefined;

@@ -2,7 +2,6 @@ import type { ControlProjectUiPatchLayout, DirectorState, DisplayMonitorInfo, Me
 import type { ShowActions } from '../app/showActions';
 import { patchElements as elements } from './elements';
 import type { ControlSurface, SelectedEntity } from '../shared/types';
-import { createAssetPreviewController } from './assetPreview';
 import { createDetailsPaneController } from './detailsPane';
 import { syncPreviewElements } from './displayPreview';
 import { createDisplayWorkspaceController } from './displayWorkspace';
@@ -50,10 +49,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     setShowStatus: options.setShowStatus,
   });
 
-  const assetPreview = createAssetPreviewController(elements, {
-    reportVisualMetadataFromVideo: embeddedAudioImport.reportVisualMetadataFromVideo,
-  });
-
   const displayWorkspace = createDisplayWorkspaceController(elements, {
     getState: () => currentState,
     isSelected,
@@ -62,9 +57,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     renderState: options.renderState,
   });
 
-  let refreshDetailsPane = (state: DirectorState) => {
-    detailsPane.render(state, true);
-  };
+  let refreshDetailsPane: (state: DirectorState) => void = () => undefined;
   const mixerPanel = createMixerPanelController(elements, {
     getState: () => currentState,
     getAudioDevices: options.getAudioDevices,
@@ -93,6 +86,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     createMappingControls: displayWorkspace.createMappingControls,
     createOutputDetailMixerStrip: mixerPanel.createOutputDetailMixerStrip,
     createOutputSourceControls: mixerPanel.createOutputSourceControls,
+    reportVisualMetadataFromVideo: embeddedAudioImport.reportVisualMetadataFromVideo,
   });
 
   refreshDetailsPane = (state: DirectorState) => {
@@ -154,7 +148,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       displayWorkspace.syncCardSummaries(Object.values(state.displays));
     }
     detailsPane.render(state);
-    assetPreview.render(state, selectedEntity);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(state);
   }
 

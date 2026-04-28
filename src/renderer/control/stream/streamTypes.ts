@@ -21,7 +21,9 @@ export type BottomTab = 'scene' | 'mixer' | 'displays';
 
 export type DetailPane =
   | { type: 'display'; id: string; returnTab: BottomTab }
-  | { type: 'output'; id: string; returnTab: BottomTab };
+  | { type: 'output'; id: string; returnTab: BottomTab }
+  | { type: 'visual'; id: string; returnTab: BottomTab }
+  | { type: 'audio-source'; id: string; returnTab: BottomTab };
 
 export type StreamSurfaceRefs = Partial<Record<string, HTMLElement>>;
 

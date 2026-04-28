@@ -1,4 +1,3 @@
-import type { AssetPreviewElements } from '../patch/assetPreview';
 import type { MediaPoolElements } from '../patch/mediaPool';
 import { createButton } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -104,24 +103,6 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
     poolSortSelect,
     addVisualsButton,
     visualPoolLayoutToggleButton,
-  };
-}
-
-export function createStreamAssetPreviewElements(panel: HTMLElement, refs: StreamSurfaceRefs): AssetPreviewElements {
-  const assetPreviewRegion = document.createElement('div');
-  assetPreviewRegion.className = 'asset-preview-region';
-  assetPreviewRegion.hidden = true;
-  const assetPreviewSplitter = createStreamSplitter(refs, 'streamAssetPreviewSplitter', 'horizontal', 'Resize asset preview');
-  const assetPreview = document.createElement('div');
-  assetPreview.className = 'asset-preview';
-  assetPreview.setAttribute('aria-live', 'polite');
-  assetPreviewRegion.append(assetPreviewSplitter, assetPreview);
-  panel.append(assetPreviewRegion);
-  refs.assetPreviewRegion = assetPreviewRegion;
-  refs.assetPreview = assetPreview;
-  return {
-    assetPreviewRegion,
-    assetPreview,
   };
 }
 

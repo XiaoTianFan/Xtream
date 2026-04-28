@@ -1,4 +1,5 @@
 import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualMingleAlgorithm } from '../../../shared/types';
+import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
 import { createButton, createHint, createSelect } from '../shared/dom';
@@ -16,16 +17,37 @@ export type StreamDetailOverlayDeps = {
   clearDetailPane: () => void;
   requestRender: () => void;
   refreshDirector: () => Promise<void>;
+  mediaDetailDeps: MediaDetailSharedDeps;
+  registerStreamDetailUnmount: (cleanup: () => void) => void;
+};
+
+const detailTitleByType: Record<DetailPane['type'], string> = {
+  display: 'Display Details',
+  output: 'Output Details',
+  visual: 'Visual Details',
+  'audio-source': 'Audio Source Details',
 };
 
 export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLElement {
-  const { detailPane, currentState, options, displayWorkspace, mixerPanel, setBottomTab, clearDetailPane, requestRender, refreshDirector } = deps;
+  const {
+    detailPane,
+    currentState,
+    options,
+    displayWorkspace,
+    mixerPanel,
+    setBottomTab,
+    clearDetailPane,
+    requestRender,
+    refreshDirector,
+    mediaDetailDeps,
+    registerStreamDetailUnmount,
+  } = deps;
   const wrap = document.createElement('section');
   wrap.className = 'stream-detail-pane';
   const header = document.createElement('div');
   header.className = 'panel-header';
   const title = document.createElement('h2');
-  title.textContent = detailPane.type === 'display' ? 'Display Details' : 'Output Details';
+  title.textContent = detailTitleByType[detailPane.type];
   const close = createButton('Close', 'secondary', () => {
     setBottomTab(detailPane.returnTab);
     clearDetailPane();
@@ -42,11 +64,35 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
         ? createStreamDisplayDetailCard(display, currentState, options, displayWorkspace, refreshDirector)
         : createHint('Display not found.'),
     );
-  } else {
+  } else if (detailPane.type === 'output') {
     const output = currentState.outputs[detailPane.id];
     body.append(
       output ? createStreamOutputDetailLayout(output, currentState, options, mixerPanel, refreshDirector) : createHint('Output not found.'),
     );
+  } else if (detailPane.type === 'visual') {
+    const visual = currentState.visuals[detailPane.id];
+    if (!visual) {
+      body.append(createHint('Visual not found.'));
+    } else {
+      const disposeRef: { current?: () => void } = {};
+      registerStreamDetailUnmount(() => {
+        disposeRef.current?.();
+        disposeRef.current = undefined;
+      });
+      body.append(attachVisualMediaDetailMount(currentState, visual, mediaDetailDeps, disposeRef));
+    }
+  } else {
+    const source = currentState.audioSources[detailPane.id];
+    if (!source) {
+      body.append(createHint('Audio source not found.'));
+    } else {
+      const disposeRef: { current?: () => void } = {};
+      registerStreamDetailUnmount(() => {
+        disposeRef.current?.();
+        disposeRef.current = undefined;
+      });
+      body.append(attachAudioMediaDetailMount(currentState, source, mediaDetailDeps, disposeRef));
+    }
   }
   wrap.append(header, body);
   return wrap;

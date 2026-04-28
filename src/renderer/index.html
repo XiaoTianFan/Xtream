@@ -100,10 +100,6 @@
                   <div id="audioPanel" class="audio-panel"></div>
                 </div>
               </div>
-              <div id="assetPreviewRegion" class="asset-preview-region" hidden>
-                <div id="assetPreviewSplitter" class="splitter horizontal" role="separator" aria-orientation="horizontal" aria-label="Resize asset preview" aria-valuemin="110" aria-valuemax="320" aria-valuenow="144" tabindex="0"></div>
-                <div id="assetPreview" class="asset-preview" aria-live="polite"></div>
-              </div>
             </section>
 
             <div id="workspaceSplitter" class="splitter vertical" role="separator" aria-orientation="vertical" aria-label="Resize media and display panes" aria-valuemin="260" aria-valuemax="1200" aria-valuenow="400" tabindex="0"></div>
@@ -162,6 +158,13 @@
 
           <section id="surfacePanel" class="surface-panel" aria-live="polite" hidden></section>
         </section>
+
+        <div id="workspacePresentationOverlay" class="workspace-presentation-overlay" aria-hidden="true">
+          <div class="workspace-presentation-overlay-scrim"></div>
+          <div class="workspace-presentation-overlay-center">
+            <div class="presentation-loading-status">Loading show…</div>
+          </div>
+        </div>
 
         <section id="launchDashboard" class="launch-dashboard" aria-labelledby="launchDashboardHeading" role="dialog" aria-modal="true">
           <div class="launch-panel">

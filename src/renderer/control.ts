@@ -13,6 +13,7 @@ import { createPatchSurfaceController } from './control/patch/patchSurface';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
 import { createLaunchDashboardController, setLaunchDashboardLoadingUi } from './control/shell/launchDashboard';
+import { setWorkspacePresentationLoadingUi } from './control/shell/presentationLoadingUi';
 import { waitForLaunchPresentationReady } from './control/shell/launchPresentationReady';
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
@@ -100,6 +101,7 @@ const showActions = createShowActions({
   },
   hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
   beginLaunchPresentationLoad: () => {
+    setWorkspacePresentationLoadingUi(true);
     if (launchShellRef.controller?.isVisible()) {
       setLaunchDashboardLoadingUi(true);
     }
@@ -111,6 +113,7 @@ const showActions = createShowActions({
     });
   },
   clearLaunchPresentationLoading: () => {
+    setWorkspacePresentationLoadingUi(false);
     setLaunchDashboardLoadingUi(false);
   },
 });

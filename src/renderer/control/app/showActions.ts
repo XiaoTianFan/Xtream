@@ -7,7 +7,7 @@ type ShowActionsOptions = {
   onShowOpened: () => void;
   onShowCreated: () => void;
   hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
-  /** Sync: show launch loading overlay before hydrate when opening from menus while launch UI is visible. */
+  /** Sync: show workspace + launch loading overlays before dialogs/hydrate (workspace opaque backdrop whenever opening/creating). */
   beginLaunchPresentationLoad?: () => void;
   /** Wait for presentation-ready (after hydrate); loading overlay must already be visible when applicable. */
   awaitLaunchPresentationReady?: () => Promise<void>;
