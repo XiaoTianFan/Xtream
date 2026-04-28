@@ -627,7 +627,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     if (bottomTab === 'displays') {
       const add = createButton('Add Display', '', async () => {
-        const display = await window.xtream.displays.create({ layout: { type: 'single', visualId: Object.keys(currentState?.visuals ?? {})[0] } });
+        const display = await window.xtream.displays.create({ layout: { type: 'single' } });
         detailPane = { type: 'display', id: display.id, returnTab: 'displays' };
         selectedEntity = { type: 'display', id: display.id };
         options.renderState(await window.xtream.director.getState());
@@ -750,7 +750,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function createDisplayDetail(display: DisplayWindowState): HTMLElement {
     const card = document.createElement('div');
-    card.className = 'detail-card';
+    card.className = 'detail-card stream-display-detail-card';
     const label = createTextInput(display.label ?? display.id, (value) => window.xtream.displays.update(display.id, { label: value }));
     const monitor = createSelect(
       'Monitor',
@@ -771,7 +771,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     card.append(
       createDetailField('Label', label),
       monitor,
-      displayWorkspace?.createMappingControls(display, Object.keys(currentState?.visuals ?? {})) ?? createHint('Display mapping unavailable.'),
       toolbar,
       createDetailLine('Status', displayWorkspace?.getDisplayStatusLabel(display) ?? 'Display'),
       createDetailLine('Telemetry', displayWorkspace?.getDisplayTelemetry(display) ?? display.id),
@@ -781,8 +780,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function createOutputDetail(output: VirtualOutputState): HTMLElement {
     const state = currentState!;
+    const layout = document.createElement('div');
+    layout.className = 'stream-output-detail-layout';
     const card = document.createElement('div');
-    card.className = 'detail-card';
+    card.className = 'detail-card stream-output-detail-controls';
+    const stripWrap = document.createElement('div');
+    stripWrap.className = 'stream-output-detail-strip';
     const label = createTextInput(output.label, (value) => window.xtream.outputs.update(output.id, { label: value }));
     const sink = createSelect(
       'Physical output',
@@ -794,12 +797,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       },
     );
     card.append(
-      mixerPanel?.createOutputDetailMixerStrip(output, state) ?? createHint('Output strip unavailable.'),
       createDetailField('Label', label),
       sink,
-      mixerPanel?.createOutputSourceControls(output, state) ?? createHint('Output source controls unavailable.'),
     );
-    return card;
+    stripWrap.append(mixerPanel?.createOutputDetailMixerStrip(output, state) ?? createHint('Output strip unavailable.'));
+    layout.append(card, stripWrap);
+    return layout;
   }
 
   function createTabBar<T extends string>(label: string, entries: Array<[T, string]>, active: T, onSelect: (value: T) => void): HTMLElement {
