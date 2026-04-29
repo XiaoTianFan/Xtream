@@ -456,6 +456,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
     this.streamPlayUsedSceneRowIntent = false;
+    this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
@@ -536,6 +537,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
     this.streamPlayUsedSceneRowIntent = false;
+    this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];

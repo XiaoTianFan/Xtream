@@ -1,5 +1,18 @@
 # Xtream Runtime Changelog
 
+## v0.1.1
+
+- **Stream triggers** use clearer **follow** and **delay** semantics (replacing the older “simultaneous start” and “time offset” labels). Opening a show migrates existing triggers automatically.
+- **Following scenes and the schedule** behave more predictably around **manual** scenes: chained follows no longer auto-start when a manual parent has not run, and schedule fallback respects those relationships more reliably.
+- **Playback focus** (what is on air) is separate from **edit focus** (what you are adjusting). **Double-click** a scene in the flow or list to move playback there; the console highlights which scene is driving output versus which one you are editing.
+- When the automated chain finishes and only **manual** scenes remain, **stream time can hold** instead of advancing—so you are not drifting against the timeline while stepping cues by hand.
+- **Global mute and blackout** fades can follow fade timing coming from the show runtime, so safety actions stay consistent with scene-driven transitions.
+- **Loops** on scenes and audio/visual media cues line up better with real playback: timing, effective duration, and **seeking** respect loop counts and ongoing playback more accurately.
+- **Transport shortcuts** work from both **Patch** and **Stream** workspaces for quicker hands-on control.
+- The Stream **header and workspace chrome** update more lightly during scene changes, keeping the layout responsive when cueing quickly.
+- **Bringing in media** lets you **link** files where they live or **copy** them into the project; new imports organize **audio** and **visual** assets separately, and the **media pool** shows whether each item is linked, copied, or embedded at a glance.
+- **Visual pool grid** cards show clearer **placement** badges and a steadier hover target for remove; stopping or resetting transport clears leftover **manual tail** timing state correctly.
+
 ## v0.1.0
 
 - Introduced the **Stream workspace** as the full programming surface for shows: streams with ordered **scenes**, scene **triggers** (manual, follow another scene, time offsets, timecode), a **flow** canvas for laying out scenes, and **sub-cues** on each scene—**audio** routes to virtual outputs (levels, pan, fades, loops, automation, Patch-style mute/solo round‑trip), **visuals** target display zones with fades, loops, and timing overrides, and **control** sub-cues automate scene transport, sub-cue levels, and global mute/blackout. Operators can tune **playback behavior** when editing a running show (for example letting orphaned cues finish or **fading** them out) and how pausing interacts with the playhead.

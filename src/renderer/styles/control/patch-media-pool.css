@@ -99,7 +99,6 @@
 .visual-pool-card {
   --visual-pool-grid-badge-w: 1.65rem;
   --visual-pool-grid-badge-h: 1.125rem;
-  --visual-pool-grid-remove: 1rem;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -289,6 +288,7 @@
 .visual-pool-card:hover .visual-pool-card__tail .row-action,
 .visual-pool-card:focus-within .visual-pool-card__tail .row-action {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .pool-tabs {
@@ -471,8 +471,7 @@
 .visual-pool-card__tail {
   position: relative;
   box-sizing: border-box;
-  width: 100%;
-  max-width: var(--visual-pool-grid-badge-w, 1.65rem);
+  width: var(--visual-pool-grid-badge-w, 1.65rem);
   height: var(--visual-pool-grid-badge-h, 1.125rem);
   justify-self: end;
   align-self: center;
@@ -482,12 +481,10 @@
 .visual-pool-card__tail .visual-pool-card__placement-marker.asset-marker {
   position: absolute;
   inset: 0;
-  margin: auto;
+  margin: 0;
   box-sizing: border-box;
-  width: var(--visual-pool-grid-badge-w, 1.65rem);
-  max-width: 100%;
-  min-width: 0;
-  height: var(--visual-pool-grid-badge-h, 1.125rem);
+  width: 100%;
+  height: 100%;
   /* Match pool list tails: REP / FIL / LNK hues from shared .asset-marker.* rules */
   border-width: 1px;
 }
@@ -507,26 +504,25 @@
   color: var(--text-secondary);
 }
 
+/* Same box as REP/LNK/FIL badge; icon centered inside */
 .visual-pool-card__tail .row-action {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  translate: -50% -50%;
+  inset: 0;
   z-index: 2;
   box-sizing: border-box;
-  width: var(--visual-pool-grid-remove, 0.88rem);
-  height: var(--visual-pool-grid-remove, 0.88rem);
+  width: 100%;
+  height: 100%;
+  margin: 0;
   min-width: 0;
   min-height: 0;
-  max-width: calc(100% - 4px);
-  max-height: calc(100% - 4px);
   opacity: 0;
-  overflow: visible;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .visual-pool-card__tail .row-action .control-icon {
-  width: 0.62rem;
-  height: 0.62rem;
+  width: min(0.65rem, 55%);
+  height: min(0.65rem, 55%);
 }
 
 /* Grid card: REP/LNK/FIL badge shares the hover-remove slot */
