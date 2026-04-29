@@ -35,6 +35,7 @@ import type {
   DirectorState,
   DisplayCreateOptions,
   DisplayUpdate,
+  DiagnosticsExportAttachPayload,
   DriftReport,
   EmbeddedAudioImportChoice,
   EmbeddedAudioImportCandidate,
@@ -1277,18 +1278,24 @@ function registerIpcHandlers(): void {
     saveControlUiStateForPath(filePath, snapshot);
   });
 
-  ipcMain.handle('show:export-diagnostics', async (): Promise<string | undefined> => {
-    const result = await showSaveDialog({
-      title: 'Export Xtream diagnostics',
-      defaultPath: path.join(app.getPath('documents'), `xtream-diagnostics-${Date.now()}.json`),
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (result.canceled || !result.filePath) {
-      return undefined;
-    }
-    await writeJsonFile(result.filePath, createDiagnosticsReport(director.getState(), app.getVersion(), XTREAM_RUNTIME_VERSION));
-    return result.filePath;
-  });
+  ipcMain.handle(
+    'show:export-diagnostics',
+    async (_event, attach?: DiagnosticsExportAttachPayload): Promise<string | undefined> => {
+      const result = await showSaveDialog({
+        title: 'Export Xtream diagnostics',
+        defaultPath: path.join(app.getPath('documents'), `xtream-diagnostics-${Date.now()}.json`),
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) {
+        return undefined;
+      }
+      await writeJsonFile(
+        result.filePath,
+        createDiagnosticsReport(director.getState(), app.getVersion(), XTREAM_RUNTIME_VERSION, attach),
+      );
+      return result.filePath;
+    },
+  );
 
   ipcMain.handle('display:create', (_event, options?: DisplayCreateOptions) => {
     if (!displayRegistry) {

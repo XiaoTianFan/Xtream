@@ -193,7 +193,6 @@ const surfaceRouter = createSurfaceRouter({
       renderState,
       getDirectorState: () => currentState,
       setShowStatus,
-      showActions,
       getOperationIssues: () => currentIssues,
       getDisplayStatusLabel: patchSurface.getDisplayStatusLabel,
       getDisplayTelemetry: patchSurface.getDisplayTelemetry,

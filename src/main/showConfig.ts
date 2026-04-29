@@ -5,6 +5,7 @@ import { toRendererFileUrl } from './fileUrls';
 import { buildPatchCompatibilityScene, getDefaultStreamPersistence, normalizeStreamPersistence } from '../shared/streamWorkspace';
 import { validateStreamContent, validateStreamStructure, validateTriggerReferences } from '../shared/streamSchedule';
 import type {
+  DiagnosticsExportAttachPayload,
   DiagnosticsReport,
   DirectorState,
   DisplayZoneId,
@@ -466,7 +467,13 @@ export function validateRuntimeState(state: DirectorState): MediaValidationIssue
   return issues;
 }
 
-export function createDiagnosticsReport(state: DirectorState, appVersion: string, runtimeVersion: string): DiagnosticsReport {
+export function createDiagnosticsReport(
+  state: DirectorState,
+  appVersion: string,
+  runtimeVersion: string,
+  attach?: DiagnosticsExportAttachPayload,
+): DiagnosticsReport {
+  const showOpenProfile = attach?.showOpenProfileLog ?? [];
   return {
     generatedAt: new Date().toISOString(),
     appVersion,
@@ -476,5 +483,8 @@ export function createDiagnosticsReport(state: DirectorState, appVersion: string
     state,
     issues: validateRuntimeState(state),
     readiness: state.readiness,
+    logs: {
+      showOpenProfile: [...showOpenProfile],
+    },
   };
 }

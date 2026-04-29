@@ -1,3 +1,5 @@
+import type { ShowOpenProfileLogEntry } from './showOpenProfile';
+
 export type MediaId = string;
 export type VisualId = MediaId;
 export type AudioSourceId = MediaId;
@@ -736,6 +738,16 @@ export type ShowConfigOperationResult = {
   openProfileRunId?: string;
 };
 
+export type DiagnosticsReportLogs = {
+  /** Show-open checkpoints (main + renderer), same source as Config → profile log. */
+  showOpenProfile: ShowOpenProfileLogEntry[];
+};
+
+/** Optional structured data attached from the control renderer when exporting diagnostics. */
+export type DiagnosticsExportAttachPayload = {
+  showOpenProfileLog?: ShowOpenProfileLogEntry[];
+};
+
 export type DiagnosticsReport = {
   generatedAt: string;
   appVersion: string;
@@ -745,6 +757,7 @@ export type DiagnosticsReport = {
   state: DirectorState;
   issues: MediaValidationIssue[];
   readiness: ShowReadinessState;
+  logs: DiagnosticsReportLogs;
 };
 
 export type RendererKind = 'control' | 'display' | 'audio';
@@ -988,7 +1001,7 @@ export type IpcChannels = {
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
   'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;
-  'show:export-diagnostics': () => string | undefined;
+  'show:export-diagnostics': (attach?: DiagnosticsExportAttachPayload) => string | undefined;
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;
   'display:update': (id: DisplayWindowId, update: DisplayUpdate) => DisplayWindowState;
   'display:close': (id: DisplayWindowId) => boolean;

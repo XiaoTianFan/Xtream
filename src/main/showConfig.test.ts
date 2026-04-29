@@ -388,6 +388,19 @@ describe('show config persistence helpers', () => {
     expect(report.runtimeVersion).toBe(XTREAM_RUNTIME_VERSION);
     expect(report.state).toEqual(state);
     expect(report.issues).toContainEqual(expect.objectContaining({ target: 'display' }));
+    expect(report.logs.showOpenProfile).toEqual([]);
+
+    const entry = {
+      runId: 'run-1',
+      checkpoint: 'test',
+      sinceRunStartMs: 12,
+      loggedAt: 1700000000000,
+      source: 'main' as const,
+    };
+    const buffer = [entry];
+    const withLogs = createDiagnosticsReport(state, '1.0.0', XTREAM_RUNTIME_VERSION, { showOpenProfileLog: buffer });
+    expect(withLogs.logs.showOpenProfile).toEqual([entry]);
+    expect(withLogs.logs.showOpenProfile).not.toBe(buffer);
   });
 
   it('validates runtime pool-native issues', () => {

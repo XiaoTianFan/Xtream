@@ -7,12 +7,10 @@ import type {
   StreamPausedPlayBehavior,
   StreamPlaybackSettings,
 } from '../../../shared/types';
-import type { ShowActions } from '../app/showActions';
 import type { SurfaceController } from '../app/surfaceRouter';
 import { createSurfaceStateSignature } from '../app/surfaceSignatures';
-import { patchElements } from '../patch/elements';
 import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
-import { createDetailLine, createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
+import { createDetailLine, createDetailTitle, createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
 import { elements } from '../shell/elements';
 import type { ShowOpenProfileLogEntry } from '../../../shared/showOpenProfile';
 import { clearShowOpenProfileLogBuffer, getShowOpenProfileLogBuffer, getShowOpenProfileLogRevision } from './showOpenProfileUi';
@@ -26,9 +24,9 @@ import { createStreamTabBar } from '../stream/streamDom';
 
 const CONFIG_TAB_SESSION_KEY = 'xtream.control.config.tab.v1';
 
-type ConfigTabId = 'overview' | 'project' | 'actions' | 'diagnostics' | 'advanced';
+type ConfigTabId = 'overview' | 'project' | 'diagnostics' | 'advanced';
 
-const CONFIG_TAB_ORDER: ConfigTabId[] = ['overview', 'project', 'actions', 'diagnostics', 'advanced'];
+const CONFIG_TAB_ORDER: ConfigTabId[] = ['overview', 'project', 'diagnostics', 'advanced'];
 
 function readStoredConfigTab(): ConfigTabId {
   try {
@@ -48,7 +46,6 @@ type ConfigSurfaceOptions = {
   renderState: (state: DirectorState) => void;
   getDirectorState: () => DirectorState | undefined;
   setShowStatus: (message: string) => void;
-  showActions: ShowActions;
   getOperationIssues: () => MediaValidationIssue[];
   getDisplayStatusLabel: (display: DisplayWindowState) => string;
   getDisplayTelemetry: (display: DisplayWindowState) => string;
@@ -167,17 +164,17 @@ function formatProfileLogLine(entry: ShowOpenProfileLogEntry): string {
 }
 
 function renderShowOpenProfileLogCard(): HTMLElement {
-  const card = createSurfaceCard('Show open profile log');
+  const root = document.createElement('div');
+  root.className = 'config-log-pane';
 
-  const panel = document.createElement('div');
-  panel.className = 'config-log-panel';
-
-  const toolbar = document.createElement('div');
-  toolbar.className = 'config-log-toolbar';
+  const header = document.createElement('div');
+  header.className = 'config-log-pane-header';
+  const title = createDetailTitle('Show open profile log');
+  title.className = 'config-log-pane-title';
   const clearBtn = createButton('Clear log', 'secondary config-log-clear', () => {
     clearShowOpenProfileLogBuffer();
   });
-  toolbar.append(clearBtn);
+  header.append(title, clearBtn);
 
   const scroll = document.createElement('div');
   scroll.className = 'config-log-scroll';
@@ -187,15 +184,29 @@ function renderShowOpenProfileLogCard(): HTMLElement {
   pre.textContent = lines.length > 0 ? lines.join('\n') : 'No entries yet. Open a show to record checkpoints.';
   scroll.append(pre);
 
-  panel.append(toolbar, scroll);
-  card.append(panel);
+  root.append(header, scroll);
   requestAnimationFrame(() => {
     scroll.scrollTop = scroll.scrollHeight;
   });
-  return card;
+  return root;
 }
 
 function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
+  const exportCard = createSurfaceCard('Diagnostics export');
+  const exportRow = document.createElement('div');
+  exportRow.className = 'button-row';
+  exportRow.append(
+    createButton('Export Diagnostics', 'secondary', async () => {
+      const filePath = await window.xtream.show.exportDiagnostics({
+        showOpenProfileLog: [...getShowOpenProfileLogBuffer()],
+      });
+      if (filePath) {
+        options.setShowStatus(`Exported diagnostics: ${filePath}`);
+      }
+    }),
+  );
+  exportCard.append(exportRow);
+
   const issues = [...state.readiness.issues, ...options.getOperationIssues()];
   const issueCard = createSurfaceCard('Readiness Issues');
   if (issues.length === 0) {
@@ -236,19 +247,7 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
     );
   }
 
-  return wrapSurfaceGrid(issueCard, displayCard, outputCard);
-}
-
-function createDirectorStatePanel(state: DirectorState): HTMLElement {
-  const details = document.createElement('details');
-  details.className = 'surface-card wide director-state-panel';
-  const summary = document.createElement('summary');
-  summary.className = 'director-state-summary';
-  summary.textContent = 'Director State';
-  const pre = document.createElement('pre');
-  pre.textContent = JSON.stringify(state, null, 2);
-  details.append(summary, pre);
-  return details;
+  return wrapSurfaceGrid(exportCard, issueCard, displayCard, outputCard);
 }
 
 function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
@@ -321,34 +320,18 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
   streamPlayback.append(createHint('These Stream transport preferences are stored in your show project file.'));
   void renderStreamPlaybackSettings(streamPlayback, options);
 
-  const actions = createSurfaceCard('System Actions');
-  const actionRow = document.createElement('div');
-  actionRow.className = 'button-row';
-  actionRow.append(
-    createButton('Save Show', 'secondary', options.showActions.saveShow),
-    createButton('Open Show', 'secondary', options.showActions.openShow),
-    createButton('Export Diagnostics', 'secondary', async () => {
-      const filePath = await window.xtream.show.exportDiagnostics();
-      if (filePath) {
-        options.setShowStatus(`Exported diagnostics: ${filePath}`);
-      }
-    }),
-    createButton('Refresh Outputs', 'secondary', () => patchElements.refreshOutputsButton.click()),
-    createButton('Reset Meters', 'secondary', () => elements.resetMetersButton.click()),
-  );
-  actions.append(actionRow);
+  const advancedPlaceholder = createSurfaceCard('Advanced');
+  advancedPlaceholder.append(createHint('Reserved for future settings.'));
 
   switch (tab) {
     case 'overview':
       return wrapSurfaceGrid(summary, topology);
     case 'project':
       return wrapSurfaceGrid(showProject, streamPlayback);
-    case 'actions':
-      return wrapSurfaceGrid(actions);
     case 'diagnostics':
       return renderDiagnosticsContent(state, options);
     case 'advanced':
-      return wrapSurfaceGrid(createDirectorStatePanel(state));
+      return wrapSurfaceGrid(advancedPlaceholder);
   }
 }
 
@@ -365,7 +348,6 @@ function renderIntoShell(state: DirectorState, options: ConfigSurfaceOptions, se
       [
         ['overview', 'Overview'],
         ['project', 'Show & playback'],
-        ['actions', 'Actions'],
         ['diagnostics', 'Diagnostics'],
         ['advanced', 'Advanced'],
       ],
@@ -380,9 +362,8 @@ function renderIntoShell(state: DirectorState, options: ConfigSurfaceOptions, se
   const tabLabels: Record<ConfigTabId, string> = {
     overview: 'Overview and patch topology',
     project: 'Show file and stream playback settings',
-    actions: 'System actions',
     diagnostics: 'Readiness, displays, and audio routing',
-    advanced: 'Director state JSON',
+    advanced: 'Advanced (placeholder)',
   };
 
   for (const id of CONFIG_TAB_ORDER) {

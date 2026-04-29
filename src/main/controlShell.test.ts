@@ -21,6 +21,7 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="displayBlackoutButton"');
     expect(controlHtml).toContain('id="displayIdentifyFlashButton"');
     expect(controlHtml).toContain('id="resetMetersButton"');
+    expect(controlHtml).toContain('id="refreshOutputsButton"');
   });
 
   it('places status-footer under surface mount after patch workspace, not inside patchSurface', () => {
@@ -31,6 +32,8 @@ describe('control shell markup', () => {
     expect(surfacePanelIdx).toBeGreaterThan(patchStart);
     expect(footerIdx).toBeGreaterThan(surfacePanelIdx);
     expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('globalAudioMuteButton');
+    expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('refreshOutputsButton');
+    expect(controlHtml.slice(footerIdx)).toContain('id="refreshOutputsButton"');
   });
 
   it('includes the launch dashboard with actions and recents', () => {

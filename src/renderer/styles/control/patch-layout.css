@@ -375,31 +375,6 @@ body.extraction-blocked .nav-rail {
   grid-column: 1 / -1;
 }
 
-details.surface-card {
-  display: grid;
-  gap: var(--gutter);
-  align-content: start;
-}
-
-.director-state-summary {
-  margin: 0.35rem 0 0.45rem;
-  color: var(--text-secondary);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-  list-style: none;
-}
-
-.director-state-summary::-webkit-details-marker {
-  display: none;
-}
-
-.director-state-panel pre {
-  font-size: 0.58rem;
-  line-height: 1.35;
-}
-
 .log-list {
   display: grid;
   gap: var(--compact);

@@ -50,35 +50,30 @@
   background: color-mix(in srgb, var(--surface-low) 92%, var(--surface));
 }
 
-.config-surface-log > .surface-card {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: var(--compact);
-  min-height: 0;
-}
-
-.config-log-panel {
+.config-log-pane {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-low) 88%, transparent);
 }
 
-.config-log-toolbar {
+.config-log-pane-header {
   flex-shrink: 0;
   display: flex;
-  justify-content: flex-end;
   align-items: center;
+  justify-content: space-between;
   gap: var(--compact);
-  padding: 0.35rem 0.45rem;
-  border-bottom: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface) 35%, var(--surface-low));
+  margin-bottom: var(--compact);
+}
+
+.config-log-pane-title {
+  margin: 0;
+  min-width: 0;
 }
 
 button.config-log-clear {
+  flex-shrink: 0;
   min-height: 1.65rem;
   padding: 0.2rem 0.5rem;
   font-size: 0.68rem;
@@ -87,10 +82,12 @@ button.config-log-clear {
 }
 
 .config-log-scroll {
-  margin-top: 0;
-  min-height: 0;
   flex: 1 1 0;
+  min-height: 0;
   overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-low) 88%, transparent);
 }
 
 .config-log-pre {
