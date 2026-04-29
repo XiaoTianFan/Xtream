@@ -2,6 +2,12 @@ import type { StreamSurfaceRefs } from './streamTypes';
 
 export const STREAM_LAYOUT_PREF_KEY = 'xtream.control.stream.layout.v1';
 
+/** Matches `.stream-middle` first-column minimum in control.css */
+export const STREAM_MEDIA_COL_MIN_PX = 260;
+/** Matches `.stream-middle` third-column minimum — list/flow must keep this much width. */
+export const STREAM_WORKSPACE_COL_MIN_PX = 200;
+const STREAM_MIDDLE_SPLITTER_PX = 4;
+
 export type StreamLayoutPrefs = {
   mediaWidthPx?: number;
   bottomHeightPx?: number;
@@ -10,6 +16,15 @@ export type StreamLayoutPrefs = {
 
 export function clampStreamLayout(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** Largest media column width that still leaves `STREAM_WORKSPACE_COL_MIN_PX` for list/flow (horizontal layout). */
+export function maxStreamMediaWidthForRoot(rootWidthPx: number): number {
+  return Math.max(STREAM_MEDIA_COL_MIN_PX, rootWidthPx - STREAM_MIDDLE_SPLITTER_PX - STREAM_WORKSPACE_COL_MIN_PX);
+}
+
+export function clampStreamMediaWidthToRoot(rootWidthPx: number, requestedPx: number): number {
+  return clampStreamLayout(requestedPx, STREAM_MEDIA_COL_MIN_PX, maxStreamMediaWidthForRoot(rootWidthPx));
 }
 
 export function readStreamLayoutPrefs(): StreamLayoutPrefs {
@@ -46,13 +61,51 @@ export function setSeparatorAriaValue(el: HTMLElement, orientation: 'horizontal'
   el.setAttribute('aria-valuenow', String(Math.round(value)));
 }
 
+function readMediaWidthPxFromRoot(root: HTMLElement): number {
+  const raw =
+    root.style.getPropertyValue('--stream-media-width').trim() ||
+    getComputedStyle(root).getPropertyValue('--stream-media-width').trim();
+  if (!raw) {
+    return 21 * 16;
+  }
+  if (raw.endsWith('px')) {
+    return parseFloat(raw);
+  }
+  if (raw.endsWith('rem')) {
+    const rem = parseFloat(raw);
+    const docRem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return rem * docRem;
+  }
+  return 21 * 16;
+}
+
+/** Caps `--stream-media-width` so the list/flow column cannot be squeezed to zero after resize or stale prefs. */
+export function reconcileStreamMediaWidthToRoot(refs: StreamSurfaceRefs): void {
+  const root = refs.root;
+  if (!root) {
+    return;
+  }
+  const rootWidth = root.getBoundingClientRect().width;
+  if (rootWidth <= 0) {
+    return;
+  }
+  const current = readMediaWidthPxFromRoot(root);
+  if (!Number.isFinite(current)) {
+    return;
+  }
+  const capped = clampStreamMediaWidthToRoot(rootWidth, current);
+  root.style.setProperty('--stream-media-width', `${capped}px`);
+}
+
 export function applyStreamLayoutPrefs(refs: StreamSurfaceRefs, prefs: StreamLayoutPrefs): void {
   const root = refs.root;
   if (!root) {
     return;
   }
   if (prefs.mediaWidthPx !== undefined) {
-    root.style.setProperty('--stream-media-width', `${prefs.mediaWidthPx}px`);
+    const w = root.getBoundingClientRect().width;
+    const target = w > 0 ? clampStreamMediaWidthToRoot(w, prefs.mediaWidthPx) : prefs.mediaWidthPx;
+    root.style.setProperty('--stream-media-width', `${target}px`);
   }
   if (prefs.bottomHeightPx !== undefined) {
     root.style.setProperty('--stream-bottom-height', `${prefs.bottomHeightPx}px`);
@@ -60,12 +113,13 @@ export function applyStreamLayoutPrefs(refs: StreamSurfaceRefs, prefs: StreamLay
 }
 
 export function syncStreamSplitterAria(refs: StreamSurfaceRefs): void {
+  reconcileStreamMediaWidthToRoot(refs);
   const root = refs.root;
   const media = refs.media;
   const middleSplitter = refs.streamMiddleSplitter;
   if (root && media && middleSplitter) {
-    const min = 260;
-    const max = Math.max(360, root.getBoundingClientRect().width - 500);
+    const min = STREAM_MEDIA_COL_MIN_PX;
+    const max = maxStreamMediaWidthForRoot(root.getBoundingClientRect().width);
     setSeparatorAriaValue(middleSplitter, 'vertical', min, max, clampStreamLayout(media.getBoundingClientRect().width, min, max));
   }
   const bottom = refs.bottom;
@@ -131,7 +185,9 @@ export function createStreamLayoutController(refs: StreamSurfaceRefs): StreamLay
     installSplitter(requireRef('streamMiddleSplitter'), 'x', (delta) => {
       const media = requireRef('media');
       const root = requireRef('root');
-      const width = clampStreamLayout(media.getBoundingClientRect().width + delta, 260, Math.max(360, root.getBoundingClientRect().width - 500));
+      const w = root.getBoundingClientRect().width;
+      const maxM = maxStreamMediaWidthForRoot(w);
+      const width = clampStreamLayout(media.getBoundingClientRect().width + delta, STREAM_MEDIA_COL_MIN_PX, maxM);
       savePrefs({ mediaWidthPx: width });
     });
     installSplitter(requireRef('streamBottomSplitter'), 'y', (delta) => {

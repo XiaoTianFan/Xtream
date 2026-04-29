@@ -3153,7 +3153,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .stream-middle {
   display: grid;
-  grid-template-columns: minmax(260px, var(--stream-media-width)) var(--splitter-hit) minmax(0, 1fr);
+  /* Third track reserves space for list/flow so the media column cannot eat the whole row. */
+  grid-template-columns: minmax(260px, var(--stream-media-width)) var(--splitter-hit) minmax(12.5rem, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -3178,7 +3179,7 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .stream-workspace-tab-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
   background: var(--surface-low);
 }
@@ -3199,7 +3200,7 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .stream-tab-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
   background: var(--surface-low);
 }
@@ -3211,6 +3212,10 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .stream-tab-row > .icon-button {
   align-self: center;
   margin: var(--compact) var(--compact) var(--compact) 0;
+  width: 1.4rem;
+  min-width: 1.4rem;
+  min-height: 1.4rem;
+  height: 1.4rem;
 }
 
 .stream-tabs::after {
@@ -3227,6 +3232,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 .stream-tabs .pool-tab {
   position: relative;
   z-index: 1;
+  min-height: 1.3rem;
+  padding: 0.1rem 0.45rem;
   border-color: transparent;
   border-top-color: transparent;
   background: transparent;
@@ -3256,7 +3263,7 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .stream-workspace-content,
 .stream-bottom-content {
-  height: calc(100% - 2.35rem);
+  height: calc(100% - 1.55rem);
 }
 
 .stream-bottom-content > .output-panel,
@@ -3527,8 +3534,20 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   resize: vertical;
 }
 
+.stream-scene-form .stream-scene-note-field {
+  grid-column: 1 / -1;
+}
+
 .stream-scene-form .stream-scene-form-row {
   margin-top: 0.35rem;
+}
+
+.stream-scene-form .stream-subcue-field-grid > .stream-scene-form-row {
+  margin-top: 0;
+}
+
+.stream-scene-form .button-row {
+  justify-content: flex-start;
 }
 
 .stream-scene-loop-detail {
@@ -3543,7 +3562,9 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .stream-flow-canvas {
   position: relative;
-  min-width: 900px;
+  box-sizing: border-box;
+  width: max(100%, 900px);
+  min-width: 0;
   min-height: 520px;
   background:
     linear-gradient(color-mix(in srgb, var(--border-subtle) 40%, transparent) 1px, transparent 1px),
@@ -3988,7 +4009,7 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   }
 
   .stream-middle {
-    grid-template-rows: minmax(12rem, 18rem) var(--splitter-hit) minmax(0, 1fr);
+    grid-template-rows: minmax(12rem, 18rem) var(--splitter-hit) minmax(10rem, 1fr);
   }
 
   .stream-middle > .splitter.vertical {

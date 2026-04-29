@@ -6,9 +6,15 @@ import type {
   SceneLoopPolicy,
   SceneTrigger,
 } from '../../../../shared/types';
-import { createButton, createHint, createSelect } from '../../shared/dom';
+import { createButton, createSelect } from '../../shared/dom';
 import { formatTriggerSummary } from '../formatting';
 import { createStreamDetailField, createStreamDetailLine } from '../streamDom';
+import {
+  createSubCueFieldGrid,
+  createSubCueSection,
+  createSubCueToggleButton,
+  createSubCueToggleRow,
+} from './subCueFormControls';
 
 export type SceneFormDeps = {
   stream: PersistedStreamConfig;
@@ -31,7 +37,7 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     const v = titleInput.value.trim();
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { title: v || undefined } });
   });
-  form.append(createStreamDetailField('Title', titleInput));
+  const titleField = createStreamDetailField('Title', titleInput);
 
   const noteInput = document.createElement('textarea');
   noteInput.className = 'label-input stream-scene-note-input';
@@ -42,18 +48,20 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     const v = noteInput.value.trim();
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { note: v || undefined } });
   });
-  form.append(createStreamDetailField('Note', noteInput));
+  const noteField = createStreamDetailField('Note', noteInput);
+  noteField.classList.add('stream-scene-note-field');
 
-  const disabledLabel = document.createElement('label');
-  disabledLabel.className = 'stream-checkbox-field';
-  const disabledBox = document.createElement('input');
-  disabledBox.type = 'checkbox';
-  disabledBox.checked = !!scene.disabled;
-  disabledBox.addEventListener('change', () => {
-    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: disabledBox.checked } });
-  });
-  disabledLabel.append(disabledBox, document.createTextNode(' Scene disabled'));
-  form.append(disabledLabel);
+  form.append(
+    createSubCueSection(
+      'Details',
+      createSubCueFieldGrid(titleField, noteField),
+      createSubCueToggleRow(
+        createSubCueToggleButton('Scene disabled', !!scene.disabled, (disabled) =>
+          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled } }),
+        ),
+      ),
+    ),
+  );
 
   const triggerType = scene.trigger.type;
   const triggerSelect = createSelect(
@@ -98,7 +106,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
       void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: nextTrigger } });
     },
   );
-  form.append(triggerSelect);
 
   const followOptions: Array<[string, string]> = stream.sceneOrder
     .filter((id) => id !== scene.id)
@@ -129,7 +136,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     },
   );
   followSelect.hidden = !needsFollow;
-  form.append(followSelect);
 
   const offsetWrap = document.createElement('div');
   offsetWrap.className = 'stream-scene-form-row';
@@ -153,7 +159,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     });
   });
   offsetWrap.append(createStreamDetailField('Offset (ms)', offsetInput));
-  form.append(offsetWrap);
 
   const tcWrap = document.createElement('div');
   tcWrap.className = 'stream-scene-form-row';
@@ -170,23 +175,13 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'at-timecode', timecodeMs: ms } } });
   });
   tcWrap.append(createStreamDetailField('Timecode (ms)', tcInput));
-  form.append(tcWrap);
-
-  const loopLabel = document.createElement('label');
-  loopLabel.className = 'stream-checkbox-field';
-  const loopBox = document.createElement('input');
-  loopBox.type = 'checkbox';
-  loopBox.checked = scene.loop.enabled;
-  loopBox.addEventListener('change', () => {
-    const next: SceneLoopPolicy = loopBox.checked
-      ? scene.loop.enabled
-        ? scene.loop
-        : { enabled: true, iterations: { type: 'count', count: 1 } }
-      : { enabled: false };
-    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop: next } });
-  });
-  loopLabel.append(loopBox, document.createTextNode(' Scene loop'));
-  form.append(loopLabel);
+  form.append(
+    createSubCueSection(
+      'Trigger',
+      createSubCueFieldGrid(triggerSelect, followSelect, offsetWrap, tcWrap),
+      createStreamDetailLine('Trigger summary', formatTriggerSummary(stream, scene)),
+    ),
+  );
 
   const loopDetail = document.createElement('div');
   loopDetail.className = 'stream-scene-form-row stream-scene-loop-detail';
@@ -277,22 +272,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     });
     loopDetail.append(createStreamDetailField('Loop range end (ms)', rangeEnd));
   }
-  form.append(loopDetail);
-
-  const preloadLabel = document.createElement('label');
-  preloadLabel.className = 'stream-checkbox-field';
-  const preloadBox = document.createElement('input');
-  preloadBox.type = 'checkbox';
-  preloadBox.checked = scene.preload.enabled;
-  preloadBox.addEventListener('change', () => {
-    void window.xtream.stream.edit({
-      type: 'update-scene',
-      sceneId: scene.id,
-      update: { preload: { enabled: preloadBox.checked, leadTimeMs: scene.preload.leadTimeMs } },
-    });
-  });
-  preloadLabel.append(preloadBox, document.createTextNode(' Preload'));
-  form.append(preloadLabel);
 
   const leadWrap = document.createElement('div');
   leadWrap.className = 'stream-scene-form-row';
@@ -312,11 +291,29 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     });
   });
   leadWrap.append(createStreamDetailField('Preload lead time (ms)', leadInput));
-  form.append(leadWrap);
 
   form.append(
-    createStreamDetailLine('Trigger summary', formatTriggerSummary(stream, scene)),
-    createStreamDetailLine('Sub-cues', String(scene.subCueOrder.length)),
+    createSubCueSection(
+      'Playback',
+      createSubCueToggleRow(
+        createSubCueToggleButton('Scene loop', scene.loop.enabled, (enabled) => {
+          const next: SceneLoopPolicy = enabled
+            ? scene.loop.enabled
+              ? scene.loop
+              : { enabled: true, iterations: { type: 'count', count: 1 } }
+            : { enabled: false };
+          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop: next } });
+        }),
+        createSubCueToggleButton('Preload', scene.preload.enabled, (enabled) =>
+          void window.xtream.stream.edit({
+            type: 'update-scene',
+            sceneId: scene.id,
+            update: { preload: { enabled, leadTimeMs: scene.preload.leadTimeMs } },
+          }),
+        ),
+      ),
+      createSubCueFieldGrid(loopDetail, leadWrap),
+    ),
   );
 
   const actions = document.createElement('div');
@@ -331,6 +328,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
   );
   const removeBtn = actions.querySelectorAll('button')[2] as HTMLButtonElement;
   removeBtn.disabled = removeDisabled;
-  form.append(actions);
+  form.append(createSubCueSection('Metadata', createStreamDetailLine('Sub-cues', String(scene.subCueOrder.length)), actions));
   return form;
 }
