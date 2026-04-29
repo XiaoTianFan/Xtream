@@ -1,5 +1,16 @@
 # Xtream Runtime Changelog
 
+## v0.1.0
+
+- Introduced the **Stream workspace** as the full programming surface for shows: streams with ordered **scenes**, scene **triggers** (manual, follow another scene, time offsets, timecode), a **flow** canvas for laying out scenes, and **sub-cues** on each scene—**audio** routes to virtual outputs (levels, pan, fades, loops, automation, Patch-style mute/solo round‑trip), **visuals** target display zones with fades, loops, and timing overrides, and **control** sub-cues automate scene transport, sub-cue levels, and global mute/blackout. Operators can tune **playback behavior** when editing a running show (for example letting orphaned cues finish or **fading** them out) and how pausing interacts with the playhead.
+- Added **visual mingle** options per display so layered visuals can blend (including transitions) instead of only stacking as opaque layers.
+- Advanced **show files** to **schema v9**, with automatic migration from v7/v8: new projects carry the Stream graph alongside Patch data, and a **Patch compatibility** scene keeps Patch routing aligned with Stream until you fully work in Stream.
+- Moved **performance mode**, **embedded-audio extraction format**, and **control display preview frame rate** into **machine-local app settings** so these choices stay with the workstation rather than inside every show file.
+- Improved **Stream playback and displays**: reworked the stream transport engine for steadier scheduling and persistence, **solo output** state is reflected on display playback, and removing or changing running cues can **fade out** cleanly instead of popping off.
+- Refined **launch dashboard** feedback with clearer **loading** states when opening or creating shows.
+- Expanded **diagnostics export** and in-app logging so support and operators can see more of the open-show and readiness story.
+- Polished the **control shell** (Stream layouts, transport headers, audio sub-cue editing, asset preview and overlays) and unified **styling tokens** for a more consistent console.
+
 ## v0.0.8
 
 - Added live visual sources so operators can add webcams, screens, or application windows to the visual pool and route them to display windows like other visuals.
