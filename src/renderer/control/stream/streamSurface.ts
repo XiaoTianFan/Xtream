@@ -7,6 +7,7 @@ import type {
   SceneId,
   StreamEnginePublicState,
   SubCueId,
+  VirtualOutputId,
 } from '../../../shared/types';
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
@@ -15,7 +16,7 @@ import type { MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import { createMediaPoolController, type MediaPoolController } from '../patch/mediaPool';
 import { createMixerPanelController, type MixerPanelController } from '../patch/mixerPanel';
 import type { SelectedEntity } from '../shared/types';
-import { installInteractionLock } from '../app/interactionLocks';
+import { installInteractionLock, isPanelInteractionActive } from '../app/interactionLocks';
 import { elements } from '../shell/elements';
 import { renderStreamBottomPane, type StreamBottomPaneContext } from './bottomPane';
 import {
@@ -259,6 +260,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (!mounted) {
       mount();
     }
+    // `surfaceRouter` calls `mount()` before `render()`, so `createShell()` runs while `currentState`
+    // is still undefined and `applyEngineSoloOutputIds` cannot hydrate solo from the IPC cache.
+    // Re-apply once director state exists on every stream render (no-op if solo already matches).
+    mixerPanel?.applyEngineSoloOutputIds(options.getEngineSoloOutputIds());
     syncSelectedScene();
     renderCurrent();
   }
@@ -393,6 +398,17 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       renderState: options.renderState,
     });
     installInteractionLock(shell.outputPanel);
+    shell.outputPanel.addEventListener('pointerup', () => {
+      window.queueMicrotask(() => {
+        if (!mounted || !currentState || !streamState) {
+          return;
+        }
+        if (!isPanelInteractionActive(shell.outputPanel)) {
+          bottomRenderSignature = '';
+          renderBottomPaneIfNeeded();
+        }
+      });
+    });
     layoutCtl.installSplitters(requireRef);
     return shell.root;
   }
@@ -781,6 +797,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     createRenderSignature,
     render,
     applyOutputMeterReport: (report: OutputMeterReport) => mixerPanel?.applyOutputMeterReport(report),
+    applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => {
+      mixerPanel?.applyEngineSoloOutputIds(outputIds);
+    },
     syncPreviewElements: (presentation: DirectorState) => {
       syncPreviewElements(presentation);
     },

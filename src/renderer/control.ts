@@ -1,5 +1,5 @@
 import './control.css';
-import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult, StreamEnginePublicState } from '../shared/types';
+import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
 import { deriveDirectorStateForStream } from './streamProjection';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import { combineVisibleIssues } from './control/app/appStatus';
@@ -33,6 +33,7 @@ let clearPatchSelection = (): void => undefined;
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
 const STREAM_MEDIA_ISSUES_DEBOUNCE_MS = 200;
 let streamMediaIssuesTimer: number | undefined;
+let engineSoloOutputIds: VirtualOutputId[] = [];
 
 function scheduleRefreshStreamMediaIssues(): void {
   if (streamMediaIssuesTimer !== undefined) {
@@ -144,9 +145,16 @@ const streamSurface = createStreamSurfaceController({
   getAudioDevices: () => audioDevices,
   getDisplayMonitors: () => displayMonitors,
   getPresentationState,
+  getEngineSoloOutputIds: () => engineSoloOutputIds,
   renderState,
   setShowStatus,
   showActions,
+});
+
+window.xtream.audioRuntime.onSoloOutputIds((ids) => {
+  engineSoloOutputIds = ids;
+  patchSurface.applyEngineSoloOutputIds(ids);
+  streamSurface.applyEngineSoloOutputIds(ids);
 });
 
 window.xtream.stream.onState((state) => {

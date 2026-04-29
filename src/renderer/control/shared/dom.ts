@@ -194,11 +194,15 @@ export function createPanKnob({ name, value, onChange, variant = 'row' }: PanKno
     reset();
   });
   range.addEventListener('click', (event) => {
+    event.stopPropagation();
     if (event.altKey) {
       event.preventDefault();
-      event.stopPropagation();
       reset();
     }
+  });
+
+  field.addEventListener('click', (event) => {
+    event.stopPropagation();
   });
 
   field.append(face, range);

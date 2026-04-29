@@ -67,11 +67,9 @@ export function createStreamBottomTabAction(ctx: StreamBottomPaneContext): HTMLB
 
 export function renderStreamMixerPane(ctx: StreamBottomPaneContext, outputPanel: HTMLDivElement): HTMLElement {
   const signature = ctx.mixerPanel?.createRenderSignature(ctx.currentState) ?? '';
-  if (ctx.mixerRenderSignature !== signature) {
+  if (ctx.mixerRenderSignature !== signature && !isPanelInteractionActive(ctx.streamOutputPanel)) {
     ctx.setMixerRenderSignature(signature);
-    if (!isPanelInteractionActive(ctx.streamOutputPanel)) {
-      ctx.mixerPanel?.renderOutputs(ctx.currentState);
-    }
+    ctx.mixerPanel?.renderOutputs(ctx.currentState);
   }
   ctx.mixerPanel?.syncSelection(ctx.selectedEntity);
   ctx.mixerPanel?.syncOutputMeters(ctx.currentState);

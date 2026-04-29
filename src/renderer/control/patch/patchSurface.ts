@@ -238,6 +238,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     dismissContextMenu: mediaPool.dismissContextMenu,
     clearSelection,
     applyOutputMeterReport: mixerPanel.applyOutputMeterReport,
+    applyEngineSoloOutputIds: mixerPanel.applyEngineSoloOutputIds,
     getDisplayStatusLabel: displayWorkspace.getDisplayStatusLabel,
     getDisplayTelemetry: displayWorkspace.getDisplayTelemetry,
     exportLayoutUiSnapshot,

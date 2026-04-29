@@ -138,17 +138,44 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     };
   }
 
+  /** Routing / topology only — omits bus + per-source mix fields so mixer strip tweaks do not rebuild unrelated media detail previews. */
+  function outputsStableForNonOutputDetailsSignature(outputs: Record<string, VirtualOutputState>): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(outputs).map(([id, output]) => [
+        id,
+        {
+          id: output.id,
+          label: output.label,
+          sources: output.sources.map((s) => ({ id: s.id, audioSourceId: s.audioSourceId })),
+          sinkId: output.sinkId,
+          sinkLabel: output.sinkLabel,
+          ready: output.ready,
+          physicalRoutingAvailable: output.physicalRoutingAvailable,
+          fallbackAccepted: output.fallbackAccepted,
+          fallbackReason: output.fallbackReason,
+          error: output.error,
+        },
+      ]),
+    );
+  }
+
   function createDetailsSignature(state: DirectorState): unknown {
     const selectedEntity = options.getSelectedEntity();
     const stableDisplays = Object.fromEntries(
       Object.entries(state.displays).map(([id, display]) => [id, stableDisplayForDetailsSignature(display)]),
     );
+    const outputsForSignature =
+      selectedEntity?.type === 'output'
+        ? Object.fromEntries(
+            Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined, meterLanes: undefined }]),
+          )
+        : outputsStableForNonOutputDetailsSignature(state.outputs);
     const base = {
       performanceMode: state.performanceMode,
       visuals: state.visuals,
       audioSources: state.audioSources,
       displays: stableDisplays,
-      outputs: Object.fromEntries(Object.entries(state.outputs).map(([id, output]) => [id, { ...output, meterDb: undefined, meterLanes: undefined }])),
+      outputs: outputsForSignature,
     };
     if (selectedEntity?.type === 'display') {
       return { ...base, selectedDisplayLive: state.displays[selectedEntity.id] };

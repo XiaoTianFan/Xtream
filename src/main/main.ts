@@ -164,6 +164,9 @@ function createControlWindow(): BrowserWindow {
   } else {
     void window.loadFile(path.join(rendererRoot, 'index.html'));
   }
+  window.webContents.on('did-finish-load', () => {
+    sendSoloOutputIds(window);
+  });
   window.on('close', (e) => {
     if (suppressCloseGuard || isShuttingDown) {
       return;
@@ -256,6 +259,11 @@ function sendSoloOutputIds(window: BrowserWindow | undefined): void {
     return;
   }
   window.webContents.send('audio:solo-output-ids', soloOutputIds);
+}
+
+function broadcastSoloOutputIds(): void {
+  sendSoloOutputIds(audioWindow);
+  sendSoloOutputIds(controlWindow);
 }
 
 function isTrustedWebContents(contents: Electron.WebContents | undefined | null): boolean {
@@ -378,7 +386,7 @@ function getLivePermissionStatus(): Record<string, string> {
 function setSoloOutputIds(outputIds: VirtualOutputId[]): void {
   const outputs = director.getState().outputs;
   soloOutputIds = [...new Set(outputIds)].filter((outputId) => outputs[outputId]);
-  sendSoloOutputIds(audioWindow);
+  broadcastSoloOutputIds();
 }
 
 function beginAppShutdown(): void {
@@ -1260,7 +1268,7 @@ function registerIpcHandlers(): void {
     }
     if (report.kind === 'audio') {
       director.markAudioRendererReady();
-      sendSoloOutputIds(audioWindow);
+      broadcastSoloOutputIds();
       return;
     }
     if (report.kind === 'display' && report.displayId) {

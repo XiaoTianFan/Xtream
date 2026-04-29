@@ -19,27 +19,13 @@ import type {
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
 import {
-  estimateLinearManualStreamDurationMs,
-  estimateSceneDurationMs,
+  buildStreamSchedule,
   resolveFollowsSceneId,
+  type StreamSchedule,
   validateStreamContent,
   validateStreamStructure,
   validateTriggerReferences,
 } from '../shared/streamSchedule';
-
-type SceneScheduleEntry = {
-  sceneId: SceneId;
-  startMs?: number;
-  durationMs?: number;
-  endMs?: number;
-  triggerKnown: boolean;
-};
-
-type StreamSchedule = {
-  entries: Record<SceneId, SceneScheduleEntry>;
-  expectedDurationMs?: number;
-  notice?: string;
-};
 
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString('hex')}`;
@@ -242,13 +228,15 @@ export class StreamEngine extends EventEmitter {
       return;
     }
 
-    const schedule = this.buildSchedule(target);
+    const schedule = this.buildSchedule();
+    const targetStartMs = schedule.entries[target]?.startMs ?? 0;
+    const now = Date.now();
     this.runtime = {
       status: 'running',
-      originWallTimeMs: Date.now(),
-      startedWallTimeMs: Date.now(),
-      offsetStreamMs: 0,
-      currentStreamMs: 0,
+      originWallTimeMs: now,
+      startedWallTimeMs: now,
+      offsetStreamMs: targetStartMs,
+      currentStreamMs: targetStartMs,
       cursorSceneId: target,
       sceneStates: this.createInitialSceneStates(schedule),
       expectedDurationMs: schedule.expectedDurationMs,
@@ -307,7 +295,7 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime) {
       return;
     }
-    const schedule = this.buildSchedule(this.runtime.cursorSceneId);
+    const schedule = this.buildSchedule();
     const max = schedule.expectedDurationMs;
     const nextMs = max === undefined ? clampNonNegative(timeMs) : Math.min(max, clampNonNegative(timeMs));
     this.runtime.offsetStreamMs = nextMs;
@@ -333,7 +321,7 @@ export class StreamEngine extends EventEmitter {
 
   private handleBackToFirst(): void {
     const target = this.stream.sceneOrder.find((id) => !this.stream.scenes[id]?.disabled);
-    const schedule = this.buildSchedule(target);
+    const schedule = this.buildSchedule();
     this.stopTicking();
     this.runtime = {
       status: target ? 'idle' : 'complete',
@@ -361,7 +349,7 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     const next = this.stream.sceneOrder.slice(idx + 1).find((id) => !this.stream.scenes[id]?.disabled);
-    const schedule = this.buildSchedule(cur);
+    const schedule = this.buildSchedule();
     const curEntry = schedule.entries[cur];
     const nextEntry = next ? schedule.entries[next] : undefined;
     if (!next) {
@@ -377,19 +365,17 @@ export class StreamEngine extends EventEmitter {
       this.stopTicking();
       return;
     }
-    this.manuallyCompletedSceneIds.add(cur);
+    const wasRunning = this.runtime.status === 'running' || this.runtime.status === 'preloading';
+    if (wasRunning) {
+      this.manuallyCompletedSceneIds.add(cur);
+    }
     const jumpTarget = nextEntry?.startMs ?? this.getRuntimeStreamMs();
     this.runtime.cursorSceneId = next;
     this.seek(jumpTarget);
-    this.manuallyCompletedSceneIds.add(cur);
-    this.recomputeRuntime();
-    if (this.runtime && this.runtime.status === 'idle') {
-      this.runtime.status = 'running';
-      const now = Date.now();
-      this.runtime.originWallTimeMs = now;
-      this.runtime.startedWallTimeMs = now;
-      this.startTicking();
+    if (wasRunning) {
+      this.manuallyCompletedSceneIds.add(cur);
     }
+    this.recomputeRuntime();
   }
 
   private createInitialSceneStates(schedule: StreamSchedule): Record<SceneId, SceneRuntimeState> {
@@ -410,7 +396,7 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime) {
       return;
     }
-    const schedule = this.buildSchedule(this.runtime.cursorSceneId);
+    const schedule = this.buildSchedule();
     const currentMs = this.getRuntimeStreamMs();
     this.runtime.currentStreamMs = currentMs;
     this.runtime.expectedDurationMs = schedule.expectedDurationMs;
@@ -455,13 +441,20 @@ export class StreamEngine extends EventEmitter {
         status = scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < currentMs ? 'skipped' : 'ready';
       } else if (currentMs < start) {
         status = this.shouldPreload(sceneId, schedule, currentMs) ? 'ready-to-start' : 'ready';
+      } else if (this.runtime.status === 'idle') {
+        if (currentMs < start) {
+          status = 'ready';
+        } else if (end !== undefined && currentMs > end) {
+          status = 'complete';
+          progress = 1;
+        } else {
+          status = 'ready-to-start';
+        }
       } else if (end !== undefined && currentMs >= end) {
         status = 'complete';
         progress = 1;
       } else if (this.runtime.status === 'paused') {
         status = 'paused';
-      } else if (this.runtime.status === 'idle') {
-        status = start === 0 ? 'ready-to-start' : 'ready';
       } else {
         status = 'running';
       }
@@ -520,107 +513,9 @@ export class StreamEngine extends EventEmitter {
     return rate && rate > 0 ? rate : 1;
   }
 
-  private buildSchedule(anchorSceneId?: SceneId): StreamSchedule {
+  private buildSchedule(): StreamSchedule {
     const [visualDurations, audioDurations] = this.getDurationMaps();
-    const entries: Record<SceneId, SceneScheduleEntry> = {};
-    const enabledIds = this.stream.sceneOrder.filter((id) => {
-      const scene = this.stream.scenes[id];
-      return scene && !scene.disabled;
-    });
-    const allManual = enabledIds.every((id) => this.stream.scenes[id]?.trigger.type === 'manual');
-    let expectedDurationMs: number | undefined;
-    let notice: string | undefined;
-
-    for (const id of this.stream.sceneOrder) {
-      const scene = this.stream.scenes[id];
-      entries[id] = {
-        sceneId: id,
-        durationMs: scene && scene.subCueOrder.length > 0 ? estimateSceneDurationMs(scene, visualDurations, audioDurations) : undefined,
-        triggerKnown: false,
-      };
-    }
-
-    if (allManual) {
-      let cursor = 0;
-      const startIndex = anchorSceneId && enabledIds.includes(anchorSceneId) ? enabledIds.indexOf(anchorSceneId) : 0;
-      for (const id of enabledIds.slice(startIndex)) {
-        const entry = entries[id];
-        entry.startMs = cursor;
-        entry.triggerKnown = true;
-        if (entry.durationMs === undefined) {
-          notice = 'Stream timeline is unknown after a live or indefinite manual scene.';
-          break;
-        }
-        entry.endMs = cursor + entry.durationMs;
-        cursor = entry.endMs;
-      }
-      expectedDurationMs = notice ? undefined : estimateLinearManualStreamDurationMs(this.stream, visualDurations, audioDurations);
-      return { entries, expectedDurationMs, notice };
-    }
-
-    const anchor = anchorSceneId && enabledIds.includes(anchorSceneId) ? anchorSceneId : enabledIds[0];
-    if (anchor) {
-      entries[anchor].startMs = 0;
-      entries[anchor].triggerKnown = true;
-    }
-    for (const id of enabledIds) {
-      const scene = this.stream.scenes[id];
-      if (scene?.trigger.type === 'at-timecode') {
-        entries[id].startMs = scene.trigger.timecodeMs;
-        entries[id].triggerKnown = true;
-      }
-    }
-
-    let changed = true;
-    for (let guard = 0; guard < this.stream.sceneOrder.length * 3 && changed; guard += 1) {
-      changed = false;
-      for (const id of enabledIds) {
-        const scene = this.stream.scenes[id];
-        const entry = entries[id];
-        if (!scene || entry.startMs !== undefined || scene.trigger.type === 'manual' || scene.trigger.type === 'at-timecode') {
-          continue;
-        }
-        const pred = resolveFollowsSceneId(this.stream, id, scene.trigger);
-        const predEntry = pred ? entries[pred] : undefined;
-        if (!predEntry || predEntry.startMs === undefined) {
-          continue;
-        }
-        let start: number | undefined;
-        if (scene.trigger.type === 'simultaneous-start') {
-          start = predEntry.startMs;
-        } else if (scene.trigger.type === 'time-offset') {
-          start = predEntry.startMs + scene.trigger.offsetMs;
-        } else if (scene.trigger.type === 'follow-end' && predEntry.durationMs !== undefined) {
-          start = predEntry.startMs + predEntry.durationMs;
-        }
-        if (start !== undefined) {
-          entry.startMs = start;
-          entry.triggerKnown = true;
-          changed = true;
-        }
-      }
-    }
-
-    let maxEnd = 0;
-    let unknown = false;
-    for (const id of enabledIds) {
-      const entry = entries[id];
-      if (entry.startMs === undefined) {
-        if (this.stream.scenes[id]?.trigger.type !== 'manual') {
-          unknown = true;
-        }
-        continue;
-      }
-      if (entry.durationMs === undefined) {
-        unknown = true;
-        continue;
-      }
-      entry.endMs = entry.startMs + entry.durationMs;
-      maxEnd = Math.max(maxEnd, entry.endMs);
-    }
-    expectedDurationMs = unknown ? undefined : maxEnd;
-    notice = unknown ? 'Stream timeline includes manual breaks, live media, or indefinite loops.' : undefined;
-    return { entries, expectedDurationMs, notice };
+    return buildStreamSchedule(this.stream, { visualDurations, audioDurations });
   }
 
   private shouldPreload(sceneId: SceneId, schedule: StreamSchedule, currentMs: number): boolean {
@@ -762,6 +657,8 @@ export class StreamEngine extends EventEmitter {
     messages.push(...validateStreamStructure(this.stream));
     messages.push(...validateTriggerReferences(this.stream));
     messages.push(...validateStreamContent(this.stream, this.getValidationContext()));
+    const schedule = this.buildSchedule();
+    messages.push(...schedule.issues.map((issue) => `Stream timeline: ${issue.message}`));
     this.validationMessages = messages;
   }
 

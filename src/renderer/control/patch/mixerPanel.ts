@@ -36,6 +36,7 @@ export type MixerPanelController = {
   createRenderSignature: (state: DirectorState) => string;
   pruneSoloOutputIds: (state: DirectorState) => boolean;
   setSoloOutputIds: (outputIds: Iterable<VirtualOutputId>) => void;
+  applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => void;
   getSoloOutputCount: () => number;
   renderOutputs: (state: DirectorState) => void;
   syncSelection: (selectedEntity: SelectedEntity | undefined) => void;
@@ -112,6 +113,23 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     if (!state) {
       return;
     }
+    options.syncTransportInputs(state);
+    renderOutputs(state);
+    syncOutputMeters(state);
+  }
+
+  function applyEngineSoloOutputIds(outputIds: VirtualOutputId[]): void {
+    const state = options.getState();
+    if (!state) {
+      return;
+    }
+    const nextIds = [...new Set(outputIds)].filter((outputId) => state.outputs[outputId]);
+    const nextSignature = nextIds.slice().sort((left, right) => left.localeCompare(right)).join('|');
+    const prevSignature = createSoloOutputSignature(state);
+    if (nextSignature === prevSignature) {
+      return;
+    }
+    soloOutputIds = new Set(nextIds);
     options.syncTransportInputs(state);
     renderOutputs(state);
     syncOutputMeters(state);
@@ -238,7 +256,10 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     solo.setAttribute('aria-pressed', String(isSoloed));
     const mute = createButton('M', output.muted ? 'secondary active' : 'secondary', async () => {
       await window.xtream.outputs.update(output.id, { muted: !output.muted });
-      options.renderState(await window.xtream.director.getState());
+      const nextState = await window.xtream.director.getState();
+      options.renderState(nextState);
+      renderOutputs(nextState);
+      syncOutputMeters(nextState);
     });
     mute.title = `${output.muted ? 'Unmute' : 'Mute'} ${output.label}`;
     mute.setAttribute('aria-label', mute.title);
@@ -588,6 +609,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     createRenderSignature,
     pruneSoloOutputIds,
     setSoloOutputIds,
+    applyEngineSoloOutputIds,
     getSoloOutputCount,
     renderOutputs,
     syncSelection,

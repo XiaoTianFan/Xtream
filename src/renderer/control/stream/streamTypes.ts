@@ -8,6 +8,7 @@ import type {
   SceneId,
   StreamEnginePublicState,
   SubCueId,
+  VirtualOutputId,
 } from '../../../shared/types';
 
 /** Which editor is visible in Scene Edit bottom tab: scene defaults vs one sub-cue. */
@@ -31,6 +32,7 @@ export type StreamSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
   getDisplayMonitors: () => DisplayMonitorInfo[];
   getPresentationState: () => DirectorState | undefined;
+  getEngineSoloOutputIds: () => VirtualOutputId[];
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
   showActions: ShowActions;
@@ -38,6 +40,7 @@ export type StreamSurfaceOptions = {
 
 export type StreamSurfaceController = SurfaceController & {
   applyOutputMeterReport: (report: OutputMeterReport) => void;
+  applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => void;
   syncPreviewElements: (presentation: DirectorState) => void;
   exportProjectUiSnapshot: () => ControlProjectUiStreamState;
   applyImportedProjectUi: (
