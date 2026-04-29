@@ -50,6 +50,33 @@ describe('StreamEngine', () => {
     expect(state.runtime).toBeNull();
   });
 
+  it('allows Stream pause even if Patch transport becomes active unexpectedly', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    let patchPlaying = false;
+    const director = {
+      ...createDirector({
+        visuals: { v1: { id: 'v1', durationSeconds: 10 } } as DirectorState['visuals'],
+      }),
+      isPatchTransportPlaying: () => patchPlaying,
+    } as unknown as Director;
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    vi.setSystemTime(2_000);
+
+    patchPlaying = true;
+    const state = engine.applyTransport({ type: 'pause' });
+
+    expect(state.runtime?.status).toBe('paused');
+    expect(state.runtime?.currentStreamMs).toBe(1000);
+  });
+
   it('back-to-first skips a disabled leading scene', () => {
     const director = createDirector();
     const engine = new StreamEngine(director);
@@ -341,6 +368,112 @@ describe('StreamEngine', () => {
     expect(state.runtime?.cursorSceneId).toBe('scene-2');
     expect(state.runtime?.currentStreamMs).toBe(5000);
     expect(engine.isStreamPlaybackActive()).toBe(false);
+  });
+
+  it('paused jump-next uses the latest scheduled paused scene and stays paused', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 60 }, v2: { id: 'v2', durationSeconds: 20 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 30_000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'at-timecode', timecodeMs: 45_000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v3', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.setSystemTime(36_000);
+    engine.applyTransport({ type: 'pause' });
+
+    const afterJump = engine.applyTransport({ type: 'jump-next', referenceSceneId: 'scene-1' });
+
+    expect(afterJump.runtime?.status).toBe('paused');
+    expect(afterJump.runtime?.cursorSceneId).toBe('scene-3');
+    expect(afterJump.runtime?.currentStreamMs).toBe(45_000);
+    expect(afterJump.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+  });
+
+  it('running jump-next uses the latest scheduled running scene and keeps playback running', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 60 }, v2: { id: 'v2', durationSeconds: 20 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 30_000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'at-timecode', timecodeMs: 45_000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v3', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.setSystemTime(36_000);
+
+    const afterJump = engine.applyTransport({ type: 'jump-next', referenceSceneId: 'scene-1' });
+
+    expect(afterJump.runtime?.status).toBe('running');
+    expect(afterJump.runtime?.cursorSceneId).toBe('scene-3');
+    expect(afterJump.runtime?.currentStreamMs).toBe(45_000);
+    expect(afterJump.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(engine.isStreamPlaybackActive()).toBe(true);
+  });
+
+  it('does not reset back-to-first while running', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    vi.setSystemTime(2_000);
+
+    const afterBack = engine.applyTransport({ type: 'back-to-first' });
+
+    expect(afterBack.runtime?.status).toBe('running');
+    expect(afterBack.runtime?.currentStreamMs).toBe(1000);
   });
 
   it('seek recomputes running and completed scene states', () => {

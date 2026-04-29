@@ -25,6 +25,7 @@ type PatchSurfaceOptions = {
   isPanelInteractionActive: (panel: HTMLElement) => boolean;
   /** Stream-aware director state for display previews + mixer metering (matches audio renderer). */
   getPresentationState: () => DirectorState | undefined;
+  getIsStreamPlaybackActive: () => boolean;
   renderState: (state: DirectorState) => void;
   setActiveSurface: (surface: ControlSurface) => void;
   setShowStatus: (message: string, issues?: MediaValidationIssue[]) => void;
@@ -114,6 +115,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
   header = createPatchHeaderController({
     getState: () => currentState,
     getSoloOutputCount: mixerPanel.getSoloOutputCount,
+    getIsStreamPlaybackActive: options.getIsStreamPlaybackActive,
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
     showActions: options.showActions,
@@ -243,5 +245,10 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     getDisplayTelemetry: displayWorkspace.getDisplayTelemetry,
     exportLayoutUiSnapshot,
     applyImportedLayoutUi,
+    syncTransportInputs: () => {
+      if (currentState) {
+        header.sync(currentState);
+      }
+    },
   };
 }

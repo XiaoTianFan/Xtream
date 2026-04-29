@@ -267,7 +267,7 @@ export class StreamEngine extends EventEmitter {
     if (command.type === 'seek' || command.type === 'jump-next') {
       return this.runtime?.status === 'running' || this.runtime?.status === 'preloading';
     }
-    return command.type === 'pause';
+    return false;
   }
 
   private handlePlay(sceneId?: SceneId, source: NonNullable<Extract<StreamCommand, { type: 'play' }>['source']> = 'global'): void {
@@ -388,7 +388,7 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     if (!this.runtime) {
-      this.handleBackToFirst();
+      this.ensureIdleRuntime();
     }
     if (!this.runtime) {
       return;
@@ -420,17 +420,25 @@ export class StreamEngine extends EventEmitter {
   }
 
   private handleBackToFirst(): void {
+    if (this.runtime?.status === 'running' || this.runtime?.status === 'preloading') {
+      this.recomputeRuntime();
+      return;
+    }
+    this.ensureIdleRuntime(this.firstEnabledSceneId(), 0);
+  }
+
+  private ensureIdleRuntime(referenceSceneId: SceneId | undefined = this.firstEnabledSceneId(), timeMs = 0): void {
     const target = this.firstEnabledSceneId();
     const schedule = this.playbackTimeline;
     this.stopTicking();
     this.runtime = {
       status: target ? 'idle' : 'complete',
-      cursorSceneId: target,
+      cursorSceneId: referenceSceneId ?? target,
       sceneStates: this.createInitialSceneStates(schedule),
       expectedDurationMs: schedule.expectedDurationMs,
-      offsetStreamMs: 0,
-      currentStreamMs: 0,
-      pausedAtStreamMs: 0,
+      offsetStreamMs: timeMs,
+      currentStreamMs: timeMs,
+      pausedAtStreamMs: timeMs,
       timelineNotice: schedule.notice,
     };
     this.dispatchedControlSubCues.clear();
@@ -447,9 +455,18 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     if (!this.runtime) {
-      this.handleBackToFirst();
+      this.ensureIdleRuntime(referenceSceneId);
     }
-    const cur = referenceSceneId ?? this.runtime?.cursorSceneId;
+    if (this.runtime) {
+      this.recomputeRuntime();
+    }
+    const wasRunning = this.runtime?.status === 'running' || this.runtime?.status === 'preloading';
+    const wasPaused = this.runtime?.status === 'paused';
+    const cur = wasRunning
+      ? this.latestSceneWithStatus(['running'])
+      : wasPaused
+        ? this.latestSceneWithStatus(['paused'])
+        : referenceSceneId ?? this.runtime?.cursorSceneId;
     if (!this.runtime || !cur) {
       return;
     }
@@ -463,29 +480,60 @@ export class StreamEngine extends EventEmitter {
     const curEntry = schedule.entries[cur];
     const nextEntry = next ? schedule.entries[next] : undefined;
     if (!next) {
-      this.manuallyCompletedSceneIds.add(cur);
-      const end = curEntry?.endMs ?? this.getRuntimeStreamMs();
-      this.seek(end);
-      this.manuallyCompletedSceneIds.add(cur);
-      this.recomputeRuntime();
-      if (this.runtime) {
-        this.runtime.status = 'complete';
-        this.runtime.cursorSceneId = undefined;
+      if (wasRunning) {
+        this.manuallyCompletedSceneIds.add(cur);
+        const end = curEntry?.endMs ?? this.getRuntimeStreamMs();
+        this.seek(end);
+        this.manuallyCompletedSceneIds.add(cur);
+        this.recomputeRuntime();
+        if (this.runtime) {
+          this.runtime.status = 'complete';
+          this.runtime.cursorSceneId = undefined;
+        }
+        this.stopTicking();
       }
-      this.stopTicking();
       return;
     }
-    const wasRunning = this.runtime.status === 'running' || this.runtime.status === 'preloading';
-    if (wasRunning) {
+    if (wasRunning || wasPaused) {
       this.manuallyCompletedSceneIds.add(cur);
     }
     const jumpTarget = nextEntry?.startMs ?? this.getRuntimeStreamMs();
-    this.runtime.cursorSceneId = next;
     this.seek(jumpTarget);
-    if (wasRunning) {
+    if (this.runtime && wasRunning) {
+      const now = Date.now();
+      this.runtime.status = 'running';
+      this.runtime.originWallTimeMs = now;
+      this.runtime.startedWallTimeMs = now;
+      this.startTicking();
+    }
+    if (wasRunning || wasPaused) {
       this.manuallyCompletedSceneIds.add(cur);
     }
     this.recomputeRuntime();
+    if (this.runtime) {
+      this.runtime.cursorSceneId = next;
+    }
+  }
+
+  private latestSceneWithStatus(statuses: SceneRuntimeState['status'][]): SceneId | undefined {
+    if (!this.runtime) {
+      return undefined;
+    }
+    const statusSet = new Set(statuses);
+    let latest: { sceneId: SceneId; startMs: number } | undefined;
+    for (const state of Object.values(this.runtime.sceneStates)) {
+      if (!statusSet.has(state.status)) {
+        continue;
+      }
+      const startMs = state.scheduledStartMs ?? this.playbackTimeline.entries[state.sceneId]?.startMs;
+      if (startMs === undefined) {
+        continue;
+      }
+      if (!latest || startMs >= latest.startMs) {
+        latest = { sceneId: state.sceneId, startMs };
+      }
+    }
+    return latest?.sceneId;
   }
 
   private createInitialSceneStates(schedule: CalculatedStreamTimeline, stream: PersistedStreamConfig = this.playbackStream): Record<SceneId, SceneRuntimeState> {
@@ -590,7 +638,11 @@ export class StreamEngine extends EventEmitter {
 
     const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
     if (runningEntries.length > 0) {
-      this.runtime.cursorSceneId = runningEntries[0].sceneId;
+      this.runtime.cursorSceneId = runningEntries.reduce((latest, state) => {
+        const latestStart = latest.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
+        const stateStart = state.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
+        return stateStart >= latestStart ? state : latest;
+      }, runningEntries[0]).sceneId;
     }
     if (
       this.runtime.status === 'running' &&

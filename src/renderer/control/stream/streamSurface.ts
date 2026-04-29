@@ -146,6 +146,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function unmount(): void {
     mediaPool?.dismissContextMenu();
+    mediaPool?.teardownVisualPreviews();
     streamDetailOverlayCleanup?.();
     streamDetailOverlayCleanup = undefined;
     unsubscribeStreamState?.();
@@ -417,6 +418,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderStreamHeader({
       headerEl: requireRef('header'),
       stream: streamState!.stream,
+      playbackStream: streamState!.playbackStream,
       runtime: streamState!.runtime,
       playbackTimeline: streamState!.playbackTimeline,
       currentState,
@@ -427,6 +429,11 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         headerEditField = field;
       },
       updateSelectedScene,
+      setSelectedSceneId: (id) => {
+        selectedSceneId = id as SceneId | undefined;
+        sceneEditSelection = { kind: 'scene' };
+        bottomRenderSignature = '';
+      },
       requestRender: renderCurrent,
     });
   }

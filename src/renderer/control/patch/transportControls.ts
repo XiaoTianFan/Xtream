@@ -2,17 +2,19 @@ import { formatTimecode, getDirectorSeconds, parseTimecodeInput } from '../../..
 import type { DirectorState, TransportCommand } from '../../../shared/types';
 import { syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
+import { derivePatchTransportUiState } from './patchTransportUiState';
 
 type TransportControllerOptions = {
   getState: () => DirectorState | undefined;
   getSoloOutputCount: () => number;
+  getIsStreamPlaybackActive: () => boolean;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
 };
 
 export type TransportController = ReturnType<typeof createTransportController>;
 
-export function createTransportController({ getState, getSoloOutputCount, renderState, setShowStatus }: TransportControllerOptions) {
+export function createTransportController({ getState, getSoloOutputCount, getIsStreamPlaybackActive, renderState, setShowStatus }: TransportControllerOptions) {
   let timecodeEditor: HTMLInputElement | undefined;
   let rateDragStart: { clientX: number; rate: number } | undefined;
   let timelineScrubPointerActive = false;
@@ -27,10 +29,17 @@ export function createTransportController({ getState, getSoloOutputCount, render
   const syncTransportInputs = (state: DirectorState): void => {
     const ready = state.readiness.ready;
     const seconds = getDirectorSeconds(state);
-    elements.playButton.disabled = !ready || !state.paused;
-    elements.pauseButton.disabled = !ready || state.paused;
-    elements.stopButton.disabled = !ready || (state.paused && seconds <= 0.001);
-    elements.rateDisplayButton.disabled = !ready;
+    const transportUi = derivePatchTransportUiState({
+      ready,
+      patchPaused: state.paused,
+      currentSeconds: seconds,
+      streamPlaybackActive: getIsStreamPlaybackActive(),
+    });
+    elements.playButton.disabled = transportUi.playDisabled;
+    elements.playButton.title = getIsStreamPlaybackActive() ? 'Stream playback is active' : 'Play Patch timeline';
+    elements.pauseButton.disabled = transportUi.pauseDisabled;
+    elements.stopButton.disabled = transportUi.stopDisabled;
+    elements.rateDisplayButton.disabled = transportUi.rateDisabled;
     elements.rateDisplayButton.textContent = `${state.rate.toFixed(2)}x`;
     const liveState = getLiveStateLabel(state);
     elements.liveState.textContent = liveState;

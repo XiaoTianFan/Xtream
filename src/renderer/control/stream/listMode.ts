@@ -346,6 +346,10 @@ function createSceneRowWrap(
   const actions = document.createElement('div');
   actions.className = 'stream-scene-row-actions';
   const runHere = createButton('', 'icon-button stream-row-action', () => {
+    ctx.setSelectedSceneId(scene.id);
+    ctx.setBottomTab('scene');
+    ctx.clearDetailPane();
+    ctx.requestRender();
     void window.xtream.stream.transport({ type: 'play', sceneId: scene.id, source: 'scene-row' });
   });
   decorateIconButton(runHere, 'Play', 'Run from here');

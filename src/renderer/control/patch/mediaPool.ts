@@ -38,6 +38,8 @@ export type MediaPoolController = {
   syncPoolSelectionHighlight: (state: DirectorState) => void;
   selectEntityPoolTab: (entity: SelectedEntity) => void;
   dismissContextMenu: () => void;
+  /** Stops grid live-capture intervals/cleanups and invalidates pane keys; call when pool DOM is detached (e.g. stream surface unmount). */
+  teardownVisualPreviews: () => void;
   install: () => void;
 };
 
@@ -90,6 +92,12 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       }
     }
     visualPoolGridCleanups = [];
+  }
+
+  function teardownVisualPreviews(): void {
+    clearVisualPoolGridCleanups();
+    lastListVisualsDomKey = undefined;
+    lastGridVisualsDomKey = undefined;
   }
 
   function visualsContentKey(state: DirectorState): string {
@@ -953,6 +961,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     syncPoolSelectionHighlight,
     selectEntityPoolTab,
     dismissContextMenu: dismissAudioSourceContextMenu,
+    teardownVisualPreviews,
     install,
   };
 }

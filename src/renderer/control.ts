@@ -57,6 +57,11 @@ function getPresentationState(): DirectorState | undefined {
   return deriveDirectorStateForStream(currentState, latestStreamState);
 }
 
+function isStreamPlaybackActive(): boolean {
+  const status = latestStreamState?.runtime?.status;
+  return status === 'running' || status === 'preloading' || status === 'paused';
+}
+
 function renderState(state: DirectorState): void {
   currentState = state;
   surfaceRouter.render(state);
@@ -133,6 +138,7 @@ const patchSurface = createPatchSurfaceController({
   getDisplayMonitors: () => displayMonitors,
   isPanelInteractionActive,
   getPresentationState,
+  getIsStreamPlaybackActive: isStreamPlaybackActive,
   renderState,
   setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
   setShowStatus,
@@ -159,10 +165,12 @@ window.xtream.audioRuntime.onSoloOutputIds((ids) => {
 
 window.xtream.stream.onState((state) => {
   latestStreamState = state;
+  patchSurface.syncTransportInputs();
   scheduleRefreshStreamMediaIssues();
 });
 void window.xtream.stream.getState().then((s) => {
   latestStreamState = s;
+  patchSurface.syncTransportInputs();
 });
 
 const surfaceRouter = createSurfaceRouter({

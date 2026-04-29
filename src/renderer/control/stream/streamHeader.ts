@@ -1,5 +1,5 @@
 import { formatTimecode } from '../../../shared/timeline';
-import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig } from '../../../shared/types';
+import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamCommand } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { createButton, syncSliderProgress } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -8,6 +8,7 @@ import type { StreamSurfaceOptions } from './streamTypes';
 export type StreamHeaderRenderContext = {
   headerEl: HTMLElement;
   stream: PersistedStreamConfig;
+  playbackStream: PersistedStreamConfig;
   runtime: StreamEnginePublicState['runtime'];
   playbackTimeline: StreamEnginePublicState['playbackTimeline'];
   currentState: DirectorState | undefined;
@@ -16,6 +17,7 @@ export type StreamHeaderRenderContext = {
   options: StreamSurfaceOptions;
   setHeaderEditField: (field: 'title' | 'note' | undefined) => void;
   updateSelectedScene: (update: Partial<PersistedSceneConfig>) => void;
+  setSelectedSceneId: (id: string | undefined) => void;
   requestRender: () => void;
 };
 
@@ -27,6 +29,8 @@ export function deriveStreamTransportUiState(args: {
   runtime: StreamEnginePublicState['runtime'];
   playbackTimeline: StreamEnginePublicState['playbackTimeline'];
   selectedSceneId: string | undefined;
+  playbackStream: PersistedStreamConfig;
+  isPatchTransportPlaying?: boolean;
 }): {
   backDisabled: boolean;
   playDisabled: boolean;
@@ -37,12 +41,45 @@ export function deriveStreamTransportUiState(args: {
   const running = status === 'running' || status === 'preloading';
   const paused = status === 'paused';
   const hasRuntimeReference = Boolean(args.runtime?.cursorSceneId);
+  const hasEnabledScene = args.playbackStream.sceneOrder.some((id) => !args.playbackStream.scenes[id]?.disabled);
   return {
     backDisabled: running,
-    playDisabled: args.playbackTimeline.status !== 'valid',
+    playDisabled: args.playbackTimeline.status !== 'valid' || !hasEnabledScene || args.isPatchTransportPlaying === true,
     pauseDisabled: status !== 'running',
     nextDisabled: !args.selectedSceneId && !running && !paused && !hasRuntimeReference,
   };
+}
+
+export function createGlobalStreamPlayCommand(args: {
+  runtime: StreamEnginePublicState['runtime'];
+  playbackStream: PersistedStreamConfig;
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'];
+  selectedSceneId: string | undefined;
+}): StreamCommand {
+  const { runtime, playbackStream, playbackTimeline, selectedSceneId } = args;
+  const playableSelectedSceneId = playableSceneId(playbackStream, playbackTimeline, selectedSceneId);
+  if (runtime?.status === 'paused') {
+    const behavior = playbackStream.playbackSettings?.pausedPlayBehavior ?? 'selection-aware';
+    const selectedAtPause = runtime.selectedSceneIdAtPause ?? runtime.cursorSceneId;
+    if (behavior === 'selection-aware' && playableSelectedSceneId && playableSelectedSceneId !== selectedAtPause) {
+      return { type: 'play', sceneId: playableSelectedSceneId, source: 'global' };
+    }
+    return { type: 'play', source: 'global' };
+  }
+  return playableSelectedSceneId ? { type: 'play', sceneId: playableSelectedSceneId, source: 'global' } : { type: 'play', source: 'global' };
+}
+
+function playableSceneId(
+  playbackStream: PersistedStreamConfig,
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'],
+  sceneId: string | undefined,
+): string | undefined {
+  if (!sceneId || playbackTimeline.status !== 'valid') {
+    return undefined;
+  }
+  const scene = playbackStream.scenes[sceneId];
+  const entry = playbackTimeline.entries[sceneId];
+  return scene && !scene.disabled && entry?.startMs !== undefined ? sceneId : undefined;
 }
 
 function isTimelineScrubDraftActive(): boolean {
@@ -289,13 +326,16 @@ function createHeaderEditableText(
 }
 
 export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
-  const { stream, runtime, selectedSceneId, currentState, headerEl, options } = ctx;
+  const { stream, playbackStream, runtime, selectedSceneId, currentState, headerEl, options } = ctx;
   const selectedScene = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
+  const selectedScenePlayable = playableSceneId(playbackStream, ctx.playbackTimeline, selectedSceneId) !== undefined;
   const currentMs = getStreamCurrentMs(runtime, currentState);
   const transportState = deriveStreamTransportUiState({
     runtime,
     playbackTimeline: ctx.playbackTimeline,
     selectedSceneId,
+    playbackStream,
+    isPatchTransportPlaying: currentState?.paused === false,
   });
 
   const timecode = document.createElement('div');
@@ -305,16 +345,37 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
 
   const transport = document.createElement('div');
   transport.className = 'stream-transport transport-cluster';
-  const back = createButton('Back to first', 'secondary', () => void window.xtream.stream.transport({ type: 'back-to-first' }));
+  const syncReferenceFromTransport = (state: StreamEnginePublicState): void => {
+    const cursorSceneId = state.runtime?.cursorSceneId;
+    if (cursorSceneId && state.stream.scenes[cursorSceneId]) {
+      ctx.setSelectedSceneId(cursorSceneId);
+      ctx.requestRender();
+    }
+  };
+  const back = createButton('Back to first', 'secondary', () => {
+    void window.xtream.stream.transport({ type: 'back-to-first' }).then(syncReferenceFromTransport);
+  });
   decorateIconButton(back, 'SkipBack', 'Back to first scene');
   back.disabled = transportState.backDisabled;
-  const play = createButton('Play', '', () => void window.xtream.stream.transport({ type: 'play', sceneId: selectedSceneId, source: 'global' }));
-  decorateIconButton(play, 'Play', runtime?.status === 'paused' ? 'Resume stream' : 'Play stream');
+  const play = createButton(
+    'Play',
+    '',
+    () => void window.xtream.stream.transport(createGlobalStreamPlayCommand({ runtime, playbackStream, playbackTimeline: ctx.playbackTimeline, selectedSceneId })),
+  );
+  const playTooltip =
+    runtime?.status === 'paused'
+      ? 'Resume stream'
+      : selectedScenePlayable
+        ? 'Play from selected scene'
+        : 'Play from cursor';
+  decorateIconButton(play, 'Play', playTooltip);
   play.disabled = transportState.playDisabled;
   const pause = createButton('Pause', 'secondary', () => void window.xtream.stream.transport({ type: 'pause' }));
   decorateIconButton(pause, 'Pause', 'Pause stream');
   pause.disabled = transportState.pauseDisabled;
-  const next = createButton('Next', 'secondary', () => void window.xtream.stream.transport({ type: 'jump-next', referenceSceneId: selectedSceneId }));
+  const next = createButton('Next', 'secondary', () => {
+    void window.xtream.stream.transport({ type: 'jump-next', referenceSceneId: selectedSceneId }).then(syncReferenceFromTransport);
+  });
   decorateIconButton(next, 'SkipForward', 'Jump to next scene');
   next.disabled = transportState.nextDisabled;
   transport.append(back, play, pause, next, createRateButton(ctx));

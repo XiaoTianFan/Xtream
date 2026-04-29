@@ -8,6 +8,7 @@ import { createTransportController } from './transportControls';
 type PatchHeaderControllerOptions = {
   getState: () => DirectorState | undefined;
   getSoloOutputCount: () => number;
+  getIsStreamPlaybackActive: () => boolean;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: DirectorState['readiness']['issues']) => void;
   showActions: ShowActions;
@@ -19,6 +20,7 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
   const transport = createTransportController({
     getState: options.getState,
     getSoloOutputCount: options.getSoloOutputCount,
+    getIsStreamPlaybackActive: options.getIsStreamPlaybackActive,
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
   });
