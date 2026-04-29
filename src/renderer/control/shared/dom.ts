@@ -87,7 +87,13 @@ export function syncSliderProgress(slider: HTMLInputElement): void {
   slider.style.setProperty('--progress', `${Math.min(100, Math.max(0, progress))}%`);
 }
 
-export function createDbFader(labelText: string, value: number, onChange: (value: number) => void): HTMLDivElement {
+type ContinuousCommitMode = 'input' | 'change';
+
+type DbFaderOptions = {
+  commitOn?: ContinuousCommitMode;
+};
+
+export function createDbFader(labelText: string, value: number, onChange: (value: number) => void, options?: DbFaderOptions): HTMLDivElement {
   const field = document.createElement('div');
   field.className = 'db-control';
   const label = document.createElement('label');
@@ -99,20 +105,23 @@ export function createDbFader(labelText: string, value: number, onChange: (value
   number.max = '12';
   number.step = '1';
   number.value = String(value);
-  const commit = (rawValue: string) => {
+  const syncValue = (rawValue: string, shouldCommit: boolean) => {
     const nextValue = Math.min(12, Math.max(-60, Number(rawValue)));
     if (Number.isFinite(nextValue)) {
       range.value = String(nextValue);
       number.value = String(nextValue);
       syncSliderProgress(range);
-      onChange(nextValue);
+      if (shouldCommit) {
+        onChange(nextValue);
+      }
     }
   };
   range.addEventListener('input', () => {
     number.value = range.value;
-    commit(range.value);
+    syncValue(range.value, options?.commitOn !== 'change');
   });
-  number.addEventListener('change', () => commit(number.value));
+  range.addEventListener('change', () => syncValue(range.value, true));
+  number.addEventListener('change', () => syncValue(number.value, true));
   field.append(label, range, number);
   return field;
 }
@@ -136,11 +145,12 @@ type PanKnobOptions = {
   onChange: (pan: number) => void;
   /** 'mixer' = compact strip, 'row' = output detail row. */
   variant?: 'mixer' | 'row';
+  commitOn?: ContinuousCommitMode;
 };
 
 const PAN_KNOB_ROTATION_DEGREES = 120;
 
-export function createPanKnob({ name, value, onChange, variant = 'row' }: PanKnobOptions): HTMLDivElement {
+export function createPanKnob({ name, value, onChange, variant = 'row', commitOn = 'input' }: PanKnobOptions): HTMLDivElement {
   const field = document.createElement('div');
   field.className = `pan-knob pan-knob--${variant}`;
 
@@ -172,7 +182,7 @@ export function createPanKnob({ name, value, onChange, variant = 'row' }: PanKno
     pointer.style.setProperty('--pan-knob-rotate', String(pan * PAN_KNOB_ROTATION_DEGREES));
   };
   applyRotation(Number(range.value));
-  const commit = (raw: string) => {
+  const syncValue = (raw: string): number | undefined => {
     const next = Math.max(-1, Math.min(1, Number(raw)));
     if (Number.isFinite(next)) {
       const labels = formatPanLabel(next);
@@ -180,10 +190,27 @@ export function createPanKnob({ name, value, onChange, variant = 'row' }: PanKno
       range.setAttribute('aria-valuetext', labels.valuetext);
       range.title = labels.title;
       applyRotation(next);
+      return next;
+    }
+    return undefined;
+  };
+  const commit = (raw: string) => {
+    const next = syncValue(raw);
+    if (next !== undefined) {
       onChange(next);
     }
   };
-  range.addEventListener('input', () => commit(range.value));
+  range.addEventListener('input', () => {
+    const next = syncValue(range.value);
+    if (commitOn === 'input' && next !== undefined) {
+      onChange(next);
+    }
+  });
+  range.addEventListener('change', () => {
+    if (commitOn === 'change') {
+      commit(range.value);
+    }
+  });
   const reset = () => {
     range.value = '0';
     commit('0');

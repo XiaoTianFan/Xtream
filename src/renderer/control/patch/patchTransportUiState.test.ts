@@ -34,4 +34,26 @@ describe('derivePatchTransportUiState', () => {
       }).playDisabled,
     ).toBe(false);
   });
+
+  it('keeps Patch play enabled when ready, playing, and Stream is inactive', () => {
+    expect(
+      derivePatchTransportUiState({
+        ready: true,
+        patchPaused: false,
+        currentSeconds: 12,
+        streamPlaybackActive: false,
+      }).playDisabled,
+    ).toBe(false);
+  });
+
+  it('disables Patch play when not ready even if playing', () => {
+    expect(
+      derivePatchTransportUiState({
+        ready: false,
+        patchPaused: false,
+        currentSeconds: 1,
+        streamPlaybackActive: false,
+      }).playDisabled,
+    ).toBe(true);
+  });
 });

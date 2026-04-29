@@ -37,6 +37,19 @@ describe('Director', () => {
     expect(director.getPlaybackTimeSeconds()).toBe(2.5);
   });
 
+  it('seeks to timeline start while playing without pausing', () => {
+    let now = 1000;
+    const director = new Director(() => now);
+    addReadyVideo(director, 'visual-a', 20);
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single', visualId: 'visual-a' }, health: 'ready' });
+    director.applyTransport({ type: 'play' });
+    now = 5000;
+    expect(director.getPlaybackTimeSeconds()).toBe(4);
+    director.applyTransport({ type: 'seek', seconds: 0 });
+    expect(director.getState().paused).toBe(false);
+    expect(director.getPlaybackTimeSeconds()).toBe(0);
+  });
+
   it('computes active timeline from assigned video visuals only', () => {
     const director = new Director(() => 1000);
     addReadyVideo(director, 'visual-short', 5);

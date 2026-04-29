@@ -13,8 +13,6 @@ import { createFadeFields } from './fadeFields';
 import { createLoopPolicyEditor } from './loopPolicyEditors';
 import { createOptionalNumberField, createRequiredNumberField } from './numericField';
 import {
-  createSubCueChip,
-  createSubCueChipGroup,
   createSubCueEmptyNote,
   createSubCueFieldGrid,
   createSubCueSection,
@@ -53,25 +51,20 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
   const visualOpts: Array<[string, string]> = Object.keys(currentState.visuals)
     .sort()
     .map((id) => [id, currentState.visuals[id]?.label ?? id]);
-  form.append(
-    createSubCueSection(
-      'Visual',
-      createSelect(
-        'Visual',
-        visualOpts.length ? visualOpts : [['', '(no visuals)']],
-        sub.visualId,
-        (vid) =>
-          patchSubCue({
-            visualId: vid as VisualId,
-          }),
-      ),
-    ),
+  const visualSelect = createSelect(
+    'Visual',
+    visualOpts.length ? visualOpts : [['', '(no visuals)']],
+    sub.visualId,
+    (vid) =>
+      patchSubCue({
+        visualId: vid as VisualId,
+      }),
   );
 
   const selected = new Set(sub.targets.map(targetKey));
 
   const targetGrid = document.createElement('div');
-  targetGrid.className = 'stream-visual-target-grid';
+  targetGrid.className = 'stream-visual-target-grid stream-audio-output-bus-grid';
 
   const displays = Object.values(currentState.displays).sort((a, b) => a.id.localeCompare(b.id));
 
@@ -95,54 +88,51 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
   }
 
   for (const d of displays) {
-    const displayGroup = document.createElement('div');
-    displayGroup.className = 'stream-visual-target-display-group';
-    const heading = document.createElement('div');
-    heading.className = 'stream-visual-target-display';
-    heading.textContent = d.label ?? d.id;
-
     if (d.layout.type === 'single') {
-      displayGroup.append(
-        heading,
-        createSubCueChipGroup(
-          createSubCueChip('Full surface', selected.has(`${d.id}:single`), (on) => applyTargetPresence({ displayId: d.id }, on)),
+      targetGrid.append(
+        createDotToggle(
+          d.label ?? d.id,
+          selected.has(`${d.id}:single`),
+          (on) => applyTargetPresence({ displayId: d.id }, on),
         ),
       );
     } else {
-      displayGroup.append(
-        heading,
-        createSubCueChipGroup(
-          createSubCueChip('Left zone', selected.has(`${d.id}:L`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'L' }, on)),
-          createSubCueChip('Right zone', selected.has(`${d.id}:R`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'R' }, on)),
+      targetGrid.append(
+        createDotToggle(
+          `${d.label ?? d.id} L`,
+          selected.has(`${d.id}:L`),
+          (on) => applyTargetPresence({ displayId: d.id, zoneId: 'L' }, on),
+        ),
+        createDotToggle(
+          `${d.label ?? d.id} R`,
+          selected.has(`${d.id}:R`),
+          (on) => applyTargetPresence({ displayId: d.id, zoneId: 'R' }, on),
         ),
       );
     }
-    targetGrid.append(displayGroup);
   }
 
   if (displays.length === 0) {
     targetGrid.append(createSubCueEmptyNote('No display windows - add one in Displays tab.'));
   }
 
-  form.append(createSubCueSection('Display Routing', targetGrid));
-
   form.append(
     createSubCueSection(
-      'Timing',
-      createSubCueFieldGrid(
-        createOptionalNumberField('Freeze frame (ms)', sub.freezeFrameMs, (v) => patchSubCue({ freezeFrameMs: v }), { min: 0 }),
-        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
-        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), { min: 0 }),
-        createRequiredNumberField('Playback rate', sub.playbackRate ?? 1, (v) => patchSubCue({ playbackRate: v }), 0.01),
-      ),
+      'I/O',
+      visualSelect,
+      createDisplayTargetField(targetGrid),
     ),
   );
 
   const loopPol: SceneLoopPolicy = sub.loop ?? { enabled: false };
   form.append(
     createSubCueSection(
-      'Playback Shape',
+      'Timing',
       createSubCueFieldGrid(
+        createRequiredNumberField('Playback rate', sub.playbackRate ?? 1, (v) => patchSubCue({ playbackRate: v }), 0.01),
+        createOptionalNumberField('Freeze frame (ms)', sub.freezeFrameMs, (v) => patchSubCue({ freezeFrameMs: v }), { min: 0 }),
+        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
+        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), { min: 0 }),
         createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })),
         createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })),
       ),
@@ -153,4 +143,36 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
   form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));
 
   return form;
+}
+
+function createDisplayTargetField(content: HTMLElement): HTMLElement {
+  const field = document.createElement('div');
+  field.className = 'stream-audio-output-bus-field';
+  const label = document.createElement('div');
+  label.className = 'stream-audio-output-bus-label';
+  label.textContent = 'Display target';
+  field.append(label, content);
+  return field;
+}
+
+function createDotToggle(label: string, selected: boolean, onToggle: (selected: boolean) => void): HTMLButtonElement {
+  let isSelected = selected;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `stream-audio-output-bus${isSelected ? ' active' : ''}`;
+  button.setAttribute('aria-pressed', String(isSelected));
+  const text = document.createElement('span');
+  text.className = 'stream-audio-output-bus-name';
+  text.textContent = label;
+  text.title = label;
+  const dot = document.createElement('span');
+  dot.className = 'stream-audio-output-bus-dot';
+  button.append(text, dot);
+  button.addEventListener('click', () => {
+    isSelected = !isSelected;
+    button.classList.toggle('active', isSelected);
+    button.setAttribute('aria-pressed', String(isSelected));
+    onToggle(isSelected);
+  });
+  return button;
 }

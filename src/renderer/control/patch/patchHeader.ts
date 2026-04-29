@@ -43,7 +43,17 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     elements.rateDisplayButton.addEventListener('pointercancel', () => {
       transport.cancelRateDrag();
     });
-    elements.playButton.addEventListener('click', () => void transport.sendTransport({ type: 'play' }));
+    elements.playButton.addEventListener('click', () => {
+      const state = options.getState();
+      if (!state || options.getIsStreamPlaybackActive()) {
+        return;
+      }
+      if (!state.paused) {
+        void transport.sendTransport({ type: 'seek', seconds: 0 });
+      } else {
+        void transport.sendTransport({ type: 'play' });
+      }
+    });
     elements.pauseButton.addEventListener('click', () => void transport.sendTransport({ type: 'pause' }));
     elements.stopButton.addEventListener('click', () => void transport.sendTransport({ type: 'stop' }));
     elements.timelineScrubber.addEventListener('pointerdown', () => {

@@ -1,5 +1,6 @@
 import { formatTimecode, getDirectorSeconds, parseTimecodeInput } from '../../../shared/timeline';
 import type { DirectorState, TransportCommand } from '../../../shared/types';
+import { decorateIconButton, type ControlIcon } from '../shared/icons';
 import { syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
 import { derivePatchTransportUiState } from './patchTransportUiState';
@@ -18,6 +19,7 @@ export function createTransportController({ getState, getIsStreamPlaybackActive,
   let rateDragStart: { clientX: number; rate: number } | undefined;
   let timelineScrubPointerActive = false;
   let timelineScrubDraftUntil = 0;
+  let lastPlayButtonChrome: { icon: ControlIcon; label: string } | undefined;
   const transportDraftElements = new Set<HTMLInputElement>([elements.loopStartInput, elements.loopEndInput]);
 
   const isTransportDraftActive = (input: HTMLInputElement): boolean =>
@@ -35,7 +37,17 @@ export function createTransportController({ getState, getIsStreamPlaybackActive,
       streamPlaybackActive: getIsStreamPlaybackActive(),
     });
     elements.playButton.disabled = transportUi.playDisabled;
-    elements.playButton.title = getIsStreamPlaybackActive() ? 'Stream playback is active' : 'Play Patch timeline';
+    const streamActive = getIsStreamPlaybackActive();
+    const playLabel = streamActive
+      ? 'Stream playback is active'
+      : !state.paused
+        ? 'Restart from beginning'
+        : 'Play / resume Patch timeline';
+    const playIcon: ControlIcon = streamActive || state.paused ? 'Play' : 'SkipBack';
+    if (!lastPlayButtonChrome || lastPlayButtonChrome.icon !== playIcon || lastPlayButtonChrome.label !== playLabel) {
+      decorateIconButton(elements.playButton, playIcon, playLabel);
+      lastPlayButtonChrome = { icon: playIcon, label: playLabel };
+    }
     elements.pauseButton.disabled = transportUi.pauseDisabled;
     elements.stopButton.disabled = transportUi.stopDisabled;
     elements.rateDisplayButton.disabled = transportUi.rateDisabled;

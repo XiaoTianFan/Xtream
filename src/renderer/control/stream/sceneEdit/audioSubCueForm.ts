@@ -170,13 +170,14 @@ function createAudioLevelStrip(
   const row = document.createElement('div');
   row.className = 'stream-audio-level-strip';
 
-  const level = createDbFader('Level dB', sub.levelDb ?? 0, (levelDb) => patchSubCue({ levelDb }));
+  const level = createDbFader('Base dB', sub.levelDb ?? 0, (levelDb) => patchSubCue({ levelDb }), { commitOn: 'change' });
   level.classList.add('stream-audio-level-fader');
 
   const pan = createPanKnob({
     name: 'Audio sub-cue pan',
     value: sub.pan ?? 0,
     variant: 'row',
+    commitOn: 'change',
     onChange: (nextPan) => patchSubCue({ pan: nextPan }),
   });
   pan.classList.add('stream-audio-level-pan');

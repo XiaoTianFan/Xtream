@@ -78,6 +78,11 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   const action = sub.action;
   const scenes = scenePickerChoices(stream);
   const audOpts = audioSubCueChoices(stream, currentState);
+  const ioFields: HTMLElement[] = [
+    createSelect('Action kind', ACTION_KINDS as Array<[string, string]>, action.type as string, (v) =>
+      patchSubCue(makeDefault(stream, scenes, audOpts, v as ActionDiscriminant)),
+    ),
+  ];
   const targetFields: HTMLElement[] = [];
   const automationFields: HTMLElement[] = [];
 
@@ -88,16 +93,6 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
       warnEl.replaceChildren();
     }
   }
-
-  form.append(
-    createSubCueSection(
-      'Action',
-      warnEl,
-      createSelect('Action kind', ACTION_KINDS as Array<[string, string]>, action.type as string, (v) =>
-        patchSubCue(makeDefault(stream, scenes, audOpts, v as ActionDiscriminant)),
-      ),
-    ),
-  );
 
   if (action.type === 'stop-scene' || action.type === 'pause-scene' || action.type === 'resume-scene') {
     targetFields.push(
@@ -240,9 +235,7 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
     );
   }
 
-  if (targetFields.length > 0) {
-    form.append(createSubCueSection('Target', createSubCueFieldGrid(...targetFields)));
-  }
+  form.append(createSubCueSection('I/O', warnEl, createSubCueFieldGrid(...ioFields, ...targetFields)));
 
   if (automationFields.length > 0) {
     form.append(createSubCueSection('Automation', createSubCueFieldGrid(...automationFields)));

@@ -13,7 +13,7 @@ export function derivePatchTransportUiState(args: {
 }): PatchTransportUiState {
   const { ready, patchPaused, currentSeconds, streamPlaybackActive } = args;
   return {
-    playDisabled: !ready || !patchPaused || streamPlaybackActive,
+    playDisabled: !ready || streamPlaybackActive,
     pauseDisabled: !ready || patchPaused,
     stopDisabled: !ready || (patchPaused && currentSeconds <= 0.001),
     rateDisabled: !ready,

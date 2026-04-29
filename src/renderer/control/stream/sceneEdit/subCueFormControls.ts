@@ -92,6 +92,7 @@ export function createSubCuePanField(labelText: string, name: string, value: num
     name,
     value,
     variant: 'row',
+    commitOn: 'change',
     onChange: (pan) => {
       setValueLabel(pan);
       onChange(pan);
