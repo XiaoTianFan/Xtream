@@ -22,6 +22,8 @@ export type StreamHeaderRenderContext = {
   setHeaderEditField: (field: 'title' | 'note' | undefined) => void;
   updateSelectedScene: (update: Partial<PersistedSceneConfig>) => void;
   setPlaybackFocusSceneId: (id: string | undefined) => void;
+  /** Header, workspace list chrome, meters — avoids full surface render / list rebuild. */
+  refreshChrome: (streamPublic?: StreamEnginePublicState) => void;
   requestRender: () => void;
 };
 
@@ -422,7 +424,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
     const cursorSceneId = state.runtime?.cursorSceneId;
     if (cursorSceneId && state.stream.scenes[cursorSceneId]) {
       ctx.setPlaybackFocusSceneId(cursorSceneId);
-      ctx.requestRender();
+      ctx.refreshChrome(state);
     }
   };
   const back = createButton('Back to first', 'secondary', () => {

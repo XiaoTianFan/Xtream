@@ -5,6 +5,7 @@ import type {
   PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
+  SceneRuntimeState,
   StreamEnginePublicState,
   SubCueId,
   VirtualOutputId,
@@ -19,6 +20,7 @@ import type { SelectedEntity } from '../shared/types';
 import { installInteractionLock, isPanelInteractionActive } from '../app/interactionLocks';
 import { elements } from '../shell/elements';
 import { renderStreamBottomPane, type StreamBottomPaneContext } from './bottomPane';
+import { shouldDeferStreamMixerBottomPaneRedraw } from './streamMixerBottomRedrawDefer';
 import {
   applyStreamLayoutPrefs,
   createStreamLayoutController,
@@ -28,12 +30,45 @@ import {
 import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
+import { formatSceneStateLabel } from './formatting';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
+import { createStreamWorkspacePaneSignature } from './workspacePaneSignature';
 
 export type { StreamSurfaceController } from './streamTypes';
+
+const LIST_ROW_RUNTIME_STATUSES = new Set<SceneRuntimeState['status'] | 'disabled'>([
+  'disabled',
+  'failed',
+  'paused',
+  'preloading',
+  'ready',
+  'running',
+  'complete',
+  'skipped',
+]);
+
+function stripWrapTimelineStatusClasses(wrap: HTMLElement): void {
+  for (const cl of [...wrap.classList]) {
+    if (cl.startsWith('status-')) {
+      wrap.classList.remove(cl);
+    }
+  }
+}
+
+function replaceWrapListRuntimeStatus(wrap: HTMLElement, statusClass: string): void {
+  stripWrapTimelineStatusClasses(wrap);
+  wrap.classList.add(`status-${statusClass}`);
+}
+
+function replaceRowListRuntimeStatus(row: HTMLElement, statusClass: string): void {
+  for (const s of LIST_ROW_RUNTIME_STATUSES) {
+    row.classList.remove(s);
+  }
+  row.classList.add(statusClass);
+}
 
 export function createStreamSurfaceController(options: StreamSurfaceOptions): StreamSurfaceController {
   let currentState: DirectorState | undefined;
@@ -54,6 +89,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let bottomRenderSignature = '';
   let mixerRenderSignature = '';
   let displayRenderSignature = '';
+  let lastWorkspacePaneSignature = '';
   const expandedListSceneIds = new Set<SceneId>();
   let listDragSceneId: SceneId | undefined;
   let sceneEditSelection: SceneEditSelection = { kind: 'scene' };
@@ -156,6 +192,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mounted = false;
     window.removeEventListener('resize', layoutCtl.syncSplitterAria);
     elements.surfacePanel.classList.remove('stream-surface-panel');
+    lastWorkspacePaneSignature = '';
     refs.root?.remove();
   }
 
@@ -295,7 +332,21 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderHeader();
     mediaPool?.render(mediaState);
     mediaPool?.syncPoolSelectionHighlight(mediaState);
-    renderWorkspacePane();
+    const nextWorkspaceSig = createStreamWorkspacePaneSignature({
+      mode,
+      stream: streamState.stream,
+      expandedListSceneIds,
+      directorState: mediaState,
+    });
+    if (lastWorkspacePaneSignature !== nextWorkspaceSig) {
+      lastWorkspacePaneSignature = nextWorkspaceSig;
+      renderWorkspacePane();
+    } else {
+      const workspace = requireRef('workspace');
+      syncWorkspaceSceneSelection(workspace, playbackFocusSceneId, sceneEditSceneId);
+      syncListRuntimeChrome(workspace, streamState);
+      syncListDragAppearance(workspace, listDragSceneId);
+    }
     renderBottomPaneIfNeeded();
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
@@ -317,7 +368,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
-    syncListRuntimeProgress(requireRef('workspace'), streamState);
+    syncListRuntimeChrome(requireRef('workspace'), streamState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }
@@ -350,44 +401,92 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
   }
 
-  /** Header, bottom pane, mixer sync, scene list highlight — does not rebuild the scene list DOM. */
-  function refreshSceneSelectionUi(): void {
+  /** Header, media pool highlight, workspace selection + list runtime chrome, meters — does not rebuild list/flow or bottom pane DOM. */
+  function refreshWorkspaceChromeUi(streamPublicOverride?: StreamEnginePublicState): void {
     if (!mounted || !currentState || !streamState) {
       return;
     }
+    const pub = streamPublicOverride ?? streamState;
     if (mixerPanel?.pruneSoloOutputIds(currentState)) {
       mixerRenderSignature = '';
     }
     const mediaState = stripRuntimeMediaFromState(currentState);
-    renderHeader();
+    renderHeader(pub);
     mediaPool?.syncPoolSelectionHighlight(mediaState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
-    bottomRenderSignature = '';
-    renderBottomPaneIfNeeded();
+    syncListRuntimeChrome(requireRef('workspace'), pub);
+    syncListDragAppearance(requireRef('workspace'), listDragSceneId);
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
+    syncSceneEditRunningLock();
   }
 
-  function syncListRuntimeProgress(root: HTMLElement, state: StreamEnginePublicState): void {
+  /** Header, bottom pane, mixer sync, scene list highlight — does not rebuild the scene list DOM. */
+  function refreshSceneSelectionUi(): void {
+    refreshWorkspaceChromeUi();
+    if (!mounted || !currentState || !streamState) {
+      return;
+    }
+    bottomRenderSignature = '';
+    renderBottomPaneIfNeeded();
+  }
+
+  function syncListRuntimeChrome(root: HTMLElement, state: StreamEnginePublicState): void {
     const runtime = state.runtime;
+    const stream = state.stream;
     if (!runtime) {
       return;
     }
-    for (const wrap of root.querySelectorAll<HTMLElement>('[data-scene-id]')) {
-      const sceneId = wrap.dataset.sceneId;
+    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
+      const sceneId = wrap.dataset.sceneId as SceneId | undefined;
       if (!sceneId) {
         continue;
       }
+      const scene = stream.scenes[sceneId];
+      if (!scene) {
+        continue;
+      }
       const runtimeState = runtime.sceneStates[sceneId];
-      if (!runtimeState || runtimeState.status !== 'running') {
+      const statusClass = scene.disabled ? 'disabled' : runtimeState?.status ?? 'ready';
+      replaceWrapListRuntimeStatus(wrap, statusClass);
+
+      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
+      if (row) {
+        replaceRowListRuntimeStatus(row, statusClass);
+        const stateCell = row.querySelector<HTMLElement>('.stream-list-col-state');
+        if (stateCell) {
+          stateCell.textContent = formatSceneStateLabel(runtimeState, scene);
+        }
+      }
+
+      let bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
+      if (runtimeState?.status === 'running') {
+        const progress = runtimeState.progress;
+        if (!bar) {
+          bar = document.createElement('div');
+          wrap.append(bar);
+        }
+        if (progress !== undefined && Number.isFinite(progress)) {
+          bar.className = 'stream-scene-row-progress';
+          bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+        } else {
+          bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
+          bar.style.removeProperty('--stream-row-progress');
+        }
+      } else {
+        bar?.remove();
+      }
+    }
+  }
+
+  function syncListDragAppearance(root: HTMLElement, draggingSceneId: SceneId | undefined): void {
+    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
+      const id = wrap.dataset.sceneId as SceneId | undefined;
+      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
+      if (!id || !row) {
         continue;
       }
-      const progress = runtimeState.progress;
-      const bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
-      if (!bar || progress === undefined || !Number.isFinite(progress)) {
-        continue;
-      }
-      bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+      row.classList.toggle('dragging', draggingSceneId !== undefined && id === draggingSceneId);
     }
   }
 
@@ -485,14 +584,15 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return shell.root;
   }
 
-  function renderHeader(): void {
+  function renderHeader(streamPublicOverride?: StreamEnginePublicState): void {
+    const pub = streamPublicOverride ?? streamState!;
     renderStreamHeader({
       headerEl: requireRef('header'),
-      stream: streamState!.stream,
-      playbackStream: streamState!.playbackStream,
-      runtime: streamState!.runtime,
-      playbackTimeline: streamState!.playbackTimeline,
-      validationMessages: streamState!.validationMessages,
+      stream: pub.stream,
+      playbackStream: pub.playbackStream,
+      runtime: pub.runtime,
+      playbackTimeline: pub.playbackTimeline,
+      validationMessages: pub.validationMessages,
       currentState,
       sceneEditSceneId,
       playbackFocusSceneId,
@@ -504,8 +604,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       updateSelectedScene,
       setPlaybackFocusSceneId: (id) => {
         playbackFocusSceneId = id as SceneId | undefined;
-        bottomRenderSignature = '';
       },
+      refreshChrome: refreshWorkspaceChromeUi,
       requestRender: renderCurrent,
     });
   }
@@ -674,7 +774,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     const streamOutputPanel = refs.outputPanel;
-    if (bottomTab === 'mixer' && streamOutputPanel && isPanelInteractionActive(streamOutputPanel)) {
+    if (shouldDeferStreamMixerBottomPaneRedraw(detailPane, bottomTab, streamOutputPanel ?? undefined, isPanelInteractionActive)) {
       return;
     }
     bottomRenderSignature = signature;
@@ -901,8 +1001,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const cursorSceneId = next.runtime?.cursorSceneId;
     if (cursorSceneId && next.stream.scenes[cursorSceneId]) {
       playbackFocusSceneId = cursorSceneId;
-      bottomRenderSignature = '';
-      renderCurrent();
+      refreshWorkspaceChromeUi(next);
     }
   }
 
