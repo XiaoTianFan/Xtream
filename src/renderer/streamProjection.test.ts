@@ -44,6 +44,7 @@ describe('deriveDirectorStateForStream', () => {
       corrections: { displays: {} },
       previews: {},
       audioExtractionFormat: 'm4a',
+      controlDisplayPreviewMaxFps: 15,
       performanceMode: false,
     } as DirectorState;
     const streamState = {

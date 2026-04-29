@@ -30,6 +30,7 @@ export type StreamSurfaceRefs = Partial<Record<string, HTMLElement>>;
 export type StreamSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
   getDisplayMonitors: () => DisplayMonitorInfo[];
+  getPresentationState: () => DirectorState | undefined;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
   showActions: ShowActions;
@@ -37,7 +38,7 @@ export type StreamSurfaceOptions = {
 
 export type StreamSurfaceController = SurfaceController & {
   applyOutputMeterReport: (report: OutputMeterReport) => void;
-  syncPreviewElements: () => void;
+  syncPreviewElements: (presentation: DirectorState) => void;
   exportProjectUiSnapshot: () => ControlProjectUiStreamState;
   applyImportedProjectUi: (
     snapshot: ControlProjectUiStreamState | undefined,

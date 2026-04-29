@@ -1,5 +1,6 @@
 import './control.css';
-import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult } from '../shared/types';
+import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult, StreamEnginePublicState } from '../shared/types';
+import { deriveDirectorStateForStream } from './streamProjection';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import { combineVisibleIssues } from './control/app/appStatus';
 import { installInteractionLock, isPanelInteractionActive } from './control/app/interactionLocks';
@@ -21,6 +22,7 @@ import { renderIssues as renderIssueList } from './control/shared/issues';
 import type { ControlSurface } from './control/shared/types';
 
 let currentState: DirectorState | undefined;
+let latestStreamState: StreamEnginePublicState | undefined;
 let animationFrame: number | undefined;
 let previewSyncTimer: number | undefined;
 let audioDevices: MediaDeviceInfo[] = [];
@@ -45,6 +47,13 @@ function scheduleRefreshStreamMediaIssues(): void {
       }
     });
   }, STREAM_MEDIA_ISSUES_DEBOUNCE_MS);
+}
+
+function getPresentationState(): DirectorState | undefined {
+  if (!currentState) {
+    return undefined;
+  }
+  return deriveDirectorStateForStream(currentState, latestStreamState);
 }
 
 function renderState(state: DirectorState): void {
@@ -122,6 +131,7 @@ const patchSurface = createPatchSurfaceController({
   getAudioDevices: () => audioDevices,
   getDisplayMonitors: () => displayMonitors,
   isPanelInteractionActive,
+  getPresentationState,
   renderState,
   setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
   setShowStatus,
@@ -133,13 +143,18 @@ clearPatchSelection = patchSurface.clearSelection;
 const streamSurface = createStreamSurfaceController({
   getAudioDevices: () => audioDevices,
   getDisplayMonitors: () => displayMonitors,
+  getPresentationState,
   renderState,
   setShowStatus,
   showActions,
 });
 
-window.xtream.stream.onState(() => {
+window.xtream.stream.onState((state) => {
+  latestStreamState = state;
   scheduleRefreshStreamMediaIssues();
+});
+void window.xtream.stream.getState().then((s) => {
+  latestStreamState = s;
 });
 
 const surfaceRouter = createSurfaceRouter({
@@ -289,8 +304,12 @@ void window.xtream.director.getState().then(renderState);
 
 animationFrame = window.requestAnimationFrame(tick);
 previewSyncTimer = window.setInterval(() => {
-  patchSurface.syncPreviewElements();
-  streamSurface.syncPreviewElements();
+  const presentation = getPresentationState();
+  if (!presentation) {
+    return;
+  }
+  patchSurface.syncPreviewElements(presentation);
+  streamSurface.syncPreviewElements(presentation);
 }, DISPLAY_PREVIEW_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {

@@ -52,6 +52,8 @@ export type MixerPanelElements = {
 
 type MixerPanelControllerOptions = {
   getState: () => DirectorState | undefined;
+  /** Patch timeline + routing for metering; defaults to `getState` when omitted. Should match audio renderer projection (e.g. Stream-active derived state). */
+  getMeteringState?: () => DirectorState | undefined;
   getAudioDevices: () => MediaDeviceInfo[];
   isSelected: (type: SelectedEntity['type'], id: string) => boolean;
   selectEntity: (entity: SelectedEntity) => void;
@@ -155,9 +157,32 @@ export function createMixerPanelController(elements: MixerPanelElements, options
 
   function applyOutputMeterReport(report: OutputMeterReport): void {
     latestMeterReports.set(report.outputId, report);
+    const matchedLaneElements = new Set<HTMLElement>();
     for (const lane of report.lanes) {
       const percent = meterLevelPercent(lane.db);
       for (const laneElement of getCachedMeterLaneElements(lane.id)) {
+        matchedLaneElements.add(laneElement);
+        laneElement.style.setProperty('--meter-level', `${percent}%`);
+        laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+        laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
+        syncMeterLaneSegments(laneElement, percent);
+      }
+    }
+    const strip = elements.outputPanel.querySelector(`[data-output-strip="${report.outputId}"]`);
+    if (strip) {
+      const domLanes = Array.from(strip.querySelectorAll<HTMLElement>('[data-meter-lane]')).sort((a, b) => {
+        const ma = a.dataset.meterLane?.match(/:ch-(\d+)$/);
+        const mb = b.dataset.meterLane?.match(/:ch-(\d+)$/);
+        return (ma ? Number(ma[1]) : 0) - (mb ? Number(mb[1]) : 0);
+      });
+      const sortedReportLanes = [...report.lanes].sort((left, right) => left.channelIndex - right.channelIndex);
+      for (let i = 0; i < domLanes.length && i < sortedReportLanes.length; i += 1) {
+        const laneElement = domLanes[i];
+        if (matchedLaneElements.has(laneElement)) {
+          continue;
+        }
+        const lane = sortedReportLanes[i];
+        const percent = meterLevelPercent(lane.db);
         laneElement.style.setProperty('--meter-level', `${percent}%`);
         laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
         laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
@@ -189,7 +214,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     body.className = 'mixer-strip-body';
     const track = document.createElement('div');
     track.className = 'mixer-strip-track';
-    const meter = createOutputMeter(output, state);
+    const meter = createOutputMeter(output);
     const fader = createAudioFader(output, (busLevelDb) => {
       db.textContent = `${busLevelDb.toFixed(1)} dB`;
       void window.xtream.outputs.update(output.id, { busLevelDb });
@@ -260,7 +285,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     return strip;
   }
 
-  function createOutputMeter(output: VirtualOutputState, state = options.getState()): HTMLElement {
+  function createOutputMeter(output: VirtualOutputState): HTMLElement {
     const meter = document.createElement('div');
     meter.className = 'output-meter';
     meter.setAttribute('role', 'meter');
@@ -270,7 +295,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     scale.className = 'output-meter-scale';
     const lanes = document.createElement('div');
     lanes.className = 'output-meter-lanes';
-    const laneStates = getOutputMeterLanes(output, state);
+    const laneStates = getOutputMeterLanes(output);
     lanes.style.setProperty('--meter-lane-count', String(Math.max(1, laneStates.length)));
     for (const laneState of laneStates) {
       lanes.append(createOutputMeterLane(laneState));
@@ -430,8 +455,10 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     wrapper.style.setProperty('--fader-position', `${Math.min(100, Math.max(0, percent))}%`);
   }
 
-  function getOutputMeterLanes(output: VirtualOutputState, state = options.getState()): MeterLaneState[] {
-    return deriveOutputMeterLanes(output, state, latestMeterReports.get(output.id));
+  function getOutputMeterLanes(output: VirtualOutputState): MeterLaneState[] {
+    const meteringState = options.getMeteringState?.() ?? options.getState();
+    const laneOutput = meteringState?.outputs[output.id] ?? output;
+    return deriveOutputMeterLanes(laneOutput, meteringState, latestMeterReports.get(output.id));
   }
 
   async function resolveOutputSourceSelectionId(outputId: VirtualOutputId, selection: VirtualOutputSourceSelection, selectionIndex: number): Promise<string> {

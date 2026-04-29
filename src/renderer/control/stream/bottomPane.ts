@@ -7,6 +7,7 @@ import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { createSceneEditPane } from './sceneEdit/sceneEditPane';
 import { createStreamTabBar } from './streamDom';
+import { isPanelInteractionActive } from '../app/interactionLocks';
 import type { BottomTab, DetailPane, StreamSurfaceOptions } from './streamTypes';
 
 export type StreamBottomPaneContext = {
@@ -14,11 +15,15 @@ export type StreamBottomPaneContext = {
   detailPane: DetailPane | undefined;
   selectedEntity: SelectedEntity | undefined;
   currentState: DirectorState;
+  /** Stream-derived (or raw) state for display previews / display signatures. */
+  presentationState: DirectorState;
   streamState: StreamEnginePublicState;
   selectedSceneId: string | undefined;
   options: StreamSurfaceOptions;
   mixerPanel: MixerPanelController | undefined;
   displayWorkspace: DisplayWorkspaceController | undefined;
+  /** Stream shell output panel (for interaction lock while dragging faders). */
+  streamOutputPanel: HTMLDivElement;
   mixerRenderSignature: string;
   displayRenderSignature: string;
   setBottomTab: (tab: BottomTab) => void;
@@ -64,7 +69,9 @@ export function renderStreamMixerPane(ctx: StreamBottomPaneContext, outputPanel:
   const signature = ctx.mixerPanel?.createRenderSignature(ctx.currentState) ?? '';
   if (ctx.mixerRenderSignature !== signature) {
     ctx.setMixerRenderSignature(signature);
-    ctx.mixerPanel?.renderOutputs(ctx.currentState);
+    if (!isPanelInteractionActive(ctx.streamOutputPanel)) {
+      ctx.mixerPanel?.renderOutputs(ctx.currentState);
+    }
   }
   ctx.mixerPanel?.syncSelection(ctx.selectedEntity);
   ctx.mixerPanel?.syncOutputMeters(ctx.currentState);
@@ -72,8 +79,8 @@ export function renderStreamMixerPane(ctx: StreamBottomPaneContext, outputPanel:
 }
 
 export function renderStreamDisplayPane(ctx: StreamBottomPaneContext, displayList: HTMLDivElement): HTMLElement {
-  const signature = ctx.displayWorkspace?.createRenderSignature(ctx.currentState) ?? '';
-  const displays = Object.values(ctx.currentState.displays);
+  const signature = ctx.displayWorkspace?.createRenderSignature(ctx.presentationState) ?? '';
+  const displays = Object.values(ctx.presentationState.displays);
   if (ctx.displayRenderSignature !== signature) {
     ctx.setDisplayRenderSignature(signature);
     ctx.displayWorkspace?.render(displays);

@@ -26,7 +26,7 @@ import {
 import { toRendererFileUrl } from './fileUrls';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 import type { DirectorState, PersistedShowConfig, PersistedShowConfigV5, PersistedShowConfigV7 } from '../shared/types';
-import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
+import { DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS, SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 
 const configV7: PersistedShowConfigV7 = {
   schemaVersion: 7,
@@ -109,6 +109,7 @@ function createRuntimeState(): DirectorState {
     globalDisplayBlackout: false,
     globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
     globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+    controlDisplayPreviewMaxFps: DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS,
     performanceMode: false,
     visuals: {},
     audioSources: {},

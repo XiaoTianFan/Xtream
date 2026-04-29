@@ -32,7 +32,7 @@ import type {
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
-import { SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
+import { DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS, SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS } from '../shared/types';
 import { getActiveDisplays, getLayoutVisualIds } from '../shared/layouts';
 import {
   buildPatchCompatibilityScene,
@@ -80,6 +80,7 @@ export class Director extends EventEmitter {
       globalDisplayBlackout: false,
       globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
       globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      controlDisplayPreviewMaxFps: DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS,
       performanceMode: false,
       visuals: {},
       audioSources: {},
@@ -471,6 +472,12 @@ export class Director extends EventEmitter {
       }
       return Math.min(60, Math.max(0, value));
     };
+    const clampPreviewFps = (value: number | undefined, previous: number): number => {
+      if (value === undefined) {
+        return previous;
+      }
+      return Math.min(60, Math.max(1, Math.round(value)));
+    };
     this.state = {
       ...this.state,
       audioExtractionFormat: update.audioExtractionFormat ?? this.state.audioExtractionFormat,
@@ -479,6 +486,7 @@ export class Director extends EventEmitter {
         update.globalDisplayBlackoutFadeOutSeconds,
         this.state.globalDisplayBlackoutFadeOutSeconds,
       ),
+      controlDisplayPreviewMaxFps: clampPreviewFps(update.controlDisplayPreviewMaxFps, this.state.controlDisplayPreviewMaxFps),
     };
     this.emitState();
     return this.getState();
@@ -505,6 +513,7 @@ export class Director extends EventEmitter {
       globalDisplayBlackout: false,
       globalAudioMuteFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
       globalDisplayBlackoutFadeOutSeconds: SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS,
+      controlDisplayPreviewMaxFps: DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS,
       performanceMode: false,
       visuals: {},
       audioSources: {},
@@ -797,6 +806,9 @@ export class Director extends EventEmitter {
       audioExtractionFormat: this.state.audioExtractionFormat,
       globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,
       globalDisplayBlackoutFadeOutSeconds: this.state.globalDisplayBlackoutFadeOutSeconds,
+      ...(this.state.controlDisplayPreviewMaxFps !== DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS
+        ? { controlDisplayPreviewMaxFps: this.state.controlDisplayPreviewMaxFps }
+        : {}),
       stream: structuredClone(streamPersistence.stream),
       patchCompatibility: { scene: patchScene },
       visuals: Object.fromEntries(
@@ -903,6 +915,13 @@ export class Director extends EventEmitter {
     this.state.globalDisplayBlackoutFadeOutSeconds = Math.min(
       60,
       Math.max(0, merged.globalDisplayBlackoutFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
+    );
+    this.state.controlDisplayPreviewMaxFps = Math.min(
+      60,
+      Math.max(
+        1,
+        Math.round(merged.controlDisplayPreviewMaxFps ?? DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS),
+      ),
     );
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;

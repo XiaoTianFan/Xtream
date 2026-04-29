@@ -18,6 +18,7 @@ export function createSurfaceStateSignature(surface: ControlSurface, state: Dire
       globalDisplayBlackoutFadeOutSeconds: state.globalDisplayBlackoutFadeOutSeconds,
       performanceMode: state.performanceMode,
       audioExtractionFormat: state.audioExtractionFormat,
+      controlDisplayPreviewMaxFps: state.controlDisplayPreviewMaxFps,
     },
     displays: Object.values(state.displays).map((display) => ({
       id: display.id,

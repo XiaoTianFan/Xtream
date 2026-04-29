@@ -14,6 +14,7 @@ function testState(output: VirtualOutputState): DirectorState {
     globalDisplayBlackout: false,
     globalAudioMuteFadeOutSeconds: 1,
     globalDisplayBlackoutFadeOutSeconds: 1,
+    controlDisplayPreviewMaxFps: 15,
     performanceMode: false,
     visuals: {},
     audioSources: {

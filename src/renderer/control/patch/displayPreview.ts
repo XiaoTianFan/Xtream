@@ -1,17 +1,22 @@
 import { getDirectorSeconds, getMediaEffectiveTime } from '../../../shared/timeline';
 import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
+import { DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS } from '../../../shared/types';
 import { createPreviewLabel } from '../shared/dom';
-import { patchElements as elements } from './elements';
 import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
 import { attachLiveVisualStream, reportLiveVisualError } from '../media/liveCaptureRuntime';
 import type { DisplayPreviewProgressEdge } from '../shared/types';
 
 const DISPLAY_PREVIEW_MAX_WIDTH = 854;
 const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
-const DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS = 1000 / 15;
 const DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS = 0.05;
 const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
 const livePreviewCleanups = new Map<HTMLVideoElement, () => void>();
+
+export function getDisplayPreviewMinFrameIntervalMs(state: DirectorState): number {
+  const fps = state.controlDisplayPreviewMaxFps ?? DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS;
+  const clamped = Math.min(60, Math.max(1, fps));
+  return 1000 / clamped;
+}
 
 export function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
   element.style.opacity = String(visual.opacity ?? 1);
@@ -180,13 +185,14 @@ function resizeDisplayPreviewCanvas(video: HTMLVideoElement, canvas: HTMLCanvasE
   canvas.height = Math.max(1, Math.round(sourceHeight * scale));
 }
 
-function drawDisplayPreviewFrame(video: HTMLVideoElement): void {
+function drawDisplayPreviewFrame(video: HTMLVideoElement, state: DirectorState): void {
   const preview = displayPreviewCanvases.get(video);
   if (!preview || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     return;
   }
   const now = performance.now();
-  if (now - preview.lastDrawMs < DISPLAY_PREVIEW_MIN_FRAME_INTERVAL_MS) {
+  const minInterval = getDisplayPreviewMinFrameIntervalMs(state);
+  if (now - preview.lastDrawMs < minInterval) {
     return;
   }
   preview.lastDrawMs = now;
@@ -225,7 +231,7 @@ export function syncPreviewElements(state: DirectorState): void {
       applyVisualStyle(video, visual);
     }
     syncTimedMediaElement(video, effectiveTarget, !state.paused, syncKey, 0.75);
-    drawDisplayPreviewFrame(video);
+    drawDisplayPreviewFrame(video, state);
   }
 }
 
@@ -241,7 +247,7 @@ function cleanupDisconnectedLivePreviews(): void {
 
 function syncDisplayPreviewProgressEdges(state: DirectorState): void {
   const targetSeconds = getDirectorSeconds(state);
-  elements.displayList.querySelectorAll<HTMLElement>('[data-display-preview]').forEach((preview) => {
+  document.querySelectorAll<HTMLElement>('[data-display-preview]').forEach((preview) => {
     const displayId = preview.dataset.displayPreview;
     const display = displayId ? state.displays[displayId] : undefined;
     const edge = display ? getDisplayPreviewProgressEdge(display, state) : undefined;

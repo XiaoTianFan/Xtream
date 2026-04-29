@@ -23,6 +23,8 @@ type PatchSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
   getDisplayMonitors: () => DisplayMonitorInfo[];
   isPanelInteractionActive: (panel: HTMLElement) => boolean;
+  /** Stream-aware director state for display previews + mixer metering (matches audio renderer). */
+  getPresentationState: () => DirectorState | undefined;
   renderState: (state: DirectorState) => void;
   setActiveSurface: (surface: ControlSurface) => void;
   setShowStatus: (message: string, issues?: MediaValidationIssue[]) => void;
@@ -50,7 +52,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
   });
 
   const displayWorkspace = createDisplayWorkspaceController(elements, {
-    getState: () => currentState,
+    getState: () => options.getPresentationState() ?? currentState,
     isSelected,
     selectEntity,
     clearSelectionIf,
@@ -60,6 +62,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
   let refreshDetailsPane: (state: DirectorState) => void = () => undefined;
   const mixerPanel = createMixerPanelController(elements, {
     getState: () => currentState,
+    getMeteringState: () => options.getPresentationState() ?? currentState,
     getAudioDevices: options.getAudioDevices,
     isSelected,
     selectEntity,
@@ -140,12 +143,13 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       mixerPanel.renderOutputs(state);
     }
     mixerPanel.syncOutputMeters(state);
-    const nextDisplayRenderSignature = displayWorkspace.createRenderSignature(state);
+    const presentation = options.getPresentationState() ?? state;
+    const nextDisplayRenderSignature = displayWorkspace.createRenderSignature(presentation);
     if (!options.isPanelInteractionActive(elements.displayList) && displayRenderSignature !== nextDisplayRenderSignature) {
       displayRenderSignature = nextDisplayRenderSignature;
-      displayWorkspace.render(Object.values(state.displays));
+      displayWorkspace.render(Object.values(presentation.displays));
     } else {
-      displayWorkspace.syncCardSummaries(Object.values(state.displays));
+      displayWorkspace.syncCardSummaries(Object.values(presentation.displays));
     }
     detailsPane.render(state);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(state);
@@ -228,10 +232,8 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     render,
     install,
     tick,
-    syncPreviewElements: () => {
-      if (currentState) {
-        syncPreviewElements(currentState);
-      }
+    syncPreviewElements: (presentation: DirectorState) => {
+      syncPreviewElements(presentation);
     },
     dismissContextMenu: mediaPool.dismissContextMenu,
     clearSelection,

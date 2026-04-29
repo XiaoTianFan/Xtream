@@ -126,6 +126,16 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
       (globalDisplayBlackoutFadeOutSeconds) => window.xtream.show.updateSettings({ globalDisplayBlackoutFadeOutSeconds }),
       options.renderState,
     ),
+    createNumberDetailControl(
+      'Display preview max FPS',
+      state.controlDisplayPreviewMaxFps,
+      1,
+      60,
+      1,
+      (controlDisplayPreviewMaxFps) => window.xtream.show.updateSettings({ controlDisplayPreviewMaxFps }),
+      options.renderState,
+    ),
+    createHint('Display preview max FPS caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.'),
   );
 
   const actions = createSurfaceCard('System Actions');

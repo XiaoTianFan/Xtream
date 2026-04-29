@@ -15,6 +15,7 @@ import type { MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import { createMediaPoolController, type MediaPoolController } from '../patch/mediaPool';
 import { createMixerPanelController, type MixerPanelController } from '../patch/mixerPanel';
 import type { SelectedEntity } from '../shared/types';
+import { installInteractionLock } from '../app/interactionLocks';
 import { elements } from '../shell/elements';
 import { renderStreamBottomPane, type StreamBottomPaneContext } from './bottomPane';
 import {
@@ -56,6 +57,29 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   const refs: StreamSurfaceRefs = {};
   const layoutCtl = createStreamLayoutController(refs);
+
+  function outputTopologyDirectorSlice(state: DirectorState): unknown {
+    return Object.values(state.outputs)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((output) => ({
+        id: output.id,
+        label: output.label,
+        sinkId: output.sinkId,
+        muted: output.muted,
+        outputDelaySeconds: output.outputDelaySeconds,
+        ready: output.ready,
+        physicalRoutingAvailable: output.physicalRoutingAvailable,
+        fallbackAccepted: output.fallbackAccepted,
+        fallbackReason: output.fallbackReason,
+        error: output.error,
+        sources: output.sources.map((sel) => ({
+          id: sel.id,
+          audioSourceId: sel.audioSourceId,
+          muted: sel.muted,
+          solo: sel.solo,
+        })),
+      }));
+  }
 
   const embeddedAudioImport = createEmbeddedAudioImportController({
     getState: () => currentState,
@@ -159,7 +183,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           durationSeconds: source.durationSeconds,
           type: source.type,
         })),
-        outputs: Object.values(state.outputs).map((output) => ({ ...output, meterDb: undefined, meterLanes: undefined })),
+        outputs: outputTopologyDirectorSlice(state),
         displays: Object.values(state.displays).map((display) => ({ ...display, lastDriftSeconds: undefined })),
       },
     });
@@ -353,6 +377,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mediaPool.install();
     mixerPanel = createMixerPanelController({ outputPanel: shell.outputPanel }, {
       getState: () => currentState,
+      getMeteringState: () => options.getPresentationState() ?? currentState,
       getAudioDevices: options.getAudioDevices,
       isSelected,
       selectEntity,
@@ -361,12 +386,13 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       refreshDetails: () => renderCurrent(),
     });
     displayWorkspace = createDisplayWorkspaceController({ displayList: shell.displayList }, {
-      getState: () => currentState,
+      getState: () => options.getPresentationState() ?? currentState,
       isSelected,
       selectEntity,
       clearSelectionIf,
       renderState: options.renderState,
     });
+    installInteractionLock(shell.outputPanel);
     layoutCtl.installSplitters(requireRef);
     return shell.root;
   }
@@ -465,11 +491,15 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     streamDetailOverlayCleanup?.();
     streamDetailOverlayCleanup = undefined;
     const panel = requireRef('bottom');
+    const presentation = options.getPresentationState() ?? currentState!;
+    const streamOutputPanel = requireRef('outputPanel') as HTMLDivElement;
     const ctx: StreamBottomPaneContext = {
       bottomTab,
       detailPane,
       selectedEntity,
       currentState: currentState!,
+      presentationState: presentation,
+      streamOutputPanel,
       streamState: streamState!,
       selectedSceneId,
       options,
@@ -507,7 +537,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderStreamBottomPane(
       panel,
       ctx,
-      requireRef('outputPanel') as HTMLDivElement,
+      streamOutputPanel,
       requireRef('displayList') as HTMLDivElement,
       () =>
         createStreamDetailOverlay({
@@ -544,6 +574,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function createBottomRenderSignature(): string {
+    const presentation = options.getPresentationState() ?? currentState!;
     return JSON.stringify({
       bottomTab,
       detailPane,
@@ -553,7 +584,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       performanceMode: currentState!.performanceMode,
       sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
       mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(currentState!) : undefined,
-      displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(currentState!) : undefined,
+      displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(presentation) : undefined,
     });
   }
 
@@ -750,10 +781,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     createRenderSignature,
     render,
     applyOutputMeterReport: (report: OutputMeterReport) => mixerPanel?.applyOutputMeterReport(report),
-    syncPreviewElements: () => {
-      if (currentState) {
-        syncPreviewElements(currentState);
-      }
+    syncPreviewElements: (presentation: DirectorState) => {
+      syncPreviewElements(presentation);
     },
     exportProjectUiSnapshot,
     applyImportedProjectUi,

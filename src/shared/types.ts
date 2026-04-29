@@ -254,6 +254,9 @@ export type LoopState = {
 /** Default fade duration (seconds) for global audio mute and display blackout when a show file omits these fields. */
 export const SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS = 1;
 
+/** Default max FPS for control-window display preview canvas compositing when a show file omits `controlDisplayPreviewMaxFps`. */
+export const DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS = 15;
+
 export type DirectorState = {
   paused: boolean;
   rate: number;
@@ -267,6 +270,11 @@ export type DirectorState = {
   globalAudioMuteFadeOutSeconds: number;
   /** Seconds for display / preview blackout opacity transition (0 = instant). */
   globalDisplayBlackoutFadeOutSeconds: number;
+  /**
+   * Max redraw rate for control-window display preview canvases (file video → canvas path), per show.
+   * Typical range 1–60; default when unset is 15.
+   */
+  controlDisplayPreviewMaxFps: number;
   performanceMode: boolean;
   visuals: Record<VisualId, VisualState>;
   audioSources: Record<AudioSourceId, AudioSourceState>;
@@ -572,6 +580,8 @@ export type PersistedShowConfigV8 = {
   audioExtractionFormat: AudioExtractionFormat;
   globalAudioMuteFadeOutSeconds?: number;
   globalDisplayBlackoutFadeOutSeconds?: number;
+  /** When omitted, {@link DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS} is used after load. */
+  controlDisplayPreviewMaxFps?: number;
 
   visuals: Record<VisualId, PersistedVisualConfig>;
   audioSources: Record<AudioSourceId, PersistedAudioSourceConfig>;
@@ -770,7 +780,13 @@ export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playba
 export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
 /** Fields persisted in the show project file (`.xtream-show.json`), not application-wide preferences. */
 export type ShowProjectFileSettingsUpdate = Partial<
-  Pick<DirectorState, 'audioExtractionFormat' | 'globalAudioMuteFadeOutSeconds' | 'globalDisplayBlackoutFadeOutSeconds'>
+  Pick<
+    DirectorState,
+    | 'audioExtractionFormat'
+    | 'globalAudioMuteFadeOutSeconds'
+    | 'globalDisplayBlackoutFadeOutSeconds'
+    | 'controlDisplayPreviewMaxFps'
+  >
 >;
 export type ShowSettingsUpdate = ShowProjectFileSettingsUpdate;
 
