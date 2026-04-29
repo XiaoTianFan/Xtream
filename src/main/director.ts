@@ -460,6 +460,14 @@ export class Director extends EventEmitter {
     this.state = {
       ...this.state,
       ...update,
+      globalAudioMuteFadeOverrideSeconds:
+        update.globalAudioMuted !== undefined && update.globalAudioMuteFadeOverrideSeconds === undefined
+          ? undefined
+          : update.globalAudioMuteFadeOverrideSeconds ?? this.state.globalAudioMuteFadeOverrideSeconds,
+      globalDisplayBlackoutFadeOverrideSeconds:
+        update.globalDisplayBlackout !== undefined && update.globalDisplayBlackoutFadeOverrideSeconds === undefined
+          ? undefined
+          : update.globalDisplayBlackoutFadeOverrideSeconds ?? this.state.globalDisplayBlackoutFadeOverrideSeconds,
     };
     this.emitState();
     return this.getState();

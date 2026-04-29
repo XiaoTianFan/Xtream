@@ -30,6 +30,7 @@ export type ControlSubCueFormDeps = {
 type ActionDiscriminant = PersistedControlSubCueConfig['action']['type'];
 
 const ACTION_KINDS: Array<[ActionDiscriminant, string]> = [
+  ['play-scene', 'Play scene'],
   ['stop-scene', 'Stop scene'],
   ['pause-scene', 'Pause scene'],
   ['resume-scene', 'Resume scene'],
@@ -94,7 +95,7 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
     }
   }
 
-  if (action.type === 'stop-scene' || action.type === 'pause-scene' || action.type === 'resume-scene') {
+  if (action.type === 'play-scene' || action.type === 'stop-scene' || action.type === 'pause-scene' || action.type === 'resume-scene') {
     targetFields.push(
       createSelect(
         'Target scene',
@@ -211,25 +212,46 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   }
 
   if (action.type === 'set-global-audio-muted') {
+    const fadeKey = action.muted ? 'fadeOutMs' : 'fadeInMs';
     automationFields.push(
       createSubCueToggleRow(
-        createSubCueToggleButton('Muted', action.muted, (muted) => patchSubCue({ action: { type: 'set-global-audio-muted', muted } })),
+        createSubCueToggleButton('Muted', action.muted, (muted) =>
+          patchSubCue({
+            action: {
+              ...action,
+              type: 'set-global-audio-muted',
+              muted,
+            },
+          }),
+        ),
       ),
-      createOptionalNumberField('Fade (ms)', action.fadeMs, (fadeMs) => patchSubCue({ action: { ...action, fadeMs } }), { min: 0 }),
+      createOptionalNumberField(
+        action.muted ? 'Fade out (ms)' : 'Fade in (ms)',
+        action[fadeKey] ?? action.fadeMs,
+        (fadeMs) => patchSubCue({ action: { ...action, [fadeKey]: fadeMs } }),
+        { min: 0 },
+      ),
     );
   }
 
   if (action.type === 'set-global-display-blackout') {
+    const fadeKey = action.blackout ? 'fadeOutMs' : 'fadeInMs';
     automationFields.push(
       createSubCueToggleRow(
         createSubCueToggleButton('Blackout', action.blackout, (blackout) =>
-          patchSubCue({ action: { type: 'set-global-display-blackout', blackout } }),
+          patchSubCue({
+            action: {
+              ...action,
+              type: 'set-global-display-blackout',
+              blackout,
+            },
+          }),
         ),
       ),
       createOptionalNumberField(
-        'Fade (ms)',
-        action.fadeMs,
-        (fadeMs) => patchSubCue({ action: { ...action, fadeMs } }),
+        action.blackout ? 'Fade out (ms)' : 'Fade in (ms)',
+        action[fadeKey] ?? action.fadeMs,
+        (fadeMs) => patchSubCue({ action: { ...action, [fadeKey]: fadeMs } }),
         { min: 0 },
       ),
     );
@@ -260,6 +282,9 @@ function makeDefault(
   }
   if (next === 'stop-scene') {
     return { action: { type: 'stop-scene', sceneId: fallbackScene } };
+  }
+  if (next === 'play-scene') {
+    return { action: { type: 'play-scene', sceneId: fallbackScene } };
   }
   if (next === 'pause-scene') {
     return { action: { type: 'pause-scene', sceneId: fallbackScene } };

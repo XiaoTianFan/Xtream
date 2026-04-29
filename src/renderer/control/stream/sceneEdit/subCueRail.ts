@@ -114,7 +114,12 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     setSceneEditSelection({ kind: 'scene' });
     requestRender();
   });
-  rail.append(sceneBtn);
+  const railHeader = document.createElement('div');
+  railHeader.className = 'stream-subcue-rail-header';
+  railHeader.append(sceneBtn);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'stream-subcue-rail-list';
 
   for (const subCueId of scene.subCueOrder) {
     const sub = scene.subCues[subCueId];
@@ -191,7 +196,7 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     titleWrap.append(labelBtn, removeBtn);
     row.append(titleWrap);
     rowWrap.append(row);
-    rail.append(rowWrap);
+    listEl.append(rowWrap);
   }
 
   const endDropTarget = document.createElement('div');
@@ -252,7 +257,8 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   });
   addWrap.append(addDetails);
 
-  rail.append(endDropTarget, addWrap, dropLine);
+  listEl.append(addWrap, endDropTarget);
+  rail.append(railHeader, listEl, dropLine);
 
   function removeSubCue(id: SubCueId): void {
     const order = scene.subCueOrder.filter((sid) => sid !== id);

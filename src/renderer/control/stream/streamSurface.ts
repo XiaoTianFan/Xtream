@@ -29,6 +29,7 @@ import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
+import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
 
@@ -167,7 +168,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab,
       detailPane,
       headerEditField,
-      mediaPool: mediaPool?.createRenderSignature(signatureState),
+      mediaPool: mediaPool?.createStreamSurfaceShellSignature(),
       director: {
         visuals: Object.values(signatureState.visuals).map((visual) => ({
           id: visual.id,
@@ -186,7 +187,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           type: source.type,
         })),
         outputs: outputTopologyDirectorSlice(state),
-        displays: Object.values(state.displays).map((display) => ({ ...display, lastDriftSeconds: undefined })),
+        displays: snapshotDisplaysForStreamSignature(state.displays),
       },
     });
   }
@@ -220,18 +221,30 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           },
         ]),
       ),
-      activeAudioSubCues: runtime.activeAudioSubCues?.map((cue) => ({
-        sceneId: cue.sceneId,
-        subCueId: cue.subCueId,
-        outputId: cue.outputId,
-        audioSourceId: cue.audioSourceId,
-      })),
-      activeVisualSubCues: runtime.activeVisualSubCues?.map((cue) => ({
-        sceneId: cue.sceneId,
-        subCueId: cue.subCueId,
-        visualId: cue.visualId,
-        target: cue.target,
-      })),
+      activeAudioSubCues: [...(runtime.activeAudioSubCues ?? [])]
+        .slice()
+        .sort((a, b) => {
+          const k = `${a.sceneId}|${a.subCueId}|${a.outputId}|${a.audioSourceId}`;
+          return k.localeCompare(`${b.sceneId}|${b.subCueId}|${b.outputId}|${b.audioSourceId}`);
+        })
+        .map((cue) => ({
+          sceneId: cue.sceneId,
+          subCueId: cue.subCueId,
+          outputId: cue.outputId,
+          audioSourceId: cue.audioSourceId,
+        })),
+      activeVisualSubCues: [...(runtime.activeVisualSubCues ?? [])]
+        .slice()
+        .sort((a, b) => {
+          const ka = `${a.sceneId}|${a.subCueId}|${a.visualId}|${a.target.displayId}|${a.target.zoneId ?? ''}`;
+          return ka.localeCompare(`${b.sceneId}|${b.subCueId}|${b.visualId}|${b.target.displayId}|${b.target.zoneId ?? ''}`);
+        })
+        .map((cue) => ({
+          sceneId: cue.sceneId,
+          subCueId: cue.subCueId,
+          visualId: cue.visualId,
+          target: cue.target,
+        })),
     };
   }
 
@@ -303,7 +316,49 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
     syncListRuntimeProgress(requireRef('workspace'), streamState);
+    syncWorkspaceSceneSelection(requireRef('workspace'), selectedSceneId);
     syncSceneEditRunningLock();
+  }
+
+  function syncWorkspaceSceneSelection(root: HTMLElement, sid: SceneId | undefined): void {
+    for (const card of root.querySelectorAll<HTMLElement>('.stream-flow-card[data-scene-id]')) {
+      const id = card.dataset.sceneId as SceneId | undefined;
+      if (!id) {
+        continue;
+      }
+      const on = sid !== undefined && id === sid;
+      card.classList.toggle('selected', on);
+    }
+    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
+      const id = wrap.dataset.sceneId as SceneId | undefined;
+      if (!id) {
+        continue;
+      }
+      const on = sid !== undefined && id === sid;
+      wrap.classList.toggle('focused', on);
+      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
+      if (row) {
+        row.classList.toggle('selected', on);
+      }
+    }
+  }
+
+  /** Header, bottom pane, mixer sync, scene list highlight — does not rebuild the scene list DOM. */
+  function refreshSceneSelectionUi(): void {
+    if (!mounted || !currentState || !streamState) {
+      return;
+    }
+    if (mixerPanel?.pruneSoloOutputIds(currentState)) {
+      mixerRenderSignature = '';
+    }
+    const mediaState = stripRuntimeMediaFromState(currentState);
+    renderHeader();
+    mediaPool?.syncPoolSelectionHighlight(mediaState);
+    syncWorkspaceSceneSelection(requireRef('workspace'), selectedSceneId);
+    bottomRenderSignature = '';
+    renderBottomPaneIfNeeded();
+    mixerPanel?.syncOutputMeters(currentState);
+    void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
   }
 
   function syncListRuntimeProgress(root: HTMLElement, state: StreamEnginePublicState): void {
@@ -471,6 +526,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       },
       applySceneReorder,
       requestRender: renderCurrent,
+      refreshSceneSelectionUi,
       mode,
       setMode: (m) => {
         mode = m;

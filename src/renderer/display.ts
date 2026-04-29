@@ -114,7 +114,10 @@ function handleState(state: DirectorState): void {
   const effectiveState = deriveDirectorStateForStream(state, currentStreamState);
   currentState = effectiveState;
   currentDirectorSeconds = getDirectorSeconds(effectiveState);
-  displayRoot.style.setProperty('--display-blackout-fade', `${Math.max(0, effectiveState.globalDisplayBlackoutFadeOutSeconds)}s`);
+  displayRoot.style.setProperty(
+    '--display-blackout-fade',
+    `${Math.max(0, effectiveState.globalDisplayBlackoutFadeOverrideSeconds ?? effectiveState.globalDisplayBlackoutFadeOutSeconds)}s`,
+  );
   displayRoot.classList.toggle('blacked-out', effectiveState.globalDisplayBlackout);
   const display = effectiveState.displays[displayId];
   if (!display) {

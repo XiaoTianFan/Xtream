@@ -23,6 +23,7 @@ import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlayb
 import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
 import {
   buildStreamSchedule,
+  resolveFollowsSceneId,
   type StreamSchedule,
   validateStreamContent,
   validateStreamStructure,
@@ -54,8 +55,19 @@ export class StreamEngine extends EventEmitter {
   private manuallyCompletedSceneIds = new Set<SceneId>();
   private skippedAtTimecodeSceneIds = new Set<SceneId>();
   private manualSceneStartOverrides = new Map<SceneId, number>();
+  private controlPausedSceneIds = new Set<SceneId>();
+  private controlStoppedSceneIds = new Set<SceneId>();
+  private controlEffectRevision = 0;
   private orphanedAudioSubCues: StreamRuntimeAudioSubCue[] = [];
   private orphanedVisualSubCues: StreamRuntimeVisualSubCue[] = [];
+  /** Global play anchor from `startFromStreamTime`; manual scenes only auto-play from schedule when this matches (unless {@link manualSceneSchedulePlaybackActive}). */
+  private streamPlayReferenceSceneId: SceneId | undefined;
+  /** Stream-time passed into the last `startFromStreamTime`; used with {@link streamPlayReferenceSceneId} to include earlier manual rows in the same playback jump. */
+  private streamPlaybackAnchorMs: number | undefined;
+  /** Scenes treated as already passed the playhead due to seek or starting after a later reference scene. */
+  private scheduleConsumedSceneIds = new Set<SceneId>();
+  /** When true, the current session was started via scene-row / flow-card "run from here" (vs global play). Affects predecessor consumption and manual inclusion. */
+  private streamPlayUsedSceneRowIntent = false;
 
   constructor(private readonly director: Director) {
     super();
@@ -80,6 +92,11 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    this.streamPlayReferenceSceneId = undefined;
+    this.streamPlaybackAnchorMs = undefined;
+    this.scheduleConsumedSceneIds.clear();
+    this.streamPlayUsedSceneRowIntent = false;
+    this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
     this.revalidate();
@@ -304,7 +321,7 @@ export class StreamEngine extends EventEmitter {
     if (this.runtime?.status === 'paused' && source === 'global') {
       const pauseSelection = this.runtime.selectedSceneIdAtPause ?? this.runtime.cursorSceneId;
       if (stream.playbackSettings?.pausedPlayBehavior !== 'preserve-paused-cursor' && target && target !== pauseSelection) {
-        this.startFromStreamTime(this.sceneStartMs(target) ?? 0, target);
+        this.startFromStreamTime(this.sceneStartMs(target) ?? 0, target, false);
         return;
       }
       this.resumeFromPausedCursor();
@@ -318,12 +335,13 @@ export class StreamEngine extends EventEmitter {
     }
     if (target) {
       const start = this.sceneStartMs(target) ?? 0;
-      this.startFromStreamTime(start, target);
+      const sceneRowRunFromHereIntent = source === 'scene-row' || source === 'flow-card';
+      this.startFromStreamTime(start, target, sceneRowRunFromHereIntent);
       return;
     }
     if (this.runtime) {
       const current = this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? this.runtime.pausedAtStreamMs ?? 0;
-      this.startFromStreamTime(current, this.runtime.cursorSceneId);
+      this.startFromStreamTime(current, this.runtime.cursorSceneId, false);
       return;
     }
     const first = this.firstEnabledSceneId();
@@ -332,10 +350,10 @@ export class StreamEngine extends EventEmitter {
       this.runtime = { status: 'complete', sceneStates: {} };
       return;
     }
-    this.startFromStreamTime(this.sceneStartMs(first) ?? 0, first);
+    this.startFromStreamTime(this.sceneStartMs(first) ?? 0, first, false);
   }
 
-  private startFromStreamTime(timeMs: number, referenceSceneId?: SceneId): void {
+  private startFromStreamTime(timeMs: number, referenceSceneId?: SceneId, sceneRowRunFromHereIntent = false): void {
     const schedule = this.playbackTimeline;
     const now = Date.now();
     this.runtime = {
@@ -353,8 +371,27 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
+    this.streamPlayReferenceSceneId = referenceSceneId;
+    this.streamPlaybackAnchorMs = timeMs;
+    this.streamPlayUsedSceneRowIntent = sceneRowRunFromHereIntent;
+    this.scheduleConsumedSceneIds.clear();
+    const stream = this.playbackStream;
+    const refIdx = referenceSceneId !== undefined ? stream.sceneOrder.indexOf(referenceSceneId) : -1;
+    if (refIdx >= 0) {
+      for (let i = 0; i < refIdx; i += 1) {
+        const id = stream.sceneOrder[i];
+        if (stream.scenes[id]?.disabled) {
+          continue;
+        }
+        const e = schedule.entries[id];
+        if (e?.endMs !== undefined && (sceneRowRunFromHereIntent ? e.endMs < timeMs : e.endMs <= timeMs)) {
+          this.scheduleConsumedSceneIds.add(id);
+        }
+      }
+    }
     this.recomputeRuntime();
     this.startTicking();
   }
@@ -401,8 +438,19 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    this.streamPlayReferenceSceneId = undefined;
+    this.streamPlaybackAnchorMs = undefined;
+    this.scheduleConsumedSceneIds.clear();
+    this.streamPlayUsedSceneRowIntent = false;
+    this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
+  }
+
+  private clearControlSceneOverrides(): void {
+    this.controlPausedSceneIds.clear();
+    this.controlStoppedSceneIds.clear();
+    this.controlEffectRevision += 1;
   }
 
   private seek(timeMs: number): void {
@@ -432,12 +480,14 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    this.clearControlSceneOverrides();
     for (const sceneId of this.playbackStream.sceneOrder) {
       const scene = this.playbackStream.scenes[sceneId];
       if (scene?.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < nextMs) {
         this.skippedAtTimecodeSceneIds.add(sceneId);
       }
     }
+    this.refreshScheduleConsumedIdsAfterSeek(nextMs);
     this.recomputeRuntime();
   }
 
@@ -467,6 +517,11 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    this.streamPlayReferenceSceneId = undefined;
+    this.streamPlaybackAnchorMs = undefined;
+    this.scheduleConsumedSceneIds.clear();
+    this.streamPlayUsedSceneRowIntent = false;
+    this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
     this.recomputeRuntime();
@@ -572,7 +627,124 @@ export class StreamEngine extends EventEmitter {
     return sceneStates;
   }
 
-  private recomputeRuntime(): void {
+  private refreshScheduleConsumedIdsAfterSeek(streamMs: number): void {
+    this.scheduleConsumedSceneIds.clear();
+    const stream = this.playbackStream;
+    const schedule = this.playbackTimeline;
+    for (const id of stream.sceneOrder) {
+      if (stream.scenes[id]?.disabled) {
+        continue;
+      }
+      const e = schedule.entries[id];
+      if (e?.endMs !== undefined && e.endMs < streamMs) {
+        this.scheduleConsumedSceneIds.add(id);
+      }
+    }
+  }
+
+  /** Whether a manual row should use timeline entry times vs waiting for scene-row / flow-card. */
+  private manualSceneSchedulePlaybackActive(
+    sceneId: SceneId,
+    schedule: CalculatedStreamTimeline,
+    stream: PersistedStreamConfig,
+  ): boolean {
+    const scene = stream.scenes[sceneId];
+    const ent = schedule.entries[sceneId];
+    if (!scene || scene.disabled || scene.trigger.type !== 'manual') {
+      return false;
+    }
+    if (this.scheduleConsumedSceneIds.has(sceneId)) {
+      return true;
+    }
+    if (sceneId === this.streamPlayReferenceSceneId) {
+      return true;
+    }
+    const ref = this.streamPlayReferenceSceneId;
+    const anchor = this.streamPlaybackAnchorMs;
+    if (ref !== undefined && anchor !== undefined && ent?.startMs !== undefined && ent.endMs !== undefined) {
+      const refIdx = stream.sceneOrder.indexOf(ref);
+      const sIdx = stream.sceneOrder.indexOf(sceneId);
+      if (refIdx >= 0 && sIdx >= 0 && sIdx < refIdx) {
+        if (this.streamPlayUsedSceneRowIntent) {
+          if (anchor > ent.startMs && anchor < ent.endMs) {
+            return true;
+          }
+        } else if (ent.startMs <= anchor) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private predEffectiveStartMs(
+    predId: SceneId,
+    sceneStates: Record<SceneId, SceneRuntimeState>,
+    schedule: CalculatedStreamTimeline,
+    stream: PersistedStreamConfig,
+  ): number | undefined {
+    const pred = stream.scenes[predId];
+    const ent = schedule.entries[predId];
+    if (!pred || pred.disabled || !ent) {
+      return undefined;
+    }
+    const mo = this.manualSceneStartOverrides.get(predId);
+    if (mo !== undefined) {
+      return mo;
+    }
+    const st = sceneStates[predId];
+    if (st?.status === 'running' || st?.status === 'paused' || st?.status === 'complete') {
+      if (st.scheduledStartMs !== undefined) {
+        return st.scheduledStartMs;
+      }
+    }
+    if (pred.trigger.type === 'manual') {
+      if (!this.manualSceneSchedulePlaybackActive(predId, schedule, stream)) {
+        return undefined;
+      }
+      return ent.startMs;
+    }
+    if (st?.scheduledStartMs !== undefined) {
+      return st.scheduledStartMs;
+    }
+    return ent.startMs;
+  }
+
+  private predEffectiveEndMs(
+    predId: SceneId,
+    sceneStates: Record<SceneId, SceneRuntimeState>,
+    schedule: CalculatedStreamTimeline,
+    stream: PersistedStreamConfig,
+  ): number | undefined {
+    const pred = stream.scenes[predId];
+    const ent = schedule.entries[predId];
+    if (!pred || pred.disabled || !ent) {
+      return undefined;
+    }
+    const mo = this.manualSceneStartOverrides.get(predId);
+    if (mo !== undefined && ent.durationMs !== undefined) {
+      return mo + ent.durationMs;
+    }
+    const st = sceneStates[predId];
+    if (st?.status === 'running' || st?.status === 'paused') {
+      const s = st.scheduledStartMs;
+      if (s !== undefined && ent.durationMs !== undefined) {
+        return s + ent.durationMs;
+      }
+    }
+    if (st?.status === 'complete') {
+      return st.endedAtStreamMs ?? ent.endMs;
+    }
+    if (pred.trigger.type === 'manual' && mo === undefined) {
+      if (!this.manualSceneSchedulePlaybackActive(predId, schedule, stream)) {
+        return undefined;
+      }
+      return ent.endMs;
+    }
+    return ent.endMs;
+  }
+
+  private recomputeRuntime(depth = 0): void {
     if (!this.runtime) {
       return;
     }
@@ -592,6 +764,17 @@ export class StreamEngine extends EventEmitter {
       const entry = schedule.entries[sceneId];
       if (!scene || scene.disabled) {
         sceneStates[sceneId] = { sceneId, status: 'disabled' };
+        continue;
+      }
+      if (this.controlStoppedSceneIds.has(sceneId)) {
+        sceneStates[sceneId] = {
+          sceneId,
+          status: 'complete',
+          scheduledStartMs: entry?.startMs,
+          startedAtStreamMs: this.manualSceneStartOverrides.get(sceneId) ?? entry?.startMs,
+          endedAtStreamMs: currentMs,
+          progress: 1,
+        };
         continue;
       }
       if (this.skippedAtTimecodeSceneIds.has(sceneId)) {
@@ -614,11 +797,82 @@ export class StreamEngine extends EventEmitter {
         continue;
       }
       const manualStart = this.manualSceneStartOverrides.get(sceneId);
-      const start = manualStart ?? entry?.startMs;
-      const end = manualStart !== undefined && entry?.durationMs !== undefined ? manualStart + entry.durationMs : entry?.endMs;
       const previous = this.runtime.sceneStates[sceneId];
+
+      let start: number | undefined;
+      let end: number | undefined;
+      if (manualStart !== undefined) {
+        start = manualStart;
+        end = entry?.durationMs !== undefined ? manualStart + entry.durationMs : undefined;
+      } else if (scene.trigger.type === 'manual') {
+        if (this.manualSceneSchedulePlaybackActive(sceneId, schedule, stream)) {
+          start = entry?.startMs;
+          end = entry?.endMs;
+        } else {
+          sceneStates[sceneId] = {
+            sceneId,
+            status: 'ready',
+            scheduledStartMs: entry?.startMs,
+            startedAtStreamMs: previous?.startedAtStreamMs,
+            endedAtStreamMs: previous?.endedAtStreamMs,
+            progress: undefined,
+            error: previous?.error,
+          };
+          continue;
+        }
+      } else if (scene.trigger.type === 'at-timecode') {
+        start = entry?.startMs;
+        end = entry?.endMs;
+      } else {
+        const trig = scene.trigger;
+        if (trig.type === 'simultaneous-start') {
+          const pred = resolveFollowsSceneId(stream, sceneId, trig);
+          if (pred) {
+            start = this.predEffectiveStartMs(pred, sceneStates, schedule, stream);
+            if (start !== undefined && entry?.durationMs !== undefined) {
+              end = start + entry.durationMs;
+            }
+          }
+        } else if (trig.type === 'time-offset') {
+          const pred = resolveFollowsSceneId(stream, sceneId, trig);
+          if (pred) {
+            const ps = this.predEffectiveStartMs(pred, sceneStates, schedule, stream);
+            if (ps !== undefined) {
+              start = ps + trig.offsetMs;
+              if (entry?.durationMs !== undefined) {
+                end = start + entry.durationMs;
+              }
+            }
+          }
+        } else if (trig.type === 'follow-end') {
+          const pred = resolveFollowsSceneId(stream, sceneId, trig);
+          if (pred) {
+            start = this.predEffectiveEndMs(pred, sceneStates, schedule, stream);
+            if (start !== undefined && entry?.durationMs !== undefined) {
+              end = start + entry.durationMs;
+            }
+          }
+        } else {
+          start = entry?.startMs;
+          end = entry?.endMs;
+        }
+      }
+
       let status: SceneRuntimeState['status'] = 'ready';
       let progress: number | undefined;
+      const shouldDispatchControlCues =
+        this.runtime.status === 'running' &&
+        start !== undefined &&
+        currentMs >= start &&
+        (end === undefined || currentMs <= end || (manualStart !== undefined && end === start));
+      if (shouldDispatchControlCues) {
+        const beforeControlRevision = this.controlEffectRevision;
+        this.dispatchControlSubCues(scene, start!, currentMs);
+        if (this.controlEffectRevision !== beforeControlRevision && depth < 5) {
+          this.recomputeRuntime(depth + 1);
+          return;
+        }
+      }
       if (start === undefined) {
         status = scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < currentMs ? 'skipped' : 'ready';
       } else if (currentMs < start) {
@@ -635,6 +889,8 @@ export class StreamEngine extends EventEmitter {
       } else if (end !== undefined && currentMs >= end) {
         status = 'complete';
         progress = 1;
+      } else if (this.controlPausedSceneIds.has(sceneId)) {
+        status = 'paused';
       } else if (this.runtime.status === 'paused') {
         status = 'paused';
       } else {
@@ -643,9 +899,6 @@ export class StreamEngine extends EventEmitter {
       if ((status === 'running' || status === 'paused') && start !== undefined) {
         progress = entry.durationMs && entry.durationMs > 0 ? Math.min(1, Math.max(0, (currentMs - start) / entry.durationMs)) : undefined;
         this.collectActiveSubCues(scene, start, currentMs, activeAudio, activeVisual);
-        if (status === 'running') {
-          this.dispatchControlSubCues(scene, start, currentMs);
-        }
       }
       sceneStates[sceneId] = {
         sceneId,
@@ -879,24 +1132,116 @@ export class StreamEngine extends EventEmitter {
   private applyControlSubCue(sub: PersistedControlSubCueConfig): void {
     const action = sub.action;
     if (action.type === 'set-global-audio-muted') {
-      this.director.updateGlobalState({ globalAudioMuted: action.muted });
+      this.director.updateGlobalState({
+        globalAudioMuted: action.muted,
+        globalAudioMuteFadeOverrideSeconds: this.fadeMsToSeconds(this.globalControlFadeMs(action.muted, action)),
+      });
     } else if (action.type === 'set-global-display-blackout') {
-      this.director.updateGlobalState({ globalDisplayBlackout: action.blackout });
+      this.director.updateGlobalState({
+        globalDisplayBlackout: action.blackout,
+        globalDisplayBlackoutFadeOverrideSeconds: this.fadeMsToSeconds(this.globalControlFadeMs(action.blackout, action)),
+      });
+    } else if (action.type === 'play-scene') {
+      this.playSceneByControl(action.sceneId);
     } else if (action.type === 'pause-scene') {
-      const st = this.runtime?.sceneStates[action.sceneId];
-      if (st?.status === 'running') {
-        st.status = 'paused';
-      }
+      this.pauseSceneByControl(action.sceneId);
     } else if (action.type === 'resume-scene') {
-      const st = this.runtime?.sceneStates[action.sceneId];
-      if (st?.status === 'paused') {
-        st.status = 'running';
-      }
+      this.resumeSceneByControl(action.sceneId);
     } else if (action.type === 'stop-scene') {
-      const st = this.runtime?.sceneStates[action.sceneId];
-      if (st) {
-        st.status = 'complete';
-        st.endedAtStreamMs = this.getRuntimeStreamMs();
+      this.stopSceneByControl(action.sceneId, action.fadeOutMs);
+    }
+  }
+
+  private fadeMsToSeconds(ms: number | undefined): number | undefined {
+    return ms === undefined ? undefined : Math.max(0, ms) / 1000;
+  }
+
+  private globalControlFadeMs(
+    enabling: boolean,
+    action:
+      | Extract<PersistedControlSubCueConfig['action'], { type: 'set-global-audio-muted' }>
+      | Extract<PersistedControlSubCueConfig['action'], { type: 'set-global-display-blackout' }>,
+  ): number | undefined {
+    return enabling ? action.fadeOutMs ?? action.fadeMs : action.fadeInMs ?? action.fadeMs;
+  }
+
+  private canControlTargetScene(sceneId: SceneId): boolean {
+    const scene = this.playbackStream.scenes[sceneId];
+    if (!scene || scene.disabled) {
+      return false;
+    }
+    const status = this.runtime?.sceneStates[sceneId]?.status;
+    return status !== 'disabled' && status !== 'preloading' && status !== 'failed';
+  }
+
+  private playSceneByControl(sceneId: SceneId): void {
+    if (!this.runtime || !this.canControlTargetScene(sceneId)) {
+      return;
+    }
+    const currentMs = this.getRuntimeStreamMs();
+    this.manualSceneStartOverrides.set(sceneId, currentMs);
+    this.controlStoppedSceneIds.delete(sceneId);
+    this.controlPausedSceneIds.delete(sceneId);
+    this.manuallyCompletedSceneIds.delete(sceneId);
+    this.skippedAtTimecodeSceneIds.delete(sceneId);
+    this.clearDispatchedControlSubCuesForScene(sceneId);
+    this.runtime.cursorSceneId = sceneId;
+    this.controlEffectRevision += 1;
+  }
+
+  private pauseSceneByControl(sceneId: SceneId): void {
+    if (!this.runtime || !this.canControlTargetScene(sceneId) || this.controlStoppedSceneIds.has(sceneId)) {
+      return;
+    }
+    this.controlPausedSceneIds.add(sceneId);
+    this.controlEffectRevision += 1;
+  }
+
+  private resumeSceneByControl(sceneId: SceneId): void {
+    if (!this.runtime || !this.canControlTargetScene(sceneId)) {
+      return;
+    }
+    if (this.controlPausedSceneIds.delete(sceneId)) {
+      this.controlEffectRevision += 1;
+    }
+  }
+
+  private stopSceneByControl(sceneId: SceneId, fadeOutMs: number | undefined): void {
+    if (!this.runtime || !this.canControlTargetScene(sceneId)) {
+      return;
+    }
+    this.createOrphansForStoppedScene(sceneId, fadeOutMs);
+    this.controlStoppedSceneIds.add(sceneId);
+    this.controlPausedSceneIds.delete(sceneId);
+    this.manualSceneStartOverrides.delete(sceneId);
+    this.controlEffectRevision += 1;
+  }
+
+  private clearDispatchedControlSubCuesForScene(sceneId: SceneId): void {
+    const prefix = `${sceneId}:`;
+    for (const key of [...this.dispatchedControlSubCues]) {
+      if (key.startsWith(prefix)) {
+        this.dispatchedControlSubCues.delete(key);
+      }
+    }
+  }
+
+  private createOrphansForStoppedScene(sceneId: SceneId, fadeOutMs: number | undefined): void {
+    if (!this.runtime || fadeOutMs === undefined || fadeOutMs <= 0) {
+      return;
+    }
+    const fadeOutDurationMs = Math.max(0, fadeOutMs);
+    const fadeOutStartedWallTimeMs = Date.now();
+    const activeAudio = this.runtime.activeAudioSubCues?.filter((cue) => cue.sceneId === sceneId && !cue.orphaned) ?? [];
+    const activeVisual = this.runtime.activeVisualSubCues?.filter((cue) => cue.sceneId === sceneId && !cue.orphaned) ?? [];
+    for (const cue of activeAudio) {
+      if (!this.orphanedAudioSubCues.some((orphan) => this.audioCueKey(orphan) === this.audioCueKey(cue))) {
+        this.orphanedAudioSubCues.push({ ...cue, orphaned: true, fadeOutStartedWallTimeMs, fadeOutDurationMs });
+      }
+    }
+    for (const cue of activeVisual) {
+      if (!this.orphanedVisualSubCues.some((orphan) => this.visualCueKey(orphan) === this.visualCueKey(cue))) {
+        this.orphanedVisualSubCues.push({ ...cue, orphaned: true, fadeOutStartedWallTimeMs, fadeOutDurationMs });
       }
     }
   }

@@ -55,6 +55,8 @@ function persistVisualPoolLayout(layout: VisualPoolLayout): void {
 
 export type MediaPoolController = {
   createRenderSignature: (state: DirectorState) => string;
+  /** Tab/search/sort/layout/live-preview chrome only — for stream surface routing; avoids asset-metadata churn. */
+  createStreamSurfaceShellSignature: () => string;
   render: (state: DirectorState) => void;
   syncPoolSelectionHighlight: (state: DirectorState) => void;
   selectEntityPoolTab: (entity: SelectedEntity) => void;
@@ -206,6 +208,11 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
 
   function createRenderSignature(state: DirectorState): string {
     return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}:${liveGridPreviewEnabled ? '1' : '0'}`;
+  }
+
+  /** For Stream workspace shell routing only — excludes per-visual/audio churn so pool metadata does not rebuild the scene list. */
+  function createStreamSurfaceShellSignature(): string {
+    return `${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}:${liveGridPreviewEnabled ? '1' : '0'}`;
   }
 
   function createVisualRow(visual: VisualState): HTMLElement {
@@ -1007,6 +1014,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
 
   return {
     createRenderSignature,
+    createStreamSurfaceShellSignature,
     render,
     syncPoolSelectionHighlight,
     selectEntityPoolTab,

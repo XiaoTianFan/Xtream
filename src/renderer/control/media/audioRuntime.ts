@@ -295,7 +295,7 @@ function syncGlobalMuteGains(state: DirectorState): void {
   }
   lastGlobalAudioMuted = state.globalAudioMuted;
   const target = state.globalAudioMuted ? 0 : 1;
-  const dur = Math.max(0, state.globalAudioMuteFadeOutSeconds ?? 0);
+  const dur = Math.max(0, state.globalAudioMuteFadeOverrideSeconds ?? state.globalAudioMuteFadeOutSeconds ?? 0);
   for (const runtime of outputRuntimes.values()) {
     const g = runtime.globalMuteGain.gain;
     const t0 = runtime.context.currentTime;

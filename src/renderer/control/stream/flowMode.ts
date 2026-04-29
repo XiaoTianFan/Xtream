@@ -9,6 +9,7 @@ export type StreamFlowModeContext = {
   setBottomTab: (tab: BottomTab) => void;
   clearDetailPane: () => void;
   requestRender: () => void;
+  refreshSceneSelectionUi: () => void;
 };
 
 export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): HTMLElement {
@@ -22,6 +23,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     const card = document.createElement('button');
     card.type = 'button';
     card.className = `stream-flow-card ${sceneId === ctx.selectedSceneId ? 'selected' : ''}`;
+    card.dataset.sceneId = sceneId;
     card.style.left = `${scene.flow?.x ?? 32 + index * 220}px`;
     card.style.top = `${scene.flow?.y ?? 42 + (index % 2) * 110}px`;
     card.style.width = `${scene.flow?.width ?? 180}px`;
@@ -38,7 +40,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
       ctx.setSelectedSceneId(sceneId);
       ctx.setBottomTab('scene');
       ctx.clearDetailPane();
-      ctx.requestRender();
+      ctx.refreshSceneSelectionUi();
     });
     flow.append(card);
   });

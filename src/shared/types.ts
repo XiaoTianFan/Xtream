@@ -272,6 +272,10 @@ export type DirectorState = {
   globalAudioMuteFadeOutSeconds: number;
   /** Seconds for display / preview blackout opacity transition (0 = instant). */
   globalDisplayBlackoutFadeOutSeconds: number;
+  /** Runtime-only fade override for the current global audio mute transition. */
+  globalAudioMuteFadeOverrideSeconds?: number;
+  /** Runtime-only fade override for the current global display blackout transition. */
+  globalDisplayBlackoutFadeOverrideSeconds?: number;
   /**
    * Max redraw rate for control-window display preview canvases (file video → canvas path), app-controlled.
    * Typical range 1–60; default when unset is 15.
@@ -488,6 +492,7 @@ export type PersistedControlSubCueConfig = {
   startOffsetMs?: number;
   durationOverrideMs?: number;
   action:
+    | { type: 'play-scene'; sceneId: SceneId }
     | { type: 'stop-scene'; sceneId: SceneId; fadeOutMs?: number }
     | { type: 'pause-scene'; sceneId: SceneId }
     | { type: 'resume-scene'; sceneId: SceneId }
@@ -500,8 +505,8 @@ export type PersistedControlSubCueConfig = {
       }
     | { type: 'set-audio-subcue-pan'; subCueRef: SubCueRef; targetPan: number; durationMs?: number }
     | { type: 'stop-subcue'; subCueRef: SubCueRef; fadeOutMs?: number }
-    | { type: 'set-global-audio-muted'; muted: boolean; fadeMs?: number }
-    | { type: 'set-global-display-blackout'; blackout: boolean; fadeMs?: number };
+    | { type: 'set-global-audio-muted'; muted: boolean; fadeInMs?: number; fadeOutMs?: number; fadeMs?: number }
+    | { type: 'set-global-display-blackout'; blackout: boolean; fadeInMs?: number; fadeOutMs?: number; fadeMs?: number };
 };
 
 export type PersistedSubCueConfig = PersistedAudioSubCueConfig | PersistedVisualSubCueConfig | PersistedControlSubCueConfig;
@@ -853,7 +858,16 @@ export type AudioSourceCreateResult = AudioSourceState | undefined;
 export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
-export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
+export type GlobalStateUpdate = Partial<
+  Pick<
+    DirectorState,
+    | 'globalAudioMuted'
+    | 'globalDisplayBlackout'
+    | 'globalAudioMuteFadeOverrideSeconds'
+    | 'globalDisplayBlackoutFadeOverrideSeconds'
+    | 'performanceMode'
+  >
+>;
 /** Fade curves stored in `.xtream-show.json` — not app-wide prefs. */
 export type ShowProjectFileSettingsUpdate = Partial<Pick<DirectorState, 'globalAudioMuteFadeOutSeconds' | 'globalDisplayBlackoutFadeOutSeconds'>>;
 export type ShowSettingsUpdate = ShowProjectFileSettingsUpdate;

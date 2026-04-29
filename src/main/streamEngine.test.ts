@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Director } from './director';
 import { StreamEngine } from './streamEngine';
 import { getDefaultStreamPersistence } from '../shared/streamWorkspace';
-import type { DirectorState } from '../shared/types';
+import type { DirectorState, SceneId } from '../shared/types';
 
 function createDirector(state: Partial<DirectorState> = {}): Director {
   return {
@@ -78,6 +78,8 @@ describe('StreamEngine', () => {
   });
 
   it('allows Stream seek when Stream already owns active playback', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(50_000);
     let patchPlaying = false;
     const director = {
       ...createDirector({
@@ -99,6 +101,7 @@ describe('StreamEngine', () => {
 
     expect(state.runtime?.currentStreamMs).toBe(7000);
     expect(state.runtime?.offsetStreamMs).toBe(7000);
+    vi.useRealTimers();
   });
 
   it('back-to-first skips a disabled leading scene', () => {
@@ -800,6 +803,126 @@ describe('StreamEngine', () => {
     expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.visualId).sort()).toEqual(['v1', 'v2']);
   });
 
+  it('dispatches a zero-duration manual control scene before completing it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['ctl'],
+      subCues: {
+        ctl: { id: 'ctl', kind: 'control', action: { type: 'stop-scene', sceneId: 'scene-1', fadeOutMs: 1000 } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1', source: 'global' });
+    vi.setSystemTime(2_000);
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'scene-2', source: 'scene-row' });
+
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('complete');
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(state.runtime?.activeVisualSubCues).toEqual([
+      expect.objectContaining({ sceneId: 'scene-1', visualId: 'v1', orphaned: true, fadeOutDurationMs: 1000 }),
+    ]);
+  });
+
+  it('play-scene control restarts a completed scene from its beginning', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'follow-end', followsSceneId: 'scene-1' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['ctl'],
+      subCues: {
+        ctl: { id: 'ctl', kind: 'control', action: { type: 'play-scene', sceneId: 'scene-1' } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1', source: 'global' });
+
+    const state = engine.applyTransport({ type: 'seek', timeMs: 2000 });
+
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-1']?.startedAtStreamMs).toBe(2000);
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'scene-1', streamStartMs: 2000 }]);
+  });
+
+  it('global control cues pass directional fade overrides to Director', () => {
+    const director = createDirector();
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['mute', 'unmute', 'blackout', 'restore'];
+    stream.scenes['scene-1'].subCues = {
+      mute: { id: 'mute', kind: 'control', action: { type: 'set-global-audio-muted', muted: true, fadeOutMs: 500 } },
+      unmute: { id: 'unmute', kind: 'control', action: { type: 'set-global-audio-muted', muted: false, fadeInMs: 750 } },
+      blackout: { id: 'blackout', kind: 'control', action: { type: 'set-global-display-blackout', blackout: true, fadeOutMs: 250 } },
+      restore: { id: 'restore', kind: 'control', action: { type: 'set-global-display-blackout', blackout: false, fadeInMs: 125 } },
+    };
+    engine.loadFromShow({ stream });
+
+    engine.applyTransport({ type: 'play' });
+
+    expect(director.updateGlobalState).toHaveBeenCalledWith({
+      globalAudioMuted: true,
+      globalAudioMuteFadeOverrideSeconds: 0.5,
+    });
+    expect(director.updateGlobalState).toHaveBeenCalledWith({
+      globalAudioMuted: false,
+      globalAudioMuteFadeOverrideSeconds: 0.75,
+    });
+    expect(director.updateGlobalState).toHaveBeenCalledWith({
+      globalDisplayBlackout: true,
+      globalDisplayBlackoutFadeOverrideSeconds: 0.25,
+    });
+    expect(director.updateGlobalState).toHaveBeenCalledWith({
+      globalDisplayBlackout: false,
+      globalDisplayBlackoutFadeOverrideSeconds: 0.125,
+    });
+  });
+
+  it('global control cues keep fadeMs as a backward-compatible fallback', () => {
+    const director = createDirector();
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['mute'];
+    stream.scenes['scene-1'].subCues = {
+      mute: { id: 'mute', kind: 'control', action: { type: 'set-global-audio-muted', muted: true, fadeMs: 500 } },
+    };
+    engine.loadFromShow({ stream });
+
+    engine.applyTransport({ type: 'play' });
+
+    expect(director.updateGlobalState).toHaveBeenCalledWith({
+      globalAudioMuted: true,
+      globalAudioMuteFadeOverrideSeconds: 0.5,
+    });
+  });
+
   it('keeps removed running content as a fade-out orphan after valid edit promotion', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
@@ -929,5 +1052,80 @@ describe('StreamEngine', () => {
 
     expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'scene-1', subCueId: 'vis', playbackRate: 1.5 }]);
     expect(state.runtime?.activeAudioSubCues).toMatchObject([{ sceneId: 'scene-1', subCueId: 'aud', outputId: 'output-main', levelDb: -6 }]);
+  });
+
+  it('follow-end tracks a manual predecessor’s actual end when that predecessor is started before its stacked schedule', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const director = createDirector({
+      visuals: {
+        vx: { id: 'vx', durationSeconds: 10 },
+        va: { id: 'va', durationSeconds: 2 },
+        vb: { id: 'vb', durationSeconds: 2 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    const base = (id: SceneId, vid: string) => ({
+      id,
+      trigger: { type: 'manual' as const },
+      loop: { enabled: false as const },
+      preload: { enabled: false as const },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual' as const, visualId: vid, targets: [{ displayId: 'd1' }] } },
+    });
+    stream.sceneOrder = ['sx', 'sa', 'sb'];
+    stream.scenes = {
+      sx: { ...base('sx', 'vx') },
+      sa: { ...base('sa', 'va') },
+      sb: {
+        id: 'sb',
+        trigger: { type: 'follow-end', followsSceneId: 'sa' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'vb', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'sx', source: 'global' });
+    vi.setSystemTime(11_000);
+    engine.applyTransport({ type: 'play', sceneId: 'sa', source: 'scene-row' });
+    vi.setSystemTime(13_100);
+    engine.applyTransport({ type: 'back-to-first' });
+    const state = engine.getPublicState();
+    expect(state.runtime?.sceneStates['sa']?.status).toBe('complete');
+    expect(state.runtime?.sceneStates['sb']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['sb']?.scheduledStartMs).toBe(3000);
+  });
+
+  it('scene-row run from here on a stacked manual does not complete earlier manuals or auto-start the next', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes = Object.fromEntries(
+      ['scene-1', 'scene-2', 'scene-3'].map((id) => [
+        id,
+        {
+          id,
+          title: id,
+          trigger: { type: 'manual' as const },
+          loop: { enabled: false },
+          preload: { enabled: false },
+          subCueOrder: ['vis'],
+          subCues: { vis: { id: 'vis', kind: 'visual' as const, visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+        },
+      ]),
+    ) as typeof stream.scenes;
+    engine.loadFromShow({ stream });
+    const state = engine.applyTransport({ type: 'play', sceneId: 'scene-2', source: 'scene-row' });
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('ready');
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-3']?.status).toBe('ready');
   });
 });

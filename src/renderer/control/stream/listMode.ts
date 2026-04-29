@@ -108,6 +108,8 @@ export type StreamListModeContext = {
   toggleExpandedScene: (id: SceneId) => void;
   applySceneReorder: (draggedId: SceneId, insertBeforeId: SceneId | undefined) => void;
   requestRender: () => void;
+  /** Updates header, bottom pane, and list/flow selection chrome without rebuilding the scene list. */
+  refreshSceneSelectionUi: () => void;
 };
 
 export function scenesExplicitlyFollowing(stream: PersistedStreamConfig | undefined, predecessorId: SceneId): SceneId[] {
@@ -286,7 +288,7 @@ function createSceneRowWrap(
     ctx.setSelectedSceneId(scene.id);
     ctx.setBottomTab('scene');
     ctx.clearDetailPane();
-    ctx.requestRender();
+    ctx.refreshSceneSelectionUi();
   });
 
   const expanded = ctx.expandedListSceneIds.has(scene.id);
@@ -349,7 +351,7 @@ function createSceneRowWrap(
     ctx.setSelectedSceneId(scene.id);
     ctx.setBottomTab('scene');
     ctx.clearDetailPane();
-    ctx.requestRender();
+    ctx.refreshSceneSelectionUi();
     void window.xtream.stream.transport({ type: 'play', sceneId: scene.id, source: 'scene-row' });
   });
   decorateIconButton(runHere, 'Play', 'Run from here');
