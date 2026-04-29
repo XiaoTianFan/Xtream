@@ -104,3 +104,25 @@ button.config-log-clear {
 .config-tab-panel[hidden] {
   display: none !important;
 }
+
+/* Config Overview: left column = Runtime + Patch Topology stacked; right = App configuration */
+.config-overview-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 22rem);
+  align-items: start;
+  gap: var(--gutter);
+  width: 100%;
+}
+
+.config-overview-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .config-overview-columns {
+    grid-template-columns: 1fr;
+  }
+}

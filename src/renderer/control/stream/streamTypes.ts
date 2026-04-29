@@ -41,6 +41,7 @@ export type StreamSurfaceOptions = {
 export type StreamSurfaceController = SurfaceController & {
   applyOutputMeterReport: (report: OutputMeterReport) => void;
   applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => void;
+  tickMixerBallistics: () => void;
   syncPreviewElements: (presentation: DirectorState) => void;
   exportProjectUiSnapshot: () => ControlProjectUiStreamState;
   applyImportedProjectUi: (

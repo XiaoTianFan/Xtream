@@ -917,6 +917,12 @@ export type LaunchShowData = {
   };
 };
 
+/** App-wide control preferences (userData JSON, not tied to a show file). */
+export type AppControlSettingsV1 = {
+  v: 1;
+  performanceMode: boolean;
+};
+
 /** Per-project persisted control-shell UI (persisted beside app data, keyed by show file path). */
 export type ControlSurfaceId = 'patch' | 'stream' | 'performance' | 'config';
 

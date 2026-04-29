@@ -799,6 +799,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
   }
 
+  function tickMixerBallistics(): void {
+    mixerPanel?.tickMeterBallistics(performance.now());
+  }
+
   return {
     id: 'stream',
     mount,
@@ -809,6 +813,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => {
       mixerPanel?.applyEngineSoloOutputIds(outputIds);
     },
+    tickMixerBallistics,
     syncPreviewElements: (presentation: DirectorState) => {
       syncPreviewElements(presentation);
     },

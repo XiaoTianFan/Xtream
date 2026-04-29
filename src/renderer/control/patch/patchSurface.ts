@@ -177,6 +177,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
 
   function tick(): void {
     header.tick();
+    mixerPanel.tickMeterBallistics(performance.now());
   }
 
   function selectEntity(entity: SelectedEntity): void {
@@ -230,9 +231,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     getSoloOutputCount: mixerPanel.getSoloOutputCount,
     clearSoloOutputs: () => {
       mixerPanel.setSoloOutputIds([]);
-    },
-    resetMetersFromOperator: () => {
-      mixerPanel.resetMeters(currentState);
     },
     syncPreviewElements: (presentation: DirectorState) => {
       syncPreviewElements(presentation);

@@ -15,6 +15,5 @@ export function installPatchIcons(): void {
   decorateIconButton(elements.liveGridPreviewToggleButton, 'Play', 'Live previews in grid');
   decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
   decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
-  decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');
   decorateIconButton(elements.expandMixerButton, 'Maximize2', 'Expand mixer');
 }

@@ -250,6 +250,21 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
   return wrapSurfaceGrid(exportCard, issueCard, displayCard, outputCard);
 }
 
+function wrapConfigOverviewPanels(
+  runtimeCard: HTMLElement,
+  topologyCard: HTMLElement,
+  appSettingsCard: HTMLElement,
+): HTMLElement {
+  const leftStack = document.createElement('div');
+  leftStack.className = 'config-overview-stack';
+  leftStack.append(runtimeCard, topologyCard);
+
+  const root = document.createElement('div');
+  root.className = 'config-overview-columns';
+  root.append(leftStack, appSettingsCard);
+  return root;
+}
+
 function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
   const summary = createSurfaceCard('Runtime');
   summary.append(
@@ -257,7 +272,6 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
     createDetailLine('Readiness', getLiveStateLabel(state)),
     createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
     createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
-    createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
   );
 
   const topology = createSurfaceCard('Patch Topology');
@@ -266,6 +280,27 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
     createDetailLine('Audio Sources', String(Object.keys(state.audioSources).length)),
     createDetailLine('Displays', String(Object.keys(state.displays).length)),
     createDetailLine('Virtual Outputs', String(Object.keys(state.outputs).length)),
+  );
+
+  const appConfiguration = createSurfaceCard('App configuration');
+  const perfToggle = document.createElement('button');
+  perfToggle.type = 'button';
+  perfToggle.className = 'secondary';
+  perfToggle.textContent = state.performanceMode ? 'Performance Mode On' : 'Performance Mode';
+  perfToggle.classList.toggle('active', state.performanceMode);
+  perfToggle.setAttribute('aria-pressed', String(state.performanceMode));
+  perfToggle.title = state.performanceMode
+    ? 'Performance mode disables control-window video previews and live meter sampling.'
+    : 'Disable control-window preview and meter workloads for weaker playback machines.';
+  perfToggle.addEventListener('click', async () => {
+    const live = options.getDirectorState();
+    options.renderState(
+      await window.xtream.director.updateGlobalState({ performanceMode: !live?.performanceMode }),
+    );
+  });
+  appConfiguration.append(
+    createHint('Stored on this machine for Xtream Control. Applies to every show project open on this app.'),
+    perfToggle,
   );
 
   const showProject = createSurfaceCard('Show project');
@@ -325,7 +360,7 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
 
   switch (tab) {
     case 'overview':
-      return wrapSurfaceGrid(summary, topology);
+      return wrapConfigOverviewPanels(summary, topology, appConfiguration);
     case 'project':
       return wrapSurfaceGrid(showProject, streamPlayback);
     case 'diagnostics':

@@ -13,6 +13,11 @@ import {
   METER_DISPLAY_FLOOR_DB,
 } from '../media/audioRuntime';
 import {
+  DEFAULT_METER_BALLISTICS,
+  smoothMeterDb,
+  STALE_METER_REPORT_MS,
+} from '../meters/meterBallistics';
+import {
   busDbToFaderSliderValue,
   faderMaxSteps,
   faderSliderMax,
@@ -42,6 +47,7 @@ export type MixerPanelController = {
   syncSelection: (selectedEntity: SelectedEntity | undefined) => void;
   syncOutputMeters: (state: DirectorState) => void;
   applyOutputMeterReport: (report: OutputMeterReport) => void;
+  tickMeterBallistics: (nowMs: number) => void;
   resetMeters: (state: DirectorState | undefined) => void;
   createOutputDetailMixerStrip: (output: VirtualOutputState, state: DirectorState) => HTMLElement;
   createOutputSourceControls: (output: VirtualOutputState, state: DirectorState) => HTMLElement;
@@ -66,9 +72,135 @@ type MixerPanelControllerOptions = {
 export function createMixerPanelController(elements: MixerPanelElements, options: MixerPanelControllerOptions): MixerPanelController {
   let soloOutputIds = new Set<VirtualOutputId>();
   const latestMeterReports = new Map<VirtualOutputId, OutputMeterReport>();
+  const smoothedLaneDb = new Map<string, number>();
+  const smoothedPeakDb = new Map<VirtualOutputId, number>();
+  let lastSmoothPerfMs: number | undefined;
   const meterLaneElementCache = new Map<string, Set<HTMLElement>>();
   const meterPeakElementCache = new Map<VirtualOutputId, Set<HTMLElement>>();
   const meterLaneSegmentsCache = new WeakMap<HTMLElement, HTMLElement[]>();
+
+  function resolveEffectiveTargets(report: OutputMeterReport, meteringState: DirectorState | undefined): OutputMeterReport {
+    const floor = METER_DISPLAY_FLOOR_DB;
+    const age = Date.now() - report.reportedAtWallTimeMs;
+    if (age <= STALE_METER_REPORT_MS || meteringState === undefined) {
+      return report;
+    }
+    if (meteringState.performanceMode !== true && meteringState.paused !== true) {
+      return report;
+    }
+    return {
+      ...report,
+      peakDb: floor,
+      lanes: report.lanes.map((l) => ({ ...l, db: floor, clipped: false })),
+    };
+  }
+
+  function pruneSmoothedState(state: DirectorState): void {
+    const meteringState = options.getMeteringState?.() ?? state;
+    const allowedLaneIds = new Set<string>();
+    for (const output of Object.values(state.outputs)) {
+      const lanes = deriveOutputMeterLanes(output, meteringState, latestMeterReports.get(output.id));
+      for (const lane of lanes) {
+        allowedLaneIds.add(lane.id);
+      }
+    }
+    for (const id of smoothedLaneDb.keys()) {
+      if (!allowedLaneIds.has(id)) {
+        smoothedLaneDb.delete(id);
+      }
+    }
+    const allowedOutputs = new Set(Object.keys(state.outputs));
+    for (const id of smoothedPeakDb.keys()) {
+      if (!allowedOutputs.has(id)) {
+        smoothedPeakDb.delete(id);
+      }
+    }
+  }
+
+  function paintMixerMeterUi(report: OutputMeterReport, lanes: MeterLaneState[], peakDb: number): void {
+    const outputId = report.outputId;
+    const matchedLaneElements = new Set<HTMLElement>();
+    for (const lane of lanes) {
+      const percent = meterLevelPercent(lane.db);
+      for (const laneElement of getCachedMeterLaneElements(lane.id)) {
+        matchedLaneElements.add(laneElement);
+        laneElement.style.setProperty('--meter-level', `${percent}%`);
+        laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+        laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
+        syncMeterLaneSegments(laneElement, percent);
+      }
+    }
+    const strip = elements.outputPanel.querySelector(`[data-output-strip="${outputId}"]`);
+    if (strip) {
+      const domLanes = Array.from(strip.querySelectorAll<HTMLElement>('[data-meter-lane]')).sort((a, b) => {
+        const ma = a.dataset.meterLane?.match(/:ch-(\d+)$/);
+        const mb = b.dataset.meterLane?.match(/:ch-(\d+)$/);
+        return (ma ? Number(ma[1]) : 0) - (mb ? Number(mb[1]) : 0);
+      });
+      const sortedReportLanes = [...lanes].sort((left, right) => left.channelIndex - right.channelIndex);
+      for (let i = 0; i < domLanes.length && i < sortedReportLanes.length; i += 1) {
+        const laneElement = domLanes[i];
+        if (matchedLaneElements.has(laneElement)) {
+          continue;
+        }
+        const lane = sortedReportLanes[i];
+        const percent = meterLevelPercent(lane.db);
+        laneElement.style.setProperty('--meter-level', `${percent}%`);
+        laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
+        laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
+        syncMeterLaneSegments(laneElement, percent);
+      }
+    }
+    for (const peak of getCachedMeterPeakElements(outputId)) {
+      peak.textContent = peakDb <= -60 ? '-inf' : `${peakDb.toFixed(1)}`;
+    }
+  }
+
+  function smoothStep(nowPerf: number): void {
+    const state = options.getState();
+    if (!state) {
+      return;
+    }
+
+    const deltaSec =
+      lastSmoothPerfMs === undefined ? 0 : Math.min(0.25, (nowPerf - lastSmoothPerfMs) / 1000);
+    lastSmoothPerfMs = nowPerf;
+
+    const meteringState = options.getMeteringState?.() ?? state;
+
+    for (const output of Object.values(state.outputs)) {
+      const rawReport = latestMeterReports.get(output.id);
+      if (!rawReport) {
+        continue;
+      }
+
+      const effective = resolveEffectiveTargets(rawReport, meteringState);
+      const sortedLanes = [...effective.lanes].sort((left, right) => left.channelIndex - right.channelIndex);
+
+      let prevPeak = smoothedPeakDb.get(output.id);
+      if (prevPeak === undefined) {
+        prevPeak = effective.peakDb;
+      }
+      const nextPeak = smoothMeterDb(prevPeak, effective.peakDb, deltaSec, DEFAULT_METER_BALLISTICS);
+      smoothedPeakDb.set(output.id, nextPeak);
+
+      const displayLanes: MeterLaneState[] = sortedLanes.map((lane) => {
+        let prev = smoothedLaneDb.get(lane.id);
+        if (prev === undefined) {
+          prev = lane.db;
+        }
+        const db = smoothMeterDb(prev, lane.db, deltaSec, DEFAULT_METER_BALLISTICS);
+        smoothedLaneDb.set(lane.id, db);
+        return {
+          ...lane,
+          db,
+          clipped: db >= METER_DISPLAY_CEIL_DB,
+        };
+      });
+
+      paintMixerMeterUi(rawReport, displayLanes, nextPeak);
+    }
+  }
 
   function createRenderSignature(state: DirectorState): string {
     return JSON.stringify({
@@ -140,6 +272,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
   }
 
   function renderOutputs(state: DirectorState): void {
+    pruneSmoothedState(state);
     const strips = Object.values(state.outputs).map((output) => createMixerStrip(output, state));
     elements.outputPanel.replaceChildren(...strips);
   }
@@ -151,64 +284,53 @@ export function createMixerPanelController(elements: MixerPanelElements, options
   }
 
   function syncOutputMeters(state: DirectorState): void {
+    const wallMs = Date.now();
     for (const output of Object.values(state.outputs)) {
-      applyOutputMeterReport({
+      latestMeterReports.set(output.id, {
         outputId: output.id,
         lanes: getOutputMeterLanes(output),
         peakDb: output.meterDb ?? -60,
-        reportedAtWallTimeMs: Date.now(),
+        reportedAtWallTimeMs: wallMs,
       });
     }
-  }
-
-  function resetMeters(state: DirectorState | undefined): void {
-    for (const output of Object.values(state?.outputs ?? {})) {
-      const lanes = getOutputMeterLanes(output).map((lane) => ({ ...lane, db: -60, clipped: false }));
-      applyOutputMeterReport({
-        outputId: output.id,
-        lanes,
-        peakDb: -60,
-        reportedAtWallTimeMs: Date.now(),
-      });
-    }
+    smoothStep(performance.now());
   }
 
   function applyOutputMeterReport(report: OutputMeterReport): void {
     latestMeterReports.set(report.outputId, report);
-    const matchedLaneElements = new Set<HTMLElement>();
-    for (const lane of report.lanes) {
-      const percent = meterLevelPercent(lane.db);
-      for (const laneElement of getCachedMeterLaneElements(lane.id)) {
-        matchedLaneElements.add(laneElement);
-        laneElement.style.setProperty('--meter-level', `${percent}%`);
-        laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
-        laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
-        syncMeterLaneSegments(laneElement, percent);
-      }
+    smoothStep(performance.now());
+  }
+
+  function tickMeterBallistics(nowMs: number): void {
+    smoothStep(nowMs);
+  }
+
+  function resetMeters(state: DirectorState | undefined): void {
+    lastSmoothPerfMs = undefined;
+    smoothedLaneDb.clear();
+    smoothedPeakDb.clear();
+    if (!state) {
+      return;
     }
-    const strip = elements.outputPanel.querySelector(`[data-output-strip="${report.outputId}"]`);
-    if (strip) {
-      const domLanes = Array.from(strip.querySelectorAll<HTMLElement>('[data-meter-lane]')).sort((a, b) => {
-        const ma = a.dataset.meterLane?.match(/:ch-(\d+)$/);
-        const mb = b.dataset.meterLane?.match(/:ch-(\d+)$/);
-        return (ma ? Number(ma[1]) : 0) - (mb ? Number(mb[1]) : 0);
+    const meteringState = options.getMeteringState?.() ?? state;
+    const wallMs = Date.now();
+    for (const output of Object.values(state.outputs)) {
+      const lanes = deriveOutputMeterLanes(output, meteringState, undefined).map((lane) => ({
+        ...lane,
+        db: METER_DISPLAY_FLOOR_DB,
+        clipped: false,
+      }));
+      latestMeterReports.set(output.id, {
+        outputId: output.id,
+        lanes,
+        peakDb: METER_DISPLAY_FLOOR_DB,
+        reportedAtWallTimeMs: wallMs,
       });
-      const sortedReportLanes = [...report.lanes].sort((left, right) => left.channelIndex - right.channelIndex);
-      for (let i = 0; i < domLanes.length && i < sortedReportLanes.length; i += 1) {
-        const laneElement = domLanes[i];
-        if (matchedLaneElements.has(laneElement)) {
-          continue;
-        }
-        const lane = sortedReportLanes[i];
-        const percent = meterLevelPercent(lane.db);
-        laneElement.style.setProperty('--meter-level', `${percent}%`);
-        laneElement.dataset.state = lane.clipped ? 'clip' : lane.db >= -6 ? 'hot' : 'nominal';
-        laneElement.setAttribute('aria-label', `${lane.label} ${lane.db.toFixed(1)} dB`);
-        syncMeterLaneSegments(laneElement, percent);
+      for (const lane of lanes) {
+        smoothedLaneDb.set(lane.id, METER_DISPLAY_FLOOR_DB);
       }
-    }
-    for (const peak of getCachedMeterPeakElements(report.outputId)) {
-      peak.textContent = report.peakDb <= -60 ? '-inf' : `${report.peakDb.toFixed(1)}`;
+      smoothedPeakDb.set(output.id, METER_DISPLAY_FLOOR_DB);
+      paintMixerMeterUi(latestMeterReports.get(output.id)!, lanes, METER_DISPLAY_FLOOR_DB);
     }
   }
 
@@ -615,6 +737,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     syncSelection,
     syncOutputMeters,
     applyOutputMeterReport,
+    tickMeterBallistics,
     resetMeters,
     createOutputDetailMixerStrip,
     createOutputSourceControls,

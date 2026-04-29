@@ -92,6 +92,7 @@ async function loadDisplayMonitors(): Promise<void> {
 
 function tick(): void {
   patchSurface.tick();
+  streamSurface.tickMixerBallistics();
   animationFrame = window.requestAnimationFrame(tick);
 }
 
@@ -170,16 +171,13 @@ const globalOperatorFooter = createGlobalOperatorFooterController({
   elements: {
     globalAudioMuteButton: elements.globalAudioMuteButton,
     displayBlackoutButton: elements.displayBlackoutButton,
-    performanceModeButton: elements.performanceModeButton,
     clearSoloButton: elements.clearSoloButton,
-    resetMetersButton: elements.resetMetersButton,
     displayIdentifyFlashButton: elements.displayIdentifyFlashButton,
   },
   getState: () => currentState,
   renderState,
   getSoloOutputCount: () => patchSurface.getSoloOutputCount(),
   clearSoloOutputs: () => patchSurface.clearSoloOutputs(),
-  resetMetersRequested: () => patchSurface.resetMetersFromOperator(),
 });
 
 const surfaceRouter = createSurfaceRouter({

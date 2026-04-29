@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
+import { persistAppPerformanceMode, readAppControlSettings } from './appControlSettings';
 import { getAppIconPath } from './appIcon';
 import { Director } from './director';
 import { StreamEngine } from './streamEngine';
@@ -53,6 +54,7 @@ import type {
   ShowSettingsUpdate,
   ShowConfigOperationResult,
   ControlProjectUiStateV1,
+  GlobalStateUpdate,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
@@ -70,6 +72,11 @@ import { XTREAM_RUNTIME_VERSION } from '../shared/version';
 const director = new Director();
 const streamEngine = new StreamEngine(director);
 director.setStreamPlaybackGate(() => streamEngine.isStreamPlaybackActive());
+
+function applyAppPersistedDirectorGlobals(): void {
+  const settings = readAppControlSettings(app.getPath('userData'));
+  director.updateGlobalState({ performanceMode: settings.performanceMode });
+}
 
 let controlWindow: BrowserWindow | undefined;
 let audioWindow: BrowserWindow | undefined;
@@ -560,6 +567,7 @@ function restoreShowConfigFromDiskConfig(
   seg = Date.now();
 
   director.restoreShowConfig(config, mediaUrls);
+  applyAppPersistedDirectorGlobals();
   log('main_director_restore_done', Date.now() - seg);
   seg = Date.now();
 
@@ -631,6 +639,7 @@ async function createEmptyShowProject(configPath: string): Promise<void> {
   await ensureShowProjectStructure(currentShowConfigPath);
   displayRegistry?.closeAll();
   director.resetShow();
+  applyAppPersistedDirectorGlobals();
   streamEngine.resetToDefault();
   if (!displayRegistry) {
     throw new Error('Display registry is not initialized.');
@@ -905,7 +914,13 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('director:update-global-state', (_event, update) => director.updateGlobalState(update));
+  ipcMain.handle('director:update-global-state', (_event, update: GlobalStateUpdate) => {
+    const state = director.updateGlobalState(update);
+    if (update.performanceMode !== undefined) {
+      persistAppPerformanceMode(app.getPath('userData'), update.performanceMode);
+    }
+    return state;
+  });
 
   ipcMain.handle('visual:add', async () => {
     const items = await pickVisualFiles(['openFile', 'multiSelections']);
@@ -1422,6 +1437,7 @@ app.whenReady().then(() => {
 
   registerIpcHandlers();
   installCapturePermissionHandlers();
+  applyAppPersistedDirectorGlobals();
   director.on('state', (state) => broadcastDirectorState(state));
   streamEngine.on('state', (streamState) => broadcastStreamState(streamState));
 

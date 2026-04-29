@@ -20,8 +20,9 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="globalAudioMuteButton"');
     expect(controlHtml).toContain('id="displayBlackoutButton"');
     expect(controlHtml).toContain('id="displayIdentifyFlashButton"');
-    expect(controlHtml).toContain('id="resetMetersButton"');
+    expect(controlHtml).toContain('id="clearSoloButton"');
     expect(controlHtml).toContain('id="refreshOutputsButton"');
+    expect(controlHtml).not.toContain('id="performanceModeButton"');
   });
 
   it('places status-footer under surface mount after patch workspace, not inside patchSurface', () => {
