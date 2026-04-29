@@ -20,14 +20,13 @@ export function formatTriggerSummary(stream: PersistedStreamConfig, scene: Persi
   }
   const pred = resolveFollowsSceneId(stream, scene.id, t);
   const predLabel = pred ? stream.scenes[pred]?.title ?? pred : 'previous';
-  if (t.type === 'time-offset') {
-    return `+${(t.offsetMs / 1000).toFixed(2)}s · ${predLabel}`;
-  }
-  if (t.type === 'simultaneous-start') {
-    return `With start · ${predLabel}`;
+  if (t.type === 'follow-start') {
+    const d = t.delayMs ?? 0;
+    return d > 0 ? `+${(d / 1000).toFixed(2)}s after start · ${predLabel}` : `With start · ${predLabel}`;
   }
   if (t.type === 'follow-end') {
-    return `After end · ${predLabel}`;
+    const d = t.delayMs ?? 0;
+    return d > 0 ? `+${(d / 1000).toFixed(2)}s after end · ${predLabel}` : `After end · ${predLabel}`;
   }
   return 'Trigger';
 }

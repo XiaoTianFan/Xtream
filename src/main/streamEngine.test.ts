@@ -350,7 +350,7 @@ describe('StreamEngine', () => {
     expect(promoted.runtime?.activeVisualSubCues).toMatchObject([{ visualId: 'v2' }]);
   });
 
-  it('runs simultaneous, follow-end, time-offset, and at-timecode scenes from the schedule', () => {
+  it('runs follow-start, follow-end, delayed follow-start, and at-timecode scenes from the schedule', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
     });
@@ -371,9 +371,9 @@ describe('StreamEngine', () => {
         },
       ]),
     ) as typeof stream.scenes;
-    stream.scenes['scene-2'].trigger = { type: 'simultaneous-start', followsSceneId: 'scene-1' };
+    stream.scenes['scene-2'].trigger = { type: 'follow-start', followsSceneId: 'scene-1' };
     stream.scenes['scene-3'].trigger = { type: 'follow-end', followsSceneId: 'scene-1' };
-    stream.scenes['scene-4'].trigger = { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 2000 };
+    stream.scenes['scene-4'].trigger = { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 2000 };
     stream.scenes['scene-5'].trigger = { type: 'at-timecode', timecodeMs: 7000 };
     engine.loadFromShow({ stream });
 
@@ -432,7 +432,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 30_000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 30_000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -520,7 +520,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 30_000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 30_000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -565,7 +565,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 5000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -609,7 +609,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 5000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -652,7 +652,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 5000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -686,7 +686,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 5000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],
@@ -733,7 +733,7 @@ describe('StreamEngine', () => {
     };
     stream.scenes['scene-2'] = {
       id: 'scene-2',
-      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 30_000 },
+      trigger: { type: 'follow-start', followsSceneId: 'scene-1', delayMs: 30_000 },
       loop: { enabled: false },
       preload: { enabled: false },
       subCueOrder: ['vis'],

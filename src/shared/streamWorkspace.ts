@@ -10,6 +10,7 @@ import type {
   PersistedVirtualOutputConfig,
   SceneId,
   SceneLoopPolicy,
+  SceneTrigger,
   StreamPlaybackSettings,
   StreamId,
   SubCueId,
@@ -47,9 +48,58 @@ export function normalizeStreamPlaybackSettings(settings: Partial<StreamPlayback
   };
 }
 
+/** Rewrites legacy trigger shapes from disk; idempotent on current `SceneTrigger` union. */
+export function migrateSceneTriggerLoose(trigger: unknown): SceneTrigger {
+  if (!trigger || typeof trigger !== 'object' || !('type' in trigger)) {
+    return { type: 'manual' };
+  }
+  const t = trigger as {
+    type: string;
+    followsSceneId?: SceneId;
+    offsetMs?: number;
+    delayMs?: number;
+    timecodeMs?: number;
+  };
+  switch (t.type) {
+    case 'manual':
+      return { type: 'manual' };
+    case 'at-timecode':
+      return { type: 'at-timecode', timecodeMs: typeof t.timecodeMs === 'number' ? t.timecodeMs : 0 };
+    case 'simultaneous-start':
+      return { type: 'follow-start', followsSceneId: t.followsSceneId };
+    case 'time-offset': {
+      const ms = typeof t.offsetMs === 'number' ? t.offsetMs : 0;
+      return ms !== 0
+        ? { type: 'follow-start', followsSceneId: t.followsSceneId, delayMs: ms }
+        : { type: 'follow-start', followsSceneId: t.followsSceneId };
+    }
+    case 'follow-start': {
+      const delayMs = typeof t.delayMs === 'number' ? t.delayMs : undefined;
+      return delayMs !== undefined && delayMs !== 0
+        ? { type: 'follow-start', followsSceneId: t.followsSceneId, delayMs }
+        : { type: 'follow-start', followsSceneId: t.followsSceneId };
+    }
+    case 'follow-end': {
+      const delayMs = typeof t.delayMs === 'number' ? t.delayMs : undefined;
+      return delayMs !== undefined && delayMs !== 0
+        ? { type: 'follow-end', followsSceneId: t.followsSceneId, delayMs }
+        : { type: 'follow-end', followsSceneId: t.followsSceneId };
+    }
+    default:
+      return { type: 'manual' };
+  }
+}
+
 export function normalizeStreamPersistence(stream: PersistedStreamConfig): PersistedStreamConfig {
+  const next = structuredClone(stream) as PersistedStreamConfig;
+  for (const id of Object.keys(next.scenes)) {
+    const scene = next.scenes[id];
+    if (scene) {
+      scene.trigger = migrateSceneTriggerLoose(scene.trigger);
+    }
+  }
   return {
-    ...structuredClone(stream),
+    ...next,
     playbackSettings: normalizeStreamPlaybackSettings(stream.playbackSettings),
   };
 }

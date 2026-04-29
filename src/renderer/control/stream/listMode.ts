@@ -128,7 +128,7 @@ export function scenesExplicitlyFollowing(stream: PersistedStreamConfig | undefi
       continue;
     }
     const tr = sc.trigger;
-    if (tr.type !== 'simultaneous-start' && tr.type !== 'follow-end' && tr.type !== 'time-offset') {
+    if (tr.type !== 'follow-start' && tr.type !== 'follow-end') {
       continue;
     }
     if (tr.followsSceneId === predecessorId) {

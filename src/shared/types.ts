@@ -414,9 +414,8 @@ export type PersistedDisplayConfigV8 = PersistedDisplayConfig & {
 
 export type SceneTrigger =
   | { type: 'manual' }
-  | { type: 'simultaneous-start'; followsSceneId?: SceneId }
-  | { type: 'follow-end'; followsSceneId?: SceneId }
-  | { type: 'time-offset'; followsSceneId?: SceneId; offsetMs: number }
+  | { type: 'follow-start'; followsSceneId?: SceneId; delayMs?: number }
+  | { type: 'follow-end'; followsSceneId?: SceneId; delayMs?: number }
   | { type: 'at-timecode'; timecodeMs: number };
 
 export type SceneLoopPolicy =

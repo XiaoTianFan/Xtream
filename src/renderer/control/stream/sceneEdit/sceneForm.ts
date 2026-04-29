@@ -68,9 +68,8 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     'Trigger mode',
     [
       ['manual', 'Manual'],
-      ['simultaneous-start', 'Simultaneous start'],
+      ['follow-start', 'Follow start'],
       ['follow-end', 'Follow end'],
-      ['time-offset', 'Time offset'],
       ['at-timecode', 'At timecode'],
     ],
     triggerType,
@@ -81,27 +80,28 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
         nextTrigger = { type: 'manual' };
       } else if (nextType === 'at-timecode') {
         nextTrigger = { type: 'at-timecode', timecodeMs: scene.trigger.type === 'at-timecode' ? scene.trigger.timecodeMs : 0 };
-      } else if (nextType === 'time-offset') {
-        const prev =
-          scene.trigger.type === 'time-offset'
-            ? scene.trigger
-            : { offsetMs: 1000, followsSceneId: resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }) };
-        nextTrigger = {
-          type: 'time-offset',
-          offsetMs: 'offsetMs' in prev ? prev.offsetMs : 1000,
-          followsSceneId: 'followsSceneId' in prev ? prev.followsSceneId : undefined,
-        };
-      } else if (nextType === 'simultaneous-start') {
-        nextTrigger = {
-          type: 'simultaneous-start',
-          followsSceneId:
-            scene.trigger.type === 'simultaneous-start' ? scene.trigger.followsSceneId : resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }),
-        };
+      } else if (nextType === 'follow-start') {
+        const carryFollow =
+          scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end'
+            ? scene.trigger.followsSceneId
+            : resolveFollowsSceneId(stream, scene.id, { type: 'follow-start' });
+        const carryDelay =
+          scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end' ? scene.trigger.delayMs : undefined;
+        nextTrigger =
+          carryDelay !== undefined && carryDelay > 0
+            ? { type: 'follow-start', followsSceneId: carryFollow, delayMs: carryDelay }
+            : { type: 'follow-start', followsSceneId: carryFollow };
       } else {
-        nextTrigger = {
-          type: 'follow-end',
-          followsSceneId: scene.trigger.type === 'follow-end' ? scene.trigger.followsSceneId : resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' }),
-        };
+        const carryFollow =
+          scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end'
+            ? scene.trigger.followsSceneId
+            : resolveFollowsSceneId(stream, scene.id, { type: 'follow-end' });
+        const carryDelay =
+          scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end' ? scene.trigger.delayMs : undefined;
+        nextTrigger =
+          carryDelay !== undefined && carryDelay > 0
+            ? { type: 'follow-end', followsSceneId: carryFollow, delayMs: carryDelay }
+            : { type: 'follow-end', followsSceneId: carryFollow };
       }
       void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: nextTrigger } });
     },
@@ -110,11 +110,9 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
   const followOptions: Array<[string, string]> = stream.sceneOrder
     .filter((id) => id !== scene.id)
     .map((id) => [id, stream.scenes[id]?.title ?? id]);
-  const needsFollow = triggerType === 'simultaneous-start' || triggerType === 'follow-end' || triggerType === 'time-offset';
+  const needsFollow = triggerType === 'follow-start' || triggerType === 'follow-end';
   const explicitFollowId =
-    needsFollow && (scene.trigger.type === 'simultaneous-start' || scene.trigger.type === 'follow-end' || scene.trigger.type === 'time-offset')
-      ? scene.trigger.followsSceneId
-      : undefined;
+    needsFollow && (scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end') ? scene.trigger.followsSceneId : undefined;
   const followSelect = createSelect(
     'Follow scene',
     [['', '(implicit: previous row)'], ...followOptions],
@@ -122,43 +120,62 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     (value) => {
       const id = value || undefined;
       const t = scene.trigger;
-      if (t.type === 'simultaneous-start') {
-        void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'simultaneous-start', followsSceneId: id } } });
-      } else if (t.type === 'follow-end') {
-        void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'follow-end', followsSceneId: id } } });
-      } else if (t.type === 'time-offset') {
+      if (t.type === 'follow-start') {
         void window.xtream.stream.edit({
           type: 'update-scene',
           sceneId: scene.id,
-          update: { trigger: { type: 'time-offset', offsetMs: t.offsetMs, followsSceneId: id } },
+          update: {
+            trigger:
+              t.delayMs !== undefined && t.delayMs > 0
+                ? { type: 'follow-start', followsSceneId: id, delayMs: t.delayMs }
+                : { type: 'follow-start', followsSceneId: id },
+          },
+        });
+      } else if (t.type === 'follow-end') {
+        void window.xtream.stream.edit({
+          type: 'update-scene',
+          sceneId: scene.id,
+          update: {
+            trigger:
+              t.delayMs !== undefined && t.delayMs > 0
+                ? { type: 'follow-end', followsSceneId: id, delayMs: t.delayMs }
+                : { type: 'follow-end', followsSceneId: id },
+          },
         });
       }
     },
   );
   followSelect.hidden = !needsFollow;
 
-  const offsetWrap = document.createElement('div');
-  offsetWrap.className = 'stream-scene-form-row';
-  offsetWrap.hidden = triggerType !== 'time-offset';
-  const offsetMs = scene.trigger.type === 'time-offset' ? scene.trigger.offsetMs : 0;
-  const offsetInput = document.createElement('input');
-  offsetInput.type = 'number';
-  offsetInput.min = '0';
-  offsetInput.step = '100';
-  offsetInput.className = 'label-input';
-  offsetInput.value = String(offsetMs);
-  offsetInput.addEventListener('change', () => {
-    if (scene.trigger.type !== 'time-offset') {
+  const delayWrap = document.createElement('div');
+  delayWrap.className = 'stream-scene-form-row';
+  delayWrap.hidden = triggerType !== 'follow-start' && triggerType !== 'follow-end';
+  const delayMsVal =
+    scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end' ? (scene.trigger.delayMs ?? 0) : 0;
+  const delayInput = document.createElement('input');
+  delayInput.type = 'number';
+  delayInput.min = '0';
+  delayInput.step = '100';
+  delayInput.className = 'label-input';
+  delayInput.value = String(delayMsVal);
+  delayInput.addEventListener('change', () => {
+    const t = scene.trigger;
+    if (t.type !== 'follow-start' && t.type !== 'follow-end') {
       return;
     }
-    const ms = Math.max(0, Number(offsetInput.value) || 0);
-    void window.xtream.stream.edit({
-      type: 'update-scene',
-      sceneId: scene.id,
-      update: { trigger: { type: 'time-offset', offsetMs: ms, followsSceneId: scene.trigger.followsSceneId } },
-    });
+    const ms = Math.max(0, Number(delayInput.value) || 0);
+    const base = { followsSceneId: t.followsSceneId };
+    const trigger: SceneTrigger =
+      ms > 0
+        ? t.type === 'follow-start'
+          ? { type: 'follow-start', ...base, delayMs: ms }
+          : { type: 'follow-end', ...base, delayMs: ms }
+        : t.type === 'follow-start'
+          ? { type: 'follow-start', ...base }
+          : { type: 'follow-end', ...base };
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger } });
   });
-  offsetWrap.append(createStreamDetailField('Offset (ms)', offsetInput));
+  delayWrap.append(createStreamDetailField('Delay (ms)', delayInput));
 
   const tcWrap = document.createElement('div');
   tcWrap.className = 'stream-scene-form-row';
@@ -178,7 +195,7 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
   form.append(
     createSubCueSection(
       'Trigger',
-      createSubCueFieldGrid(triggerSelect, followSelect, offsetWrap, tcWrap),
+      createSubCueFieldGrid(triggerSelect, followSelect, delayWrap, tcWrap),
       createStreamDetailLine('Trigger summary', formatTriggerSummary(stream, scene)),
     ),
   );

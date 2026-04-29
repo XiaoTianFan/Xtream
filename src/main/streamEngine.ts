@@ -898,20 +898,12 @@ export class StreamEngine extends EventEmitter {
         end = entry?.endMs;
       } else {
         const trig = scene.trigger;
-        if (trig.type === 'simultaneous-start') {
-          const pred = resolveFollowsSceneId(stream, sceneId, trig);
-          if (pred) {
-            start = this.predEffectiveStartMs(pred, sceneStates, schedule, stream);
-            if (start !== undefined && entry?.durationMs !== undefined) {
-              end = start + entry.durationMs;
-            }
-          }
-        } else if (trig.type === 'time-offset') {
+        if (trig.type === 'follow-start') {
           const pred = resolveFollowsSceneId(stream, sceneId, trig);
           if (pred) {
             const ps = this.predEffectiveStartMs(pred, sceneStates, schedule, stream);
             if (ps !== undefined) {
-              start = ps + trig.offsetMs;
+              start = ps + (trig.delayMs ?? 0);
               if (entry?.durationMs !== undefined) {
                 end = start + entry.durationMs;
               }
@@ -920,9 +912,12 @@ export class StreamEngine extends EventEmitter {
         } else if (trig.type === 'follow-end') {
           const pred = resolveFollowsSceneId(stream, sceneId, trig);
           if (pred) {
-            start = this.predEffectiveEndMs(pred, sceneStates, schedule, stream);
-            if (start !== undefined && entry?.durationMs !== undefined) {
-              end = start + entry.durationMs;
+            const pe = this.predEffectiveEndMs(pred, sceneStates, schedule, stream);
+            if (pe !== undefined) {
+              start = pe + (trig.delayMs ?? 0);
+              if (entry?.durationMs !== undefined) {
+                end = start + entry.durationMs;
+              }
             }
           }
         } else {

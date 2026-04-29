@@ -155,8 +155,9 @@ export function validateTriggerReferences(stream: PersistedStreamConfig): string
     if (pred && !ids.has(pred)) {
       messages.push(`Scene ${sceneId} references missing predecessor ${pred}`);
     }
-    if (scene.trigger.type === 'time-offset' && scene.trigger.offsetMs < 0) {
-      messages.push(`Scene ${sceneId} has negative time offset`);
+    const tr = scene.trigger;
+    if ((tr.type === 'follow-start' || tr.type === 'follow-end') && tr.delayMs !== undefined && tr.delayMs < 0) {
+      messages.push(`Scene ${sceneId} has negative trigger delay`);
     }
     if (scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < 0) {
       messages.push(`Scene ${sceneId} has negative timecode`);
@@ -510,15 +511,13 @@ export function buildStreamSchedule(
         if (!predEntry || predEntry.startMs === undefined) {
           continue;
         }
-        if (scene.trigger.type === 'simultaneous-start') {
-          start = predEntry.startMs;
-        } else if (scene.trigger.type === 'time-offset') {
-          start = predEntry.startMs + scene.trigger.offsetMs;
+        if (scene.trigger.type === 'follow-start') {
+          start = predEntry.startMs + (scene.trigger.delayMs ?? 0);
         } else if (scene.trigger.type === 'follow-end') {
           if (predEntry.endMs === undefined) {
             continue;
           }
-          start = predEntry.endMs;
+          start = predEntry.endMs + (scene.trigger.delayMs ?? 0);
         }
       }
 

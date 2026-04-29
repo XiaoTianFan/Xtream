@@ -249,7 +249,7 @@ describe('streamSchedule', () => {
       },
     });
     const s1 = base('s1', 10_000);
-    const s2 = { ...base('s2', 4000), trigger: { type: 'time-offset' as const, followsSceneId: 's1', offsetMs: 3000 } };
+    const s2 = { ...base('s2', 4000), trigger: { type: 'follow-start' as const, followsSceneId: 's1', delayMs: 3000 } };
     const s3 = base('s3', 2000);
     const s4 = { ...base('s4', 1000), trigger: { type: 'follow-end' as const, followsSceneId: 's2' } };
     const stream = streamWithScenes({ s1, s2, s3, s4 }, ['s1', 's2', 's3', 's4']);
@@ -260,6 +260,28 @@ describe('streamSchedule', () => {
     expect(schedule.entries.s3.startMs).toBe(10_000);
     expect(schedule.entries.s4.startMs).toBe(7000);
     expect(schedule.expectedDurationMs).toBe(12_000);
+  });
+
+  it('applies delay after predecessor end for follow-end triggers', () => {
+    const base = (id: string, durationOverrideMs: number) => ({
+      ...createEmptyUserScene(id, id),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          durationOverrideMs,
+        },
+      },
+    });
+    const s1 = base('s1', 5000);
+    const s2 = { ...base('s2', 1000), trigger: { type: 'follow-end' as const, followsSceneId: 's1', delayMs: 2000 } };
+    const stream = streamWithScenes({ s1, s2 }, ['s1', 's2']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: {}, audioDurations: {} });
+    expect(schedule.status).toBe('valid');
+    expect(schedule.entries.s2.startMs).toBe(7000);
   });
 
   it('keeps at-timecode scenes pinned to their absolute start', () => {

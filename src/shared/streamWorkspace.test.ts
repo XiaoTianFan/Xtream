@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   applyPatchCompatibilitySceneToPersistedRouting,
   buildPatchCompatibilityScene,
+  createEmptyUserScene,
+  DEFAULT_STREAM_PLAYBACK_SETTINGS,
   mergeShowConfigPatchRouting,
+  migrateSceneTriggerLoose,
+  normalizeStreamPersistence,
+  STREAM_MAIN_ID,
 } from './streamWorkspace';
-import type { PersistedDisplayConfigV8, PersistedShowConfig } from './types';
+import type { PersistedDisplayConfigV8, PersistedShowConfig, PersistedStreamConfig } from './types';
 
 describe('Patch compatibility projection', () => {
   it('round-trips buildPatchCompatibilityScene through applyPatchCompatibilitySceneToPersistedRouting', () => {
@@ -165,5 +170,41 @@ describe('Patch compatibility projection', () => {
       'output-main': { id: 'output-main', label: 'Main', sources: [], busLevelDb: 0, pan: 0 },
     });
     expect(out[0]?.layout).toEqual({ type: 'single', visualId: 'v1' });
+  });
+});
+
+describe('Trigger migration', () => {
+  it('maps legacy trigger shapes via migrateSceneTriggerLoose', () => {
+    expect(migrateSceneTriggerLoose({ type: 'simultaneous-start', followsSceneId: 'p' })).toEqual({
+      type: 'follow-start',
+      followsSceneId: 'p',
+    });
+    expect(migrateSceneTriggerLoose({ type: 'time-offset', followsSceneId: 'p', offsetMs: 2500 })).toEqual({
+      type: 'follow-start',
+      followsSceneId: 'p',
+      delayMs: 2500,
+    });
+    expect(migrateSceneTriggerLoose({ type: 'time-offset', followsSceneId: 'p', offsetMs: 0 })).toEqual({
+      type: 'follow-start',
+      followsSceneId: 'p',
+    });
+  });
+
+  it('rewrites scenes when normalizing stream persistence', () => {
+    const raw = {
+      id: STREAM_MAIN_ID,
+      label: 'Main',
+      sceneOrder: ['a', 'b'],
+      scenes: {
+        a: createEmptyUserScene('a', 'A'),
+        b: {
+          ...createEmptyUserScene('b', 'B'),
+          trigger: { type: 'time-offset', followsSceneId: 'a', offsetMs: 900 },
+        },
+      },
+      playbackSettings: DEFAULT_STREAM_PLAYBACK_SETTINGS,
+    } as unknown as PersistedStreamConfig;
+    const next = normalizeStreamPersistence(raw);
+    expect(next.scenes.b.trigger).toEqual({ type: 'follow-start', followsSceneId: 'a', delayMs: 900 });
   });
 });
