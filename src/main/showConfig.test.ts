@@ -130,9 +130,9 @@ function createRuntimeState(): DirectorState {
 }
 
 describe('show config persistence helpers', () => {
-  it('migrates schema v7 to v8 and rejects unsupported versions', () => {
+  it('migrates legacy schema configs to PersistedShowConfig latest and rejects unsupported versions', () => {
     expect(assertShowConfig(configV7)).toEqual(config);
-    expect(() => assertShowConfig({ ...configV7, schemaVersion: 2 })).toThrow(/schema versions 3 through 8/i);
+    expect(() => assertShowConfig({ ...configV7, schemaVersion: 2 })).toThrow(/schema versions 3 through 9/i);
   });
 
   it('normalizes legacy v8 streams records to the single stream field', () => {

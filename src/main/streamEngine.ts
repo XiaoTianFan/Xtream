@@ -4,7 +4,7 @@ import type { Director } from './director';
 import type {
   PersistedControlSubCueConfig,
   PersistedSceneConfig,
-  PersistedShowConfigV8,
+  PersistedShowConfig,
   PersistedStreamConfig,
   PersistedSubCueConfig,
   SceneId,
@@ -89,7 +89,7 @@ export class StreamEngine extends EventEmitter {
     this.loadFromShow({ stream: structuredClone(d.stream) });
   }
 
-  getPersistence(): Pick<PersistedShowConfigV8, 'stream'> {
+  getPersistence(): Pick<PersistedShowConfig, 'stream'> {
     return {
       stream: structuredClone(this.stream),
     };

@@ -4,7 +4,7 @@ import {
   buildPatchCompatibilityScene,
   mergeShowConfigPatchRouting,
 } from './streamWorkspace';
-import type { PersistedDisplayConfigV8, PersistedShowConfigV8 } from './types';
+import type { PersistedDisplayConfigV8, PersistedShowConfig } from './types';
 
 describe('Patch compatibility projection', () => {
   it('round-trips buildPatchCompatibilityScene through applyPatchCompatibilitySceneToPersistedRouting', () => {
@@ -43,10 +43,9 @@ describe('Patch compatibility projection', () => {
         },
       },
     );
-    const v8: PersistedShowConfigV8 = {
-      schemaVersion: 8,
+    const v9: PersistedShowConfig = {
+      schemaVersion: 9,
       savedAt: '2026-01-01T00:00:00.000Z',
-      audioExtractionFormat: 'm4a',
       visuals: {},
       audioSources: {},
       outputs: {
@@ -62,7 +61,7 @@ describe('Patch compatibility projection', () => {
       stream: { id: 'stream-main', label: 'Main Stream', sceneOrder: [], scenes: {} },
       patchCompatibility: { scene },
     };
-    const merged = mergeShowConfigPatchRouting(v8);
+    const merged = mergeShowConfigPatchRouting(v9);
     expect(merged.displays[0]?.layout).toEqual({ type: 'single', visualId: 'correct' });
     expect(merged.outputs['output-main']?.sources[0]?.audioSourceId).toBe('snd-ok');
   });

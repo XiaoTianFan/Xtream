@@ -609,8 +609,7 @@ describe('Director', () => {
       health: 'ready',
     });
     expect(director.createShowConfig('2026-04-26T00:00:00.000Z')).toMatchObject({
-      schemaVersion: 8,
-      audioExtractionFormat: 'm4a',
+      schemaVersion: 9,
       visuals: { 'visual-a': { id: 'visual-a', kind: 'file', path: 'F:\\media\\visual-a.mp4', opacity: 1, brightness: 1, contrast: 1, playbackRate: 1 } },
       displays: [{ id: 'display-0', fullscreen: true, layout: { type: 'single', visualId: 'visual-a' } }],
       outputs: {

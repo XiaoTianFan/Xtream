@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { assertShowConfig, migrateV7ToV8 } from './showConfig';
 import type { PersistedShowConfigV7 } from '../shared/types';
 
-describe('v7 to v8 migration', () => {
+describe('v7 onward migration', () => {
   it('projects Patch routing into patchCompatibility.scene sub-cues', () => {
     const v7: PersistedShowConfigV7 = {
       schemaVersion: 7,
@@ -36,17 +36,17 @@ describe('v7 to v8 migration', () => {
         { id: 'disp-1', layout: { type: 'split', visualIds: ['v1', undefined] }, fullscreen: false },
       ],
     };
-    const v8 = migrateV7ToV8(v7);
-    expect(v8.schemaVersion).toBe(8);
-    expect(v8.patchCompatibility.scene.subCues['patch-vis-disp-1-L']).toMatchObject({
+    const v9 = migrateV7ToV8(v7);
+    expect(v9.schemaVersion).toBe(9);
+    expect(v9.patchCompatibility.scene.subCues['patch-vis-disp-1-L']).toMatchObject({
       kind: 'visual',
       visualId: 'v1',
       targets: [{ displayId: 'disp-1', zoneId: 'L' }],
     });
-    expect(v8.stream.sceneOrder).toContain('scene-1');
+    expect(v9.stream.sceneOrder).toContain('scene-1');
   });
 
-  it('round-trips native v8 through assertShowConfig', () => {
+  it('round-trips migrated show through assertShowConfig', () => {
     const v7base: PersistedShowConfigV7 = {
       schemaVersion: 7,
       savedAt: '2026-01-01T00:00:00.000Z',
@@ -59,8 +59,8 @@ describe('v7 to v8 migration', () => {
       },
       displays: [],
     };
-    const v8 = migrateV7ToV8(v7base);
-    const parsed = JSON.parse(JSON.stringify(v8)) as unknown;
-    expect(assertShowConfig(parsed)).toEqual(v8);
+    const v9 = migrateV7ToV8(v7base);
+    const parsed = JSON.parse(JSON.stringify(v9)) as unknown;
+    expect(assertShowConfig(parsed)).toEqual(v9);
   });
 });

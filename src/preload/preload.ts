@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ShowOpenProfileLogEntry } from '../shared/showOpenProfile';
 import type {
   AudioMetadataReport,
+  AppControlSettingsV1,
   AudioExtractionFormat,
   EmbeddedAudioImportCandidate,
   AudioSourceId,
@@ -147,6 +148,10 @@ const api = {
       ipcRenderer.on('stream:state', listener);
       return () => ipcRenderer.removeListener('stream:state', listener);
     },
+  },
+  appControl: {
+    mergeSettings: (patch: Partial<AppControlSettingsV1>): Promise<DirectorState> =>
+      ipcRenderer.invoke('app-control:merge-settings', patch),
   },
   show: {
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),

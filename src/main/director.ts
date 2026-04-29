@@ -13,9 +13,9 @@ import type {
   GlobalStateUpdate,
   LiveVisualCaptureConfig,
   PersistedDisplayConfigV8,
+  AppControlSettingsV1,
   ShowSettingsUpdate,
   PersistedShowConfig,
-  PersistedShowConfigV8,
   PreviewStatus,
   OutputMeterReport,
   PresetId,
@@ -472,21 +472,27 @@ export class Director extends EventEmitter {
       }
       return Math.min(60, Math.max(0, value));
     };
-    const clampPreviewFps = (value: number | undefined, previous: number): number => {
-      if (value === undefined) {
-        return previous;
-      }
-      return Math.min(60, Math.max(1, Math.round(value)));
-    };
     this.state = {
       ...this.state,
-      audioExtractionFormat: update.audioExtractionFormat ?? this.state.audioExtractionFormat,
       globalAudioMuteFadeOutSeconds: clampFade(update.globalAudioMuteFadeOutSeconds, this.state.globalAudioMuteFadeOutSeconds),
       globalDisplayBlackoutFadeOutSeconds: clampFade(
         update.globalDisplayBlackoutFadeOutSeconds,
         this.state.globalDisplayBlackoutFadeOutSeconds,
       ),
-      controlDisplayPreviewMaxFps: clampPreviewFps(update.controlDisplayPreviewMaxFps, this.state.controlDisplayPreviewMaxFps),
+    };
+    this.emitState();
+    return this.getState();
+  }
+
+  /** Sync machine-local fields from `app-control-settings.json` (performance, extraction format, preview FPS). */
+  applyPersistedAppControlSettings(snapshot: AppControlSettingsV1): DirectorState {
+    const fmt: AudioExtractionFormat = snapshot.audioExtractionFormat === 'wav' ? 'wav' : 'm4a';
+    const fps = Math.min(60, Math.max(1, Math.round(Number(snapshot.controlDisplayPreviewMaxFps) || DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS)));
+    this.state = {
+      ...this.state,
+      performanceMode: Boolean(snapshot.performanceMode),
+      audioExtractionFormat: fmt,
+      controlDisplayPreviewMaxFps: fps,
     };
     this.emitState();
     return this.getState();
@@ -776,7 +782,7 @@ export class Director extends EventEmitter {
 
   createShowConfig(
     savedAt = new Date().toISOString(),
-    streamPersistence: Pick<PersistedShowConfigV8, 'stream'> = getDefaultStreamPersistence(),
+    streamPersistence: Pick<PersistedShowConfig, 'stream'> = getDefaultStreamPersistence(),
   ): PersistedShowConfig {
     this.normalizeAllOutputSourceSelectionsInState();
     const displays: PersistedDisplayConfigV8[] = Object.values(this.state.displays).map((display) => {
@@ -800,15 +806,11 @@ export class Director extends EventEmitter {
       ),
     );
     return {
-      schemaVersion: 8,
+      schemaVersion: 9,
       savedAt,
       rate: this.state.rate,
-      audioExtractionFormat: this.state.audioExtractionFormat,
       globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,
       globalDisplayBlackoutFadeOutSeconds: this.state.globalDisplayBlackoutFadeOutSeconds,
-      ...(this.state.controlDisplayPreviewMaxFps !== DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS
-        ? { controlDisplayPreviewMaxFps: this.state.controlDisplayPreviewMaxFps }
-        : {}),
       stream: structuredClone(streamPersistence.stream),
       patchCompatibility: { scene: patchScene },
       visuals: Object.fromEntries(
@@ -907,7 +909,7 @@ export class Director extends EventEmitter {
     this.state.globalDisplayBlackout = false;
     this.state.performanceMode = false;
     this.state.rate = merged.rate ?? 1;
-    this.state.audioExtractionFormat = merged.audioExtractionFormat ?? 'm4a';
+    this.state.audioExtractionFormat = 'm4a';
     this.state.globalAudioMuteFadeOutSeconds = Math.min(
       60,
       Math.max(0, merged.globalAudioMuteFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
@@ -916,13 +918,7 @@ export class Director extends EventEmitter {
       60,
       Math.max(0, merged.globalDisplayBlackoutFadeOutSeconds ?? SHOW_PROJECT_DEFAULT_FADE_OUT_SECONDS),
     );
-    this.state.controlDisplayPreviewMaxFps = Math.min(
-      60,
-      Math.max(
-        1,
-        Math.round(merged.controlDisplayPreviewMaxFps ?? DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS),
-      ),
-    );
+    this.state.controlDisplayPreviewMaxFps = DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS;
     this.state.anchorWallTimeMs = this.now();
     this.state.offsetSeconds = 0;
     this.displayPersistMeta.clear();

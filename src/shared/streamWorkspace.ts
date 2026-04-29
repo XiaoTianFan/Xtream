@@ -93,7 +93,7 @@ export function createEmptyUserScene(id: SceneId, title: string): PersistedScene
   };
 }
 
-export function getDefaultStreamPersistence(): Pick<PersistedShowConfigV8, 'stream'> {
+export function getDefaultStreamPersistence(): Pick<PersistedShowConfig, 'stream'> {
   const firstScene = createEmptyUserScene(SCENE_FIRST_ID, 'Scene 1');
   const mainStream: PersistedStreamConfig = {
     id: STREAM_MAIN_ID,

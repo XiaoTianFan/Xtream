@@ -66,7 +66,9 @@ export function createStreamBottomTabAction(ctx: StreamBottomPaneContext): HTMLB
 }
 
 export function renderStreamMixerPane(ctx: StreamBottomPaneContext, outputPanel: HTMLDivElement): HTMLElement {
-  const signature = ctx.mixerPanel?.createRenderSignature(ctx.currentState) ?? '';
+  /** Lane topology for stream playback comes from `deriveDirectorStateForStream` (virtual `stream-audio:*` sources). Those entries are not in raw director state, so `createRenderSignature(currentState)` did not change when clone metadata / routing changed — `mixerRenderSignature` stayed stale and strips never rebuilt. Signature must include presentation state; strip DOM still uses `currentState` so routing controls reflect persisted outputs. */
+  const signatureState = ctx.presentationState ?? ctx.currentState;
+  const signature = ctx.mixerPanel?.createRenderSignature(signatureState) ?? '';
   if (ctx.mixerRenderSignature !== signature && !isPanelInteractionActive(ctx.streamOutputPanel)) {
     ctx.setMixerRenderSignature(signature);
     ctx.mixerPanel?.renderOutputs(ctx.currentState);

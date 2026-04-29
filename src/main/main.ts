@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
-import { persistAppPerformanceMode, readAppControlSettings } from './appControlSettings';
+import { mergeAppControlSettings, readAppControlSettings } from './appControlSettings';
 import { getAppIconPath } from './appIcon';
 import { Director } from './director';
 import { StreamEngine } from './streamEngine';
@@ -55,6 +55,7 @@ import type {
   ShowConfigOperationResult,
   ControlProjectUiStateV1,
   GlobalStateUpdate,
+  AppControlSettingsV1,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
@@ -74,8 +75,7 @@ const streamEngine = new StreamEngine(director);
 director.setStreamPlaybackGate(() => streamEngine.isStreamPlaybackActive());
 
 function applyAppPersistedDirectorGlobals(): void {
-  const settings = readAppControlSettings(app.getPath('userData'));
-  director.updateGlobalState({ performanceMode: settings.performanceMode });
+  director.applyPersistedAppControlSettings(readAppControlSettings(app.getPath('userData')));
 }
 
 let controlWindow: BrowserWindow | undefined;
@@ -917,7 +917,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('director:update-global-state', (_event, update: GlobalStateUpdate) => {
     const state = director.updateGlobalState(update);
     if (update.performanceMode !== undefined) {
-      persistAppPerformanceMode(app.getPath('userData'), update.performanceMode);
+      mergeAppControlSettings(app.getPath('userData'), { performanceMode: update.performanceMode });
     }
     return state;
   });
@@ -1234,6 +1234,11 @@ function registerIpcHandlers(): void {
     const state = director.updateShowSettings(update);
     scheduleShowConfigAutoSave();
     return state;
+  });
+
+  ipcMain.handle('app-control:merge-settings', (_event, patch: Partial<AppControlSettingsV1>) => {
+    const merged = mergeAppControlSettings(app.getPath('userData'), patch);
+    return director.applyPersistedAppControlSettings(merged);
   });
 
   ipcMain.handle(

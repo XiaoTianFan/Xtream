@@ -608,7 +608,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       sceneEditSelection,
       performanceMode: currentState!.performanceMode,
       sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
-      mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(currentState!) : undefined,
+      mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(options.getPresentationState() ?? currentState!) : undefined,
       displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(presentation) : undefined,
     });
   }

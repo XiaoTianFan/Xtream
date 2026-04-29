@@ -273,7 +273,7 @@ export type DirectorState = {
   /** Seconds for display / preview blackout opacity transition (0 = instant). */
   globalDisplayBlackoutFadeOutSeconds: number;
   /**
-   * Max redraw rate for control-window display preview canvases (file video → canvas path), per show.
+   * Max redraw rate for control-window display preview canvases (file video → canvas path), app-controlled.
    * Typical range 1–60; default when unset is 15.
    */
   controlDisplayPreviewMaxFps: number;
@@ -604,8 +604,16 @@ export type PersistedShowConfigV8 = {
   patchCompatibility: PersistedPatchSceneProjection;
 };
 
+/** v9: extraction format and display preview FPS moved to {@link AppControlSettingsV1} (machine-local JSON). */
+export type PersistedShowConfigV9 = Omit<
+  PersistedShowConfigV8,
+  'schemaVersion' | 'audioExtractionFormat' | 'controlDisplayPreviewMaxFps'
+> & {
+  schemaVersion: 9;
+};
+
 /** On disk and after migration; v7 kept for migration input only. */
-export type PersistedShowConfig = PersistedShowConfigV8;
+export type PersistedShowConfig = PersistedShowConfigV9;
 
 export type SceneRuntimeState = {
   sceneId: SceneId;
@@ -844,17 +852,12 @@ export type AudioSourceSplitResult = [AudioSourceState, AudioSourceState];
 export type VisualUpdate = Partial<Pick<VisualState, 'label' | 'opacity' | 'brightness' | 'contrast' | 'playbackRate'>>;
 export type AudioSourceUpdate = Partial<Pick<AudioSourceState, 'label' | 'playbackRate' | 'levelDb'>>;
 export type GlobalStateUpdate = Partial<Pick<DirectorState, 'globalAudioMuted' | 'globalDisplayBlackout' | 'performanceMode'>>;
-/** Fields persisted in the show project file (`.xtream-show.json`), not application-wide preferences. */
-export type ShowProjectFileSettingsUpdate = Partial<
-  Pick<
-    DirectorState,
-    | 'audioExtractionFormat'
-    | 'globalAudioMuteFadeOutSeconds'
-    | 'globalDisplayBlackoutFadeOutSeconds'
-    | 'controlDisplayPreviewMaxFps'
-  >
->;
+/** Fade curves stored in `.xtream-show.json` — not app-wide prefs. */
+export type ShowProjectFileSettingsUpdate = Partial<Pick<DirectorState, 'globalAudioMuteFadeOutSeconds' | 'globalDisplayBlackoutFadeOutSeconds'>>;
 export type ShowSettingsUpdate = ShowProjectFileSettingsUpdate;
+
+/** Machine-local app JSON (`app-control-settings.json`) excluding version field; used when merging persisted snapshot into {@link DirectorState}. */
+export type AppControlRuntimePreferencesUpdate = Partial<Pick<DirectorState, 'audioExtractionFormat' | 'controlDisplayPreviewMaxFps'>>;
 
 export type VirtualOutputUpdate = Partial<
   Pick<
@@ -921,6 +924,8 @@ export type LaunchShowData = {
 export type AppControlSettingsV1 = {
   v: 1;
   performanceMode: boolean;
+  audioExtractionFormat: AudioExtractionFormat;
+  controlDisplayPreviewMaxFps: number;
 };
 
 /** Per-project persisted control-shell UI (persisted beside app data, keyed by show file path). */
@@ -1005,6 +1010,7 @@ export type IpcChannels = {
   'show:open-default': () => ShowConfigOperationResult | undefined;
   'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
+  'app-control:merge-settings': (patch: Partial<Pick<DirectorState, 'performanceMode' | 'audioExtractionFormat' | 'controlDisplayPreviewMaxFps'>>) => DirectorState;
   'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;
   'show:export-diagnostics': (attach?: DiagnosticsExportAttachPayload) => string | undefined;

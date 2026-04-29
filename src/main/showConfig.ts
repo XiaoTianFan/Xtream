@@ -18,6 +18,7 @@ import type {
   PersistedShowConfigV6,
   PersistedShowConfigV7,
   PersistedShowConfigV8,
+  PersistedShowConfigV9,
   RecentShowEntry,
 } from '../shared/types';
 
@@ -172,6 +173,16 @@ function assertV8Fields(candidate: Partial<PersistedShowConfigV8>): void {
   }
 }
 
+function assertV9Fields(candidate: Partial<PersistedShowConfigV9>): void {
+  assertCommonShowFields(candidate);
+  if (!candidate.stream && (!('streams' in candidate) || typeof (candidate as { streams?: unknown }).streams !== 'object')) {
+    throw new Error('Show config is missing stream.');
+  }
+  if (!candidate.patchCompatibility || typeof candidate.patchCompatibility.scene !== 'object') {
+    throw new Error('Show config is missing patchCompatibility.scene.');
+  }
+}
+
 function migrateDiskConfigToV7(
   candidate: Partial<PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7>,
 ): PersistedShowConfigV7 {
@@ -191,7 +202,7 @@ function migrateDiskConfigToV7(
   return candidate as PersistedShowConfigV7;
 }
 
-export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfigV8 {
+export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfig {
   const displays = config.displays.map((d, index) => ({
     ...d,
     id: (d.id ?? (`display-${index}` as DisplayWindowId)) as DisplayWindowId,
@@ -202,7 +213,7 @@ export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfi
     config.outputs,
   );
   const { stream } = getDefaultStreamPersistence();
-  return {
+  const v8: PersistedShowConfigV8 = {
     schemaVersion: 8,
     savedAt: config.savedAt,
     rate: config.rate,
@@ -216,6 +227,16 @@ export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfi
     stream,
     patchCompatibility: { scene: patchScene, migratedFromSchemaVersion: 7 },
   };
+  return migrateV8ToV9(v8);
+}
+
+export function migrateV8ToV9(config: PersistedShowConfigV8): PersistedShowConfigV9 {
+  const { schemaVersion: _s, audioExtractionFormat: _a, controlDisplayPreviewMaxFps: _f, ...rest } = config;
+  return {
+    ...rest,
+    schemaVersion: 9,
+    stream: normalizeStreamPersistence(config.stream),
+  };
 }
 
 export function assertShowConfig(value: unknown): PersistedShowConfig {
@@ -223,10 +244,35 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     throw new Error('Show config must be a JSON object.');
   }
   const candidate = value as Partial<
-    PersistedShowConfigV3 | PersistedShowConfigV4 | PersistedShowConfigV5 | PersistedShowConfigV6 | PersistedShowConfigV7 | PersistedShowConfigV8
+    | PersistedShowConfigV3
+    | PersistedShowConfigV4
+    | PersistedShowConfigV5
+    | PersistedShowConfigV6
+    | PersistedShowConfigV7
+    | PersistedShowConfigV8
+    | PersistedShowConfigV9
   >;
+
+  if (candidate.schemaVersion === 9) {
+    assertV9Fields(candidate as Partial<PersistedShowConfigV9>);
+    const legacyStreams = (candidate as Partial<PersistedShowConfigV9> & { streams?: Record<string, PersistedShowConfigV9['stream']>; activeStreamId?: string }).streams;
+    if (!candidate.stream && legacyStreams) {
+      const active = (candidate as { activeStreamId?: string }).activeStreamId;
+      const stream = (active ? legacyStreams[active] : undefined) ?? Object.values(legacyStreams)[0] ?? getDefaultStreamPersistence().stream;
+      const { streams: _streams, activeStreamId: _activeStreamId, ...rest } = candidate as typeof candidate & {
+        streams?: unknown;
+        activeStreamId?: unknown;
+      };
+      return { ...rest, stream: normalizeStreamPersistence(stream) } as PersistedShowConfigV9;
+    }
+    return {
+      ...(candidate as PersistedShowConfigV9),
+      stream: normalizeStreamPersistence((candidate as PersistedShowConfigV9).stream),
+    };
+  }
+
   if (candidate.schemaVersion === 8) {
-    assertV8Fields(candidate);
+    assertV8Fields(candidate as Partial<PersistedShowConfigV8>);
     const legacyStreams = (candidate as Partial<PersistedShowConfigV8> & { streams?: Record<string, PersistedShowConfigV8['stream']>; activeStreamId?: string }).streams;
     if (!candidate.stream && legacyStreams) {
       const active = (candidate as { activeStreamId?: string }).activeStreamId;
@@ -235,9 +281,14 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
         streams?: unknown;
         activeStreamId?: unknown;
       };
-      return { ...rest, stream: normalizeStreamPersistence(stream) } as PersistedShowConfigV8;
+      const v8: PersistedShowConfigV8 = { ...(rest as PersistedShowConfigV8), stream: normalizeStreamPersistence(stream) };
+      return migrateV8ToV9(v8);
     }
-    return { ...(candidate as PersistedShowConfigV8), stream: normalizeStreamPersistence((candidate as PersistedShowConfigV8).stream) };
+    const v8Normalized: PersistedShowConfigV8 = {
+      ...(candidate as PersistedShowConfigV8),
+      stream: normalizeStreamPersistence((candidate as PersistedShowConfigV8).stream),
+    };
+    return migrateV8ToV9(v8Normalized);
   }
   if (
     candidate.schemaVersion !== 3 &&
@@ -246,7 +297,7 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     candidate.schemaVersion !== 6 &&
     candidate.schemaVersion !== 7
   ) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 8 only.');
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 9 only.');
   }
   return migrateV7ToV8(migrateDiskConfigToV7(candidate));
 }

@@ -298,26 +298,42 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
       await window.xtream.director.updateGlobalState({ performanceMode: !live?.performanceMode }),
     );
   });
-  appConfiguration.append(
-    createHint('Stored on this machine for Xtream Control. Applies to every show project open on this app.'),
-    perfToggle,
-  );
-
-  const showProject = createSurfaceCard('Show project');
-  const formatSelect = createSelect(
-    'Extracted Audio Format',
+  const extractionFormatSelect = createSelect(
+    'Extracted audio format',
     [
       ['m4a', 'M4A / AAC'],
       ['wav', 'WAV / PCM'],
     ],
     state.audioExtractionFormat,
     (audioExtractionFormat) => {
-      void window.xtream.show.updateSettings({ audioExtractionFormat: audioExtractionFormat as AudioExtractionFormat }).then(options.renderState);
+      void window.xtream.appControl.mergeSettings({ audioExtractionFormat: audioExtractionFormat as AudioExtractionFormat }).then(options.renderState);
     },
   );
+  appConfiguration.append(
+    createHint('Stored on this machine for Xtream Control (not in show files). Applies to every show project on this computer.'),
+    perfToggle,
+    extractionFormatSelect,
+    createHint('Used when extracting embedded audio from video into files with Save Show.'),
+    createNumberDetailControl(
+      'Display preview max FPS',
+      state.controlDisplayPreviewMaxFps,
+      1,
+      60,
+      1,
+      (controlDisplayPreviewMaxFps) =>
+        window.xtream.appControl.mergeSettings({
+          controlDisplayPreviewMaxFps,
+        }),
+      options.renderState,
+    ),
+    createHint(
+      'Caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.',
+    ),
+  );
+
+  const showProject = createSurfaceCard('Show project');
   showProject.append(
-    createHint('These options are stored in your show project file (Save Show). They are not global application preferences.'),
-    formatSelect,
+    createHint('Fade durations below are saved in your show project file (Save Show).'),
     createHint('Fade durations apply when toggling audio mute or display blackout from the operator footer (0 = instant).'),
     createNumberDetailControl(
       'Audio mute fade (s)',
@@ -336,18 +352,6 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
       0.05,
       (globalDisplayBlackoutFadeOutSeconds) => window.xtream.show.updateSettings({ globalDisplayBlackoutFadeOutSeconds }),
       options.renderState,
-    ),
-    createNumberDetailControl(
-      'Display preview max FPS',
-      state.controlDisplayPreviewMaxFps,
-      1,
-      60,
-      1,
-      (controlDisplayPreviewMaxFps) => window.xtream.show.updateSettings({ controlDisplayPreviewMaxFps }),
-      options.renderState,
-    ),
-    createHint(
-      'Display preview max FPS caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.',
     ),
   );
 
