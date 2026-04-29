@@ -382,8 +382,19 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.stream-scene-row-wrap.focused .stream-scene-row {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-teal) 55%, transparent);
+.stream-scene-row-wrap.focused .stream-scene-row,
+.stream-scene-row-wrap.stream-playback-focus .stream-scene-row {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 65%, transparent);
+}
+
+.stream-scene-row-wrap.stream-edit-focus:not(.stream-playback-focus) .stream-scene-row {
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
+}
+
+.stream-scene-row-wrap.stream-edit-focus.stream-playback-focus .stream-scene-row {
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 65%, transparent),
+    inset 3px 0 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
 }
 
 .stream-scene-row-wrap.drag-source {
@@ -421,7 +432,8 @@
 }
 
 .stream-scene-row:not(.stream-scene-row--header):hover,
-.stream-scene-row.selected {
+.stream-scene-row.stream-playback-focus,
+.stream-scene-row.stream-edit-focus {
   background: color-mix(in srgb, var(--accent-teal) 10%, transparent);
 }
 
@@ -625,9 +637,22 @@
   text-align: left;
 }
 
-.stream-flow-card.selected {
+.stream-flow-card.selected,
+.stream-flow-card.stream-playback-focus {
   border-color: var(--accent-teal);
   box-shadow: inset 0 0 0 1px var(--accent-teal);
+}
+
+.stream-flow-card.stream-edit-focus:not(.stream-playback-focus) {
+  border-color: color-mix(in srgb, var(--accent-ochre) 55%, var(--border-subtle));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-ochre) 55%, transparent);
+}
+
+.stream-flow-card.stream-edit-focus.stream-playback-focus {
+  border-color: var(--accent-teal);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-teal),
+    0 0 0 1px color-mix(in srgb, var(--accent-ochre) 45%, transparent);
 }
 
 .stream-flow-number {

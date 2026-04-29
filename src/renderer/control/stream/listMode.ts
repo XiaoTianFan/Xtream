@@ -9,6 +9,7 @@ import {
   formatSubCueLabel,
   formatTriggerSummary,
 } from './formatting';
+import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
 import { createStreamCell } from './streamDom';
 
 let activeSceneRowMenu: HTMLElement | undefined;
@@ -56,7 +57,7 @@ function showSceneRowContextMenu(
     void window.xtream.stream.edit({ type: 'duplicate-scene', sceneId: scene.id }).then((s) => {
       const idx = s.stream.sceneOrder.indexOf(scene.id);
       const newId = idx >= 0 ? s.stream.sceneOrder[idx + 1] : scene.id;
-      ctx.setSelectedSceneId(newId);
+      ctx.setPlaybackAndEditFocus(newId);
       ctx.requestRender();
     });
   });
@@ -77,7 +78,7 @@ function showSceneRowContextMenu(
     }
     dismissSceneRowContextMenu();
     void window.xtream.stream.edit({ type: 'remove-scene', sceneId: scene.id }).then((s) => {
-      ctx.setSelectedSceneId(s.stream.sceneOrder[0]);
+      ctx.setPlaybackAndEditFocus(s.stream.sceneOrder[0]);
       ctx.expandedListSceneIds.delete(scene.id);
       ctx.requestRender();
     });
@@ -96,12 +97,16 @@ function showSceneRowContextMenu(
 
 export type StreamListModeContext = {
   streamState: StreamEnginePublicState | undefined;
-  selectedSceneId: SceneId | undefined;
+  playbackFocusSceneId: SceneId | undefined;
+  sceneEditSceneId: SceneId | undefined;
   /** Live dragging scene id (not snapshotted at render — required for HTML5 drop targets). */
   getListDragSceneId: () => SceneId | undefined;
   expandedListSceneIds: Set<SceneId>;
   currentState: DirectorState | undefined;
-  setSelectedSceneId: (id: SceneId | undefined) => void;
+  /** List/flow click: edit target only; does not move playback focus. */
+  setSceneEditFocus: (id: SceneId | undefined) => void;
+  /** Run-from-here, new scene, duplicate, etc.: align playback + edit focus. */
+  setPlaybackAndEditFocus: (id: SceneId | undefined) => void;
   setBottomTab: (tab: BottomTab) => void;
   clearDetailPane: () => void;
   setListDragSceneId: (id: SceneId | undefined) => void;
@@ -254,7 +259,7 @@ function createSceneListPhantomRow(stream: PersistedStreamConfig, ctx: StreamLis
         newId = order[order.length - 1];
       }
       if (newId) {
-        ctx.setSelectedSceneId(newId);
+        ctx.setPlaybackAndEditFocus(newId);
       }
       ctx.setBottomTab('scene');
       ctx.clearDetailPane();
@@ -274,18 +279,21 @@ function createSceneRowWrap(
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
   const runtimeRowStatus = runtimeState?.status ?? 'ready';
   const statusClass = scene.disabled ? 'disabled' : runtimeRowStatus;
+  const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(scene.id, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
+  const pb = pbFlag ? ' stream-playback-focus' : '';
+  const eb = ebFlag ? ' stream-edit-focus' : '';
   const wrap = document.createElement('div');
-  wrap.className = `stream-scene-row-wrap status-${statusClass}${scene.id === ctx.selectedSceneId ? ' focused' : ''}`;
+  wrap.className = `stream-scene-row-wrap status-${statusClass}${pb}${eb}`;
   wrap.dataset.sceneId = scene.id;
 
   const row = document.createElement('div');
-  row.className = `stream-scene-row ${scene.id === ctx.selectedSceneId ? 'selected' : ''} ${statusClass}${ctx.getListDragSceneId() === scene.id ? ' dragging' : ''}`;
+  row.className = `stream-scene-row${pb}${eb} ${statusClass}${ctx.getListDragSceneId() === scene.id ? ' dragging' : ''}`;
   row.draggable = true;
   row.addEventListener('click', (event) => {
     if ((event.target as HTMLElement).closest('button')) {
       return;
     }
-    ctx.setSelectedSceneId(scene.id);
+    ctx.setSceneEditFocus(scene.id);
     ctx.setBottomTab('scene');
     ctx.clearDetailPane();
     ctx.refreshSceneSelectionUi();
@@ -348,7 +356,7 @@ function createSceneRowWrap(
   const actions = document.createElement('div');
   actions.className = 'stream-scene-row-actions';
   const runHere = createButton('', 'icon-button stream-row-action', () => {
-    ctx.setSelectedSceneId(scene.id);
+    ctx.setPlaybackAndEditFocus(scene.id);
     ctx.setBottomTab('scene');
     ctx.clearDetailPane();
     ctx.refreshSceneSelectionUi();

@@ -38,7 +38,8 @@ export type { StreamSurfaceController } from './streamTypes';
 export function createStreamSurfaceController(options: StreamSurfaceOptions): StreamSurfaceController {
   let currentState: DirectorState | undefined;
   let streamState: StreamEnginePublicState | undefined;
-  let selectedSceneId: SceneId | undefined;
+  let sceneEditSceneId: SceneId | undefined;
+  let playbackFocusSceneId: SceneId | undefined;
   let mode: StreamWorkspacePaneContext['mode'] = 'list';
   let bottomTab: StreamBottomPaneContext['bottomTab'] = 'scene';
   let detailPane: StreamBottomPaneContext['detailPane'];
@@ -162,7 +163,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const signatureState = stripRuntimeMediaFromState(state);
     return JSON.stringify({
       stream: createStableStreamRenderModel(streamState),
-      selectedSceneId,
+      sceneEditSceneId,
+      playbackFocusSceneId,
       sceneEditSelection,
       mode,
       bottomTab,
@@ -316,29 +318,34 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
     syncListRuntimeProgress(requireRef('workspace'), streamState);
-    syncWorkspaceSceneSelection(requireRef('workspace'), selectedSceneId);
+    syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }
 
-  function syncWorkspaceSceneSelection(root: HTMLElement, sid: SceneId | undefined): void {
+  function syncWorkspaceSceneSelection(
+    root: HTMLElement,
+    playbackId: SceneId | undefined,
+    editId: SceneId | undefined,
+  ): void {
     for (const card of root.querySelectorAll<HTMLElement>('.stream-flow-card[data-scene-id]')) {
       const id = card.dataset.sceneId as SceneId | undefined;
       if (!id) {
         continue;
       }
-      const on = sid !== undefined && id === sid;
-      card.classList.toggle('selected', on);
+      card.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
+      card.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
     }
     for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
       const id = wrap.dataset.sceneId as SceneId | undefined;
       if (!id) {
         continue;
       }
-      const on = sid !== undefined && id === sid;
-      wrap.classList.toggle('focused', on);
+      wrap.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
+      wrap.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
       const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
       if (row) {
-        row.classList.toggle('selected', on);
+        row.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
+        row.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
       }
     }
   }
@@ -354,7 +361,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const mediaState = stripRuntimeMediaFromState(currentState);
     renderHeader();
     mediaPool?.syncPoolSelectionHighlight(mediaState);
-    syncWorkspaceSceneSelection(requireRef('workspace'), selectedSceneId);
+    syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     bottomRenderSignature = '';
     renderBottomPaneIfNeeded();
     mixerPanel?.syncOutputMeters(currentState);
@@ -387,23 +394,32 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   function syncSelectedScene(): void {
     const stream = streamState?.stream;
     if (!stream) {
-      selectedSceneId = undefined;
+      sceneEditSceneId = undefined;
+      playbackFocusSceneId = undefined;
       sceneEditSelection = { kind: 'scene' };
       return;
     }
-    if (!selectedSceneId || !stream.scenes[selectedSceneId]) {
-      selectedSceneId = stream.sceneOrder.find((id) => !stream.scenes[id]?.disabled) ?? stream.sceneOrder[0];
+    const fallback = stream.sceneOrder.find((id) => !stream.scenes[id]?.disabled) ?? stream.sceneOrder[0];
+    if (!sceneEditSceneId || !stream.scenes[sceneEditSceneId]) {
+      sceneEditSceneId = fallback;
       sceneEditSelection = { kind: 'scene' };
     }
     syncSceneEditSelection(stream);
+
+    const cursor = streamState?.runtime?.cursorSceneId;
+    if (cursor && stream.scenes[cursor]) {
+      playbackFocusSceneId = cursor;
+    } else if (!playbackFocusSceneId || !stream.scenes[playbackFocusSceneId]) {
+      playbackFocusSceneId = sceneEditSceneId ?? fallback;
+    }
   }
 
   function syncSceneEditSelection(stream: PersistedStreamConfig): void {
     if (sceneEditSelection.kind !== 'subcue') {
       return;
     }
-    const sc = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
-    if (!sc || sceneEditSelection.sceneId !== selectedSceneId || !sc.subCues[sceneEditSelection.subCueId]) {
+    const sc = sceneEditSceneId ? stream.scenes[sceneEditSceneId] : undefined;
+    if (!sc || sceneEditSelection.sceneId !== sceneEditSceneId || !sc.subCues[sceneEditSelection.subCueId]) {
       sceneEditSelection = { kind: 'scene' };
     }
   }
@@ -478,16 +494,16 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       playbackTimeline: streamState!.playbackTimeline,
       validationMessages: streamState!.validationMessages,
       currentState,
-      selectedSceneId,
+      sceneEditSceneId,
+      playbackFocusSceneId,
       headerEditField,
       options,
       setHeaderEditField: (field) => {
         headerEditField = field;
       },
       updateSelectedScene,
-      setSelectedSceneId: (id) => {
-        selectedSceneId = id as SceneId | undefined;
-        sceneEditSelection = { kind: 'scene' };
+      setPlaybackFocusSceneId: (id) => {
+        playbackFocusSceneId = id as SceneId | undefined;
         bottomRenderSignature = '';
       },
       requestRender: renderCurrent,
@@ -499,12 +515,19 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const stream = streamState!.stream;
     const ctx: StreamWorkspacePaneContext = {
       streamState,
-      selectedSceneId,
+      playbackFocusSceneId,
+      sceneEditSceneId,
       getListDragSceneId: () => listDragSceneId,
       expandedListSceneIds,
       currentState,
-      setSelectedSceneId: (id) => {
-        selectedSceneId = id;
+      setSceneEditFocus: (id) => {
+        sceneEditSceneId = id;
+        sceneEditSelection = { kind: 'scene' };
+        bottomRenderSignature = '';
+      },
+      setPlaybackAndEditFocus: (id) => {
+        sceneEditSceneId = id;
+        playbackFocusSceneId = id;
         sceneEditSelection = { kind: 'scene' };
         bottomRenderSignature = '';
       },
@@ -582,7 +605,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       presentationState: presentation,
       streamOutputPanel,
       streamState: streamState!,
-      selectedSceneId,
+      selectedSceneId: sceneEditSceneId,
       options,
       mixerPanel,
       displayWorkspace,
@@ -664,7 +687,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab,
       detailPane,
       selectedEntity,
-      selectedSceneId,
+      sceneEditSceneId,
       sceneEditSelection,
       performanceMode: currentState!.performanceMode,
       sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
@@ -675,7 +698,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function createSceneEditRenderModel(): unknown {
     const stream = streamState!.stream;
-    const scene = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
+    const scene = sceneEditSceneId ? stream.scenes[sceneEditSceneId] : undefined;
     return {
       stream,
       validationMessages: streamState!.validationMessages,
@@ -697,10 +720,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function isSelectedSceneRunning(): boolean {
-    if (!selectedSceneId) {
+    if (!sceneEditSceneId) {
       return false;
     }
-    return streamState?.runtime?.sceneStates[selectedSceneId]?.status === 'running';
+    return streamState?.runtime?.sceneStates[sceneEditSceneId]?.status === 'running';
   }
 
   function syncSceneEditRunningLock(): void {
@@ -716,16 +739,18 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function updateSelectedScene(update: Partial<PersistedSceneConfig>): void {
-    if (!selectedSceneId) {
+    if (!sceneEditSceneId) {
       return;
     }
-    void window.xtream.stream.edit({ type: 'update-scene', sceneId: selectedSceneId, update });
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: sceneEditSceneId, update });
   }
 
   function duplicateSelectedScene(sceneId: SceneId): void {
     void window.xtream.stream.edit({ type: 'duplicate-scene', sceneId }).then((state) => {
       const idx = state.stream.sceneOrder.indexOf(sceneId);
-      selectedSceneId = state.stream.sceneOrder[idx + 1] ?? sceneId;
+      const newId = state.stream.sceneOrder[idx + 1] ?? sceneId;
+      sceneEditSceneId = newId;
+      playbackFocusSceneId = newId;
       sceneEditSelection = { kind: 'scene' };
       bottomRenderSignature = '';
     });
@@ -733,7 +758,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function removeSelectedScene(sceneId: SceneId): void {
     void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((state) => {
-      selectedSceneId = state.stream.sceneOrder[0];
+      const first = state.stream.sceneOrder[0];
+      sceneEditSceneId = first;
+      playbackFocusSceneId = first;
       sceneEditSelection = { kind: 'scene' };
       bottomRenderSignature = '';
     });
@@ -789,7 +816,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return {
       mode,
       bottomTab,
-      selectedSceneId,
+      selectedSceneId: sceneEditSceneId,
       sceneEditSelection:
         sceneEditSelection.kind === 'subcue'
           ? { kind: 'subcue', subCueId: sceneEditSelection.subCueId }
@@ -822,14 +849,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab = snapshot.bottomTab;
     }
     if (snapshot.selectedSceneId && streamCfg.scenes[snapshot.selectedSceneId]) {
-      selectedSceneId = snapshot.selectedSceneId;
+      sceneEditSceneId = snapshot.selectedSceneId;
     }
     sceneEditSelection = { kind: 'scene' };
     const seSnap = snapshot.sceneEditSelection;
-    if (selectedSceneId && seSnap?.kind === 'subcue') {
-      const sc = streamCfg.scenes[selectedSceneId];
+    if (sceneEditSceneId && seSnap?.kind === 'subcue') {
+      const sc = streamCfg.scenes[sceneEditSceneId];
       if (sc?.subCues[seSnap.subCueId]) {
-        sceneEditSelection = { kind: 'subcue', sceneId: selectedSceneId, subCueId: seSnap.subCueId as SubCueId };
+        sceneEditSelection = { kind: 'subcue', sceneId: sceneEditSceneId, subCueId: seSnap.subCueId as SubCueId };
       }
     }
     expandedListSceneIds.clear();
@@ -857,6 +884,13 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       applyStreamLayoutPrefs(refs, readStreamLayoutPrefs());
       layoutCtl.syncSplitterAria();
     }
+    const pcursor = streamPublic.runtime?.cursorSceneId;
+    if (pcursor && streamCfg.scenes[pcursor]) {
+      playbackFocusSceneId = pcursor;
+    } else if (!playbackFocusSceneId || !streamCfg.scenes[playbackFocusSceneId]) {
+      playbackFocusSceneId =
+        sceneEditSceneId ?? streamCfg.sceneOrder.find((id) => !streamCfg.scenes[id]?.disabled) ?? streamCfg.sceneOrder[0];
+    }
   }
 
   function tickMixerBallistics(): void {
@@ -866,8 +900,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   function syncReferenceFromTransport(next: StreamEnginePublicState): void {
     const cursorSceneId = next.runtime?.cursorSceneId;
     if (cursorSceneId && next.stream.scenes[cursorSceneId]) {
-      selectedSceneId = cursorSceneId;
-      sceneEditSelection = { kind: 'scene' };
+      playbackFocusSceneId = cursorSceneId;
       bottomRenderSignature = '';
       renderCurrent();
     }
@@ -891,7 +924,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const transportState = deriveStreamTransportUiState({
       runtime: streamState.runtime,
       playbackTimeline: streamState.playbackTimeline,
-      selectedSceneId,
+      playbackFocusSceneId,
       playbackStream: streamState.playbackStream,
       isPatchTransportPlaying: currentState.paused === false,
     });
@@ -911,7 +944,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
             runtime: streamState.runtime,
             playbackStream: streamState.playbackStream,
             playbackTimeline: streamState.playbackTimeline,
-            selectedSceneId,
+            playbackFocusSceneId,
           }),
         );
       }

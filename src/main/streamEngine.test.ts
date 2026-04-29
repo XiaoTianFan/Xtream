@@ -388,6 +388,8 @@ describe('StreamEngine', () => {
   });
 
   it('plays a selected sequential scene from its absolute scheduled start', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 60 } } as DirectorState['visuals'],
     });
@@ -414,6 +416,7 @@ describe('StreamEngine', () => {
     expect(state.runtime?.offsetStreamMs).toBe(60_000);
     expect(state.runtime?.sceneStates['scene-1']?.status).toBe('complete');
     expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
+    vi.useRealTimers();
   });
 
   it('plays a selected overlapping offset scene without dropping earlier active scenes', () => {
@@ -542,6 +545,177 @@ describe('StreamEngine', () => {
     expect(afterJump.runtime?.cursorSceneId).toBe('scene-3');
     expect(afterJump.runtime?.currentStreamMs).toBe(45_000);
     expect(afterJump.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+  });
+
+  it('after an overlay scene ends, cursor advances to the next scene order row instead of regressing to the base loop', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const director = createDirector({
+      visuals: {
+        v1: { id: 'v1', durationSeconds: 60 },
+        v2: { id: 'v2', durationSeconds: 3 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.advanceTimersByTime(9000);
+    const state = engine.getPublicState();
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(state.runtime?.sceneStates['scene-3']?.status).toBe('ready');
+    expect(state.runtime?.cursorSceneId).toBe('scene-3');
+    vi.useRealTimers();
+  });
+
+  it('when overlay ends and follow-end starts the next scene same tick, cursor stays on the new runner not the base', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(200_000);
+    const director = createDirector({
+      visuals: {
+        v1: { id: 'v1', durationSeconds: 60 },
+        v2: { id: 'v2', durationSeconds: 3 },
+        v3: { id: 'v3', durationSeconds: 5 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'follow-end', followsSceneId: 'scene-2' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v3', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.advanceTimersByTime(9000);
+    const state = engine.getPublicState();
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(state.runtime?.sceneStates['scene-3']?.status).toBe('running');
+    expect(state.runtime?.cursorSceneId).toBe('scene-3');
+    vi.useRealTimers();
+  });
+
+  it('when overlay is the last scene, cursor falls back to the still-running base after overlay ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(300_000);
+    const director = createDirector({
+      visuals: {
+        v1: { id: 'v1', durationSeconds: 60 },
+        v2: { id: 'v2', durationSeconds: 3 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.advanceTimersByTime(9000);
+    const state = engine.getPublicState();
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(state.runtime?.cursorSceneId).toBe('scene-1');
+    vi.useRealTimers();
+  });
+
+  it('anti-regression skips disabled scenes when advancing after overlay ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(400_000);
+    const director = createDirector({
+      visuals: {
+        v1: { id: 'v1', durationSeconds: 60 },
+        v2: { id: 'v2', durationSeconds: 3 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3', 'scene-4'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'time-offset', followsSceneId: 'scene-1', offsetMs: 5000 },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'manual' },
+      disabled: true,
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: [],
+      subCues: {},
+    };
+    stream.scenes['scene-4'] = {
+      id: 'scene-4',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1' });
+    vi.advanceTimersByTime(9000);
+    const state = engine.getPublicState();
+    expect(state.runtime?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(state.runtime?.cursorSceneId).toBe('scene-4');
+    vi.useRealTimers();
   });
 
   it('running jump-next uses the latest scheduled running scene and keeps playback running', () => {

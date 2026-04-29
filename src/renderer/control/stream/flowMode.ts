@@ -1,11 +1,14 @@
 import type { DirectorState, PersistedStreamConfig, SceneId } from '../../../shared/types';
 import { formatSceneDuration, formatTriggerSummary } from './formatting';
+import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
 import type { BottomTab } from './streamTypes';
 
 export type StreamFlowModeContext = {
-  selectedSceneId: SceneId | undefined;
+  playbackFocusSceneId: SceneId | undefined;
+  sceneEditSceneId: SceneId | undefined;
   currentState: DirectorState | undefined;
-  setSelectedSceneId: (id: SceneId | undefined) => void;
+  setSceneEditFocus: (id: SceneId | undefined) => void;
+  setPlaybackAndEditFocus: (id: SceneId | undefined) => void;
   setBottomTab: (tab: BottomTab) => void;
   clearDetailPane: () => void;
   requestRender: () => void;
@@ -20,9 +23,12 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     if (!scene) {
       return;
     }
+    const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(sceneId, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
+    const pb = pbFlag ? ' stream-playback-focus' : '';
+    const eb = ebFlag ? ' stream-edit-focus' : '';
     const card = document.createElement('button');
     card.type = 'button';
-    card.className = `stream-flow-card ${sceneId === ctx.selectedSceneId ? 'selected' : ''}`;
+    card.className = `stream-flow-card${pb}${eb}`;
     card.dataset.sceneId = sceneId;
     card.style.left = `${scene.flow?.x ?? 32 + index * 220}px`;
     card.style.top = `${scene.flow?.y ?? 42 + (index % 2) * 110}px`;
@@ -37,7 +43,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     meta.textContent = `${formatTriggerSummary(stream, scene)} | ${formatSceneDuration(ctx.currentState, scene)}`;
     card.append(number, title, meta);
     card.addEventListener('click', () => {
-      ctx.setSelectedSceneId(sceneId);
+      ctx.setSceneEditFocus(sceneId);
       ctx.setBottomTab('scene');
       ctx.clearDetailPane();
       ctx.refreshSceneSelectionUi();

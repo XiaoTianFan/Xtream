@@ -986,11 +986,38 @@ export class StreamEngine extends EventEmitter {
 
     const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
     if (runningEntries.length > 0) {
-      this.runtime.cursorSceneId = runningEntries.reduce((latest, state) => {
+      const candidateSceneId = runningEntries.reduce((latest, state) => {
         const latestStart = latest.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
         const stateStart = state.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
         return stateStart >= latestStart ? state : latest;
       }, runningEntries[0]).sceneId;
+      const prevCursor = this.runtime.cursorSceneId;
+      const prevSt = prevCursor ? sceneStates[prevCursor] : undefined;
+      const prevStart = prevSt?.scheduledStartMs;
+      const candSt = sceneStates[candidateSceneId];
+      const candStart = candSt?.scheduledStartMs;
+      const prevEnded = Boolean(
+        prevCursor && prevSt && (prevSt.status === 'complete' || prevSt.status === 'skipped'),
+      );
+      if (
+        prevEnded &&
+        prevStart !== undefined &&
+        candStart !== undefined &&
+        candStart < prevStart
+      ) {
+        this.runtime.cursorSceneId = this.firstEnabledSceneAfter(stream, prevCursor!) ?? candidateSceneId;
+      } else if (
+        prevCursor &&
+        prevSt?.status === 'ready' &&
+        prevStart !== undefined &&
+        candStart !== undefined &&
+        candStart < prevStart
+      ) {
+        /** Keep playback focus on a later stacked row (e.g. manual) instead of regressing to an earlier-running base. */
+        this.runtime.cursorSceneId = prevCursor;
+      } else {
+        this.runtime.cursorSceneId = candidateSceneId;
+      }
     }
     if (this.runtime.status === 'running' && this.allEnabledScenesTerminal(sceneStates, stream)) {
       this.timelineManualHoldStreamMs = undefined;
@@ -1060,6 +1087,15 @@ export class StreamEngine extends EventEmitter {
 
   private firstEnabledSceneId(): SceneId | undefined {
     return this.playbackStream.sceneOrder.find((id) => !this.playbackStream.scenes[id]?.disabled);
+  }
+
+  /** First enabled scene strictly after `afterSceneId` in `sceneOrder`, or `undefined` if none. */
+  private firstEnabledSceneAfter(stream: PersistedStreamConfig, afterSceneId: SceneId): SceneId | undefined {
+    const idx = stream.sceneOrder.indexOf(afterSceneId);
+    if (idx < 0) {
+      return undefined;
+    }
+    return stream.sceneOrder.slice(idx + 1).find((id) => !stream.scenes[id]?.disabled);
   }
 
   private sceneStartMs(sceneId: SceneId): number | undefined {

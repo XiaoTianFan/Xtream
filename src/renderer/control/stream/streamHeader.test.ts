@@ -125,7 +125,7 @@ describe('deriveStreamTransportUiState', () => {
       deriveStreamTransportUiState({
         runtime: null,
         playbackTimeline: timeline('valid'),
-        selectedSceneId: 'scene-1',
+        playbackFocusSceneId: 'scene-1',
         playbackStream: stream,
       }).playDisabled,
     ).toBe(false);
@@ -136,7 +136,7 @@ describe('deriveStreamTransportUiState', () => {
     const state = deriveStreamTransportUiState({
       runtime: null,
       playbackTimeline: timeline('invalid'),
-      selectedSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
       playbackStream: stream,
     });
 
@@ -155,7 +155,7 @@ describe('deriveStreamTransportUiState', () => {
       deriveStreamTransportUiState({
         runtime: pausedRuntime,
         playbackTimeline: timeline('valid'),
-        selectedSceneId: 'scene-1',
+        playbackFocusSceneId: 'scene-1',
         playbackStream: stream,
       }).pauseDisabled,
     ).toBe(true);
@@ -166,7 +166,7 @@ describe('deriveStreamTransportUiState', () => {
     const state = deriveStreamTransportUiState({
       runtime: null,
       playbackTimeline: timeline('valid'),
-      selectedSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
       playbackStream: stream,
       isPatchTransportPlaying: true,
     });
@@ -186,7 +186,7 @@ describe('createGlobalStreamPlayCommand', () => {
       selectedSceneIdAtPause: 'scene-1',
     };
 
-    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, selectedSceneId: 'scene-1' })).toEqual({
+    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, playbackFocusSceneId: 'scene-1' })).toEqual({
       type: 'play',
       source: 'global',
     });
@@ -202,7 +202,7 @@ describe('createGlobalStreamPlayCommand', () => {
       selectedSceneIdAtPause: 'scene-1',
     };
 
-    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, selectedSceneId: 'scene-2' })).toEqual({
+    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, playbackFocusSceneId: 'scene-2' })).toEqual({
       type: 'play',
       sceneId: 'scene-2',
       source: 'global',
@@ -224,7 +224,7 @@ describe('createGlobalStreamPlayCommand', () => {
       selectedSceneIdAtPause: 'scene-1',
     };
 
-    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, selectedSceneId: 'scene-2' })).toEqual({
+    expect(createGlobalStreamPlayCommand({ runtime, playbackStream: stream, playbackTimeline: playableTimeline, playbackFocusSceneId: 'scene-2' })).toEqual({
       type: 'play',
       source: 'global',
     });
@@ -238,8 +238,21 @@ describe('createGlobalStreamPlayCommand', () => {
         runtime: null,
         playbackStream,
         playbackTimeline: playableTimeline,
-        selectedSceneId: 'scene-2',
+        playbackFocusSceneId: 'scene-2',
       }),
     ).toEqual({ type: 'play', source: 'global' });
+  });
+
+  it('targets playback focus scene id when starting play while not paused', () => {
+    const { stream } = getDefaultStreamPersistence();
+    addSecondScene(stream);
+    expect(
+      createGlobalStreamPlayCommand({
+        runtime: { status: 'running', sceneStates: {}, originWallTimeMs: 0, offsetStreamMs: 0 },
+        playbackStream: stream,
+        playbackTimeline: playableTimeline,
+        playbackFocusSceneId: 'scene-2',
+      }),
+    ).toEqual({ type: 'play', sceneId: 'scene-2', source: 'global' });
   });
 });
