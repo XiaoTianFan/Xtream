@@ -162,7 +162,7 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
       }
     }),
     createButton('Refresh Outputs', 'secondary', () => patchElements.refreshOutputsButton.click()),
-    createButton('Reset Meters', 'secondary', () => patchElements.resetMetersButton.click()),
+    createButton('Reset Meters', 'secondary', () => elements.resetMetersButton.click()),
   );
   actions.append(actionRow);
 

@@ -160,6 +160,28 @@ describe('StreamEngine', () => {
     expect(engine.getPublicState().validationMessages).toContainEqual(expect.stringContaining('no calculable duration'));
   });
 
+  it('recalculates invalid timelines when media durations arrive after load', () => {
+    const state: Partial<DirectorState> = {
+      visuals: { v1: { id: 'v1', type: 'video', ready: false } } as DirectorState['visuals'],
+    };
+    const director = createDirector(state);
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+    expect(engine.getPublicState().playbackTimeline.status).toBe('invalid');
+
+    state.visuals = { v1: { id: 'v1', type: 'video', durationSeconds: 313.324, ready: true } } as DirectorState['visuals'];
+    const refreshed = engine.refreshMediaDurations();
+
+    expect(refreshed.playbackTimeline.status).toBe('valid');
+    expect(refreshed.playbackTimeline.expectedDurationMs).toBe(313_324);
+    expect(refreshed.validationMessages).not.toContainEqual(expect.stringContaining('no calculable duration'));
+  });
+
   it('keeps the last valid playback stream and timeline when an edit timeline becomes invalid', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
@@ -367,6 +389,33 @@ describe('StreamEngine', () => {
     expect(state.runtime?.status).toBe('idle');
     expect(state.runtime?.cursorSceneId).toBe('scene-2');
     expect(state.runtime?.currentStreamMs).toBe(5000);
+    expect(engine.isStreamPlaybackActive()).toBe(false);
+  });
+
+  it('uses the focused scene as idle jump-next reference before any runtime exists', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3', 'scene-4'];
+    for (const id of stream.sceneOrder) {
+      stream.scenes[id] = {
+        id,
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      };
+    }
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'jump-next', referenceSceneId: 'scene-3' });
+
+    expect(state.runtime?.status).toBe('idle');
+    expect(state.runtime?.cursorSceneId).toBe('scene-4');
+    expect(state.runtime?.currentStreamMs).toBe(15_000);
     expect(engine.isStreamPlaybackActive()).toBe(false);
   });
 

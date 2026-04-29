@@ -12,6 +12,7 @@ export function installPatchIcons(): void {
   decorateIconButton(elements.createShowButton, 'Plus', 'Create show project');
   decorateIconButton(elements.addVisualsButton, 'Plus', 'Add visuals');
   decorateIconButton(elements.visualPoolLayoutToggleButton, 'LayoutGrid', 'Show grid view');
+  decorateIconButton(elements.liveGridPreviewToggleButton, 'Play', 'Live previews in grid');
   decorateIconButton(elements.createDisplayButton, 'Plus', 'Add display');
   decorateIconButton(elements.createOutputButton, 'Plus', 'Create output');
   decorateIconButton(elements.refreshOutputsButton, 'RefreshCcw', 'Refresh outputs');

@@ -14,6 +14,7 @@ type SurfaceRouterOptions = {
   surfaces: SurfaceController[];
   initialSurface?: ControlSurface;
   getCurrentState: () => DirectorState | undefined;
+  syncGlobalOperator?: (state: DirectorState) => void;
 };
 
 export type SurfaceRouter = {
@@ -24,7 +25,7 @@ export type SurfaceRouter = {
   render: (state: DirectorState) => void;
 };
 
-export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCurrentState }: SurfaceRouterOptions): SurfaceRouter {
+export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCurrentState, syncGlobalOperator }: SurfaceRouterOptions): SurfaceRouter {
   const surfaceById = new Map(surfaces.map((surface) => [surface.id, surface]));
   let activeSurface = initialSurface;
   let mountedSurface: ControlSurface | undefined;
@@ -62,6 +63,7 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
     syncShellState();
     const controller = surfaceById.get(activeSurface);
     if (!controller) {
+      syncGlobalOperator?.(state);
       return;
     }
     if (mountedSurface !== activeSurface) {
@@ -71,10 +73,12 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
     }
     const signature = controller.createRenderSignature?.(state);
     if (signature !== undefined && surfaceRenderSignature === signature) {
+      syncGlobalOperator?.(state);
       return;
     }
     surfaceRenderSignature = signature ?? '';
     controller.render(state);
+    syncGlobalOperator?.(state);
   }
 
   function syncShellState(): void {

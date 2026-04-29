@@ -1,4 +1,5 @@
 import type { DirectorState, MediaValidationIssue, ShowConfigOperationResult } from '../../../shared/types';
+import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 
 type ShowActionsOptions = {
   renderState: (state: DirectorState) => void;
@@ -39,6 +40,7 @@ export function createShowActions(options: ShowActionsOptions) {
       options.clearLaunchPresentationLoading?.();
       return;
     }
+    clearLiveVisualPoolThumbnailCache();
     try {
       options.renderState(result.state);
       await options.hydrateAfterShowLoaded?.(result);
@@ -58,6 +60,7 @@ export function createShowActions(options: ShowActionsOptions) {
       options.clearLaunchPresentationLoading?.();
       return;
     }
+    clearLiveVisualPoolThumbnailCache();
     try {
       options.clearSelection();
       options.renderState(result.state);

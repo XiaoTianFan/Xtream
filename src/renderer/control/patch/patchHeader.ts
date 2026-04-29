@@ -7,7 +7,6 @@ import { createTransportController } from './transportControls';
 
 type PatchHeaderControllerOptions = {
   getState: () => DirectorState | undefined;
-  getSoloOutputCount: () => number;
   getIsStreamPlaybackActive: () => boolean;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: DirectorState['readiness']['issues']) => void;
@@ -19,7 +18,6 @@ export type PatchHeaderController = ReturnType<typeof createPatchHeaderControlle
 export function createPatchHeaderController(options: PatchHeaderControllerOptions) {
   const transport = createTransportController({
     getState: options.getState,
-    getSoloOutputCount: options.getSoloOutputCount,
     getIsStreamPlaybackActive: options.getIsStreamPlaybackActive,
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
@@ -79,15 +77,6 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     elements.saveShowAsButton.addEventListener('click', () => void options.showActions.saveShowAs());
     elements.openShowButton.addEventListener('click', () => void options.showActions.openShow());
     elements.createShowButton.addEventListener('click', () => void options.showActions.createShow());
-    elements.globalAudioMuteButton.addEventListener('click', async () => {
-      options.renderState(await window.xtream.director.updateGlobalState({ globalAudioMuted: !options.getState()?.globalAudioMuted }));
-    });
-    elements.displayBlackoutButton.addEventListener('click', async () => {
-      options.renderState(await window.xtream.director.updateGlobalState({ globalDisplayBlackout: !options.getState()?.globalDisplayBlackout }));
-    });
-    elements.performanceModeButton.addEventListener('click', async () => {
-      options.renderState(await window.xtream.director.updateGlobalState({ performanceMode: !options.getState()?.performanceMode }));
-    });
   }
 
   function sync(state: DirectorState): void {

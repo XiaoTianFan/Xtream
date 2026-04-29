@@ -1,5 +1,6 @@
 import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
 import type { ControlSurface } from '../shared/types';
+import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 import { elements } from './elements';
 import { waitForLaunchPresentationReady } from './launchPresentationReady';
 
@@ -53,6 +54,7 @@ export function createLaunchDashboardController({
     setLaunchDashboardLoadingUi(true);
     try {
       clearSelection();
+      clearLiveVisualPoolThumbnailCache();
       renderState(result.state);
       await hydrateAfterShowLoaded?.(result);
       renderState(result.state);

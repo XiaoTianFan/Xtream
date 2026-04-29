@@ -874,7 +874,11 @@ function registerIpcHandlers(): void {
     return true;
   });
 
-  ipcMain.handle('visual:metadata', (_event, report: VisualMetadataReport) => director.updateVisualMetadata(report));
+  ipcMain.handle('visual:metadata', (_event, report: VisualMetadataReport) => {
+    const state = director.updateVisualMetadata(report);
+    streamEngine.refreshMediaDurations();
+    return state;
+  });
 
   ipcMain.handle('live-capture:list-desktop-sources', () => listDesktopCaptureSources());
 
@@ -990,7 +994,11 @@ function registerIpcHandlers(): void {
     return sources;
   });
 
-  ipcMain.handle('audio-source:metadata', (_event, report: AudioMetadataReport) => director.updateAudioMetadata(report));
+  ipcMain.handle('audio-source:metadata', (_event, report: AudioMetadataReport) => {
+    const state = director.updateAudioMetadata(report);
+    streamEngine.refreshMediaDurations();
+    return state;
+  });
 
   ipcMain.handle('output:create', () => {
     const output = director.createVirtualOutput();

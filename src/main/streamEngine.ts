@@ -107,6 +107,27 @@ export class StreamEngine extends EventEmitter {
     };
   }
 
+  refreshMediaDurations(): StreamEnginePublicState {
+    const wasRunning = this.runtime?.status === 'running' || this.runtime?.status === 'preloading';
+    const runningCursorMs = wasRunning ? this.getRuntimeStreamMs() : undefined;
+    this.recalculateEditTimeline();
+    if (this.editTimeline.status === 'valid') {
+      this.promoteEditTimeline();
+    }
+    this.revalidate();
+    if (this.runtime) {
+      if (wasRunning && runningCursorMs !== undefined) {
+        this.runtime.offsetStreamMs = runningCursorMs;
+        this.runtime.currentStreamMs = runningCursorMs;
+        this.runtime.originWallTimeMs = Date.now();
+        this.runtime.startedWallTimeMs = this.runtime.originWallTimeMs;
+      }
+      this.recomputeRuntime();
+    }
+    this.emitState();
+    return this.getPublicState();
+  }
+
   applyEdit(command: StreamEditCommand): StreamEnginePublicState {
     switch (command.type) {
       case 'update-stream': {

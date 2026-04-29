@@ -25,6 +25,12 @@ export const elements = {
   extractionOverlayMessage: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayMessage'), 'extractionOverlayMessage'),
   extractionOverlayError: assertElement(document.querySelector<HTMLPreElement>('#extractionOverlayError'), 'extractionOverlayError'),
   extractionOverlayActions: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayActions'), 'extractionOverlayActions'),
+  runtimeVersionLabel: assertElement(document.querySelector<HTMLSpanElement>('#runtimeVersionLabel'), 'runtimeVersionLabel'),
+  globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
+  displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
+  performanceModeButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceModeButton'), 'performanceModeButton'),
+  clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
+  resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
 };
 
 export type ControlElements = typeof elements;

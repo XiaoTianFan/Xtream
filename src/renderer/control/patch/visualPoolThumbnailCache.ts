@@ -24,3 +24,12 @@ export function setVisualPoolThumbDataUrl(visual: VisualState, dataUrl: string):
   }
   thumbDataUrlByKey.set(key, dataUrl);
 }
+
+/** Drop pool grid JPEG thumbnails for live visuals (in-memory only). Call after another show is loaded so grid cards start paused without a stale frame. */
+export function clearLiveVisualPoolThumbnailCache(): void {
+  for (const key of [...thumbDataUrlByKey.keys()]) {
+    if (key.startsWith('live:')) {
+      thumbDataUrlByKey.delete(key);
+    }
+  }
+}

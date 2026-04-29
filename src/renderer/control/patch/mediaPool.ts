@@ -11,6 +11,27 @@ type PoolSort = 'label' | 'duration' | 'status';
 type VisualPoolLayout = 'list' | 'grid';
 
 const VISUAL_POOL_LAYOUT_STORAGE_KEY = 'xtream.visualPoolLayout';
+const LIVE_GRID_PREVIEW_STORAGE_KEY = 'xtream.liveGridPreviewEnabled';
+
+function readStoredLiveGridPreviewEnabled(): boolean {
+  try {
+    const v = localStorage.getItem(LIVE_GRID_PREVIEW_STORAGE_KEY);
+    if (v === '0' || v === 'false') {
+      return false;
+    }
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function persistLiveGridPreviewEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(LIVE_GRID_PREVIEW_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
 
 function readStoredVisualPoolLayout(): VisualPoolLayout {
   try {
@@ -55,6 +76,7 @@ export type MediaPoolElements = {
   poolSortSelect: HTMLSelectElement;
   addVisualsButton: HTMLButtonElement;
   visualPoolLayoutToggleButton: HTMLButtonElement;
+  liveGridPreviewToggleButton: HTMLButtonElement;
 };
 
 type MediaPoolControllerOptions = {
@@ -79,6 +101,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   let activeLiveCaptureModalKeydown: ((event: KeyboardEvent) => void) | undefined;
   let activeLiveCaptureModalCleanups: Array<() => void> = [];
   let visualPoolLayout: VisualPoolLayout = readStoredVisualPoolLayout();
+  let liveGridPreviewEnabled = readStoredLiveGridPreviewEnabled();
   let visualPoolGridCleanups: Array<() => void> = [];
   let lastListVisualsDomKey: string | undefined;
   let lastGridVisualsDomKey: string | undefined;
@@ -101,7 +124,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   }
 
   function visualsContentKey(state: DirectorState): string {
-    return `${createVisualRenderSignature(state)}:${poolSearchQuery}:${poolSort}`;
+    return `${createVisualPoolContentSignature(state)}:${poolSearchQuery}:${poolSort}`;
   }
 
   function updateVisualPoolPanesVisibility(): void {
@@ -182,7 +205,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   }
 
   function createRenderSignature(state: DirectorState): string {
-    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}`;
+    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}:${liveGridPreviewEnabled ? '1' : '0'}`;
   }
 
   function createVisualRow(visual: VisualState): HTMLElement {
@@ -247,9 +270,14 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
 
     const preview = document.createElement('div');
     preview.className = 'visual-pool-card__preview';
-    mountVisualPoolGridPreview(preview, visual, (cleanup) => {
-      visualPoolGridCleanups.push(cleanup);
-    });
+    mountVisualPoolGridPreview(
+      preview,
+      visual,
+      (cleanup) => {
+        visualPoolGridCleanups.push(cleanup);
+      },
+      { livePoolPreviewGloballyAllowed: liveGridPreviewEnabled },
+    );
 
     const footer = document.createElement('div');
     footer.className = 'visual-pool-card__footer';
@@ -808,6 +836,21 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     }
   }
 
+  function syncLiveGridPreviewToggle(): void {
+    const btn = elements.liveGridPreviewToggleButton;
+    const show = activePoolTab === 'visuals' && visualPoolLayout === 'grid';
+    btn.hidden = !show;
+    if (!show) {
+      return;
+    }
+    btn.setAttribute('aria-pressed', String(liveGridPreviewEnabled));
+    if (liveGridPreviewEnabled) {
+      decorateIconButton(btn, 'Play', 'Live previews in grid: on — click to turn off');
+    } else {
+      decorateIconButton(btn, 'Pause', 'Live previews in grid: off — click to turn on');
+    }
+  }
+
   function syncPoolTabs(): void {
     const visualActive = activePoolTab === 'visuals';
     elements.visualTabButton.classList.toggle('active', visualActive);
@@ -817,6 +860,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.addVisualsButton.title = visualActive ? 'Add visuals' : 'Add external audio';
     elements.addVisualsButton.setAttribute('aria-label', visualActive ? 'Add visuals' : 'Add external audio');
     syncVisualPoolLayoutToggle();
+    syncLiveGridPreviewToggle();
   }
 
   function setPoolTab(tab: PoolTab): void {
@@ -939,6 +983,12 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       persistVisualPoolLayout(visualPoolLayout);
       renderCurrentState();
     });
+    elements.liveGridPreviewToggleButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      liveGridPreviewEnabled = !liveGridPreviewEnabled;
+      persistLiveGridPreviewEnabled(liveGridPreviewEnabled);
+      renderCurrentState();
+    });
     elements.addVisualsButton.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (activePoolTab === 'audio') {
@@ -990,6 +1040,57 @@ function createVisualRenderSignature(state: DirectorState): string {
         playbackRate: visual.playbackRate,
         fileSizeBytes: visual.fileSizeBytes,
       })),
+  );
+}
+
+/**
+ * Key for rebuilding media pool list/grid rows. For live visuals, omits `width`, `height`, and `ready`
+ * so hover pool preview metadata does not thrash the DOM (that feedback loop would detach/re-attach capture in a loop).
+ */
+function createVisualPoolContentSignature(state: DirectorState): string {
+  return JSON.stringify(
+    Object.values(state.visuals)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((visual) =>
+        visual.kind === 'live'
+          ? {
+              id: visual.id,
+              label: visual.label,
+              type: visual.type,
+              path: visual.path,
+              url: visual.url,
+              error: visual.error,
+              durationSeconds: visual.durationSeconds,
+              hasEmbeddedAudio: visual.hasEmbeddedAudio,
+              kind: visual.kind,
+              capture: visual.capture,
+              opacity: visual.opacity,
+              brightness: visual.brightness,
+              contrast: visual.contrast,
+              playbackRate: visual.playbackRate,
+              fileSizeBytes: visual.fileSizeBytes,
+            }
+          : {
+              id: visual.id,
+              label: visual.label,
+              type: visual.type,
+              path: visual.path,
+              url: visual.url,
+              ready: visual.ready,
+              error: visual.error,
+              durationSeconds: visual.durationSeconds,
+              width: visual.width,
+              height: visual.height,
+              hasEmbeddedAudio: visual.hasEmbeddedAudio,
+              kind: visual.kind,
+              capture: undefined,
+              opacity: visual.opacity,
+              brightness: visual.brightness,
+              contrast: visual.contrast,
+              playbackRate: visual.playbackRate,
+              fileSizeBytes: visual.fileSizeBytes,
+            },
+      ),
   );
 }
 

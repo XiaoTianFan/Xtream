@@ -11,6 +11,7 @@ export type StreamHeaderRenderContext = {
   playbackStream: PersistedStreamConfig;
   runtime: StreamEnginePublicState['runtime'];
   playbackTimeline: StreamEnginePublicState['playbackTimeline'];
+  validationMessages: string[];
   currentState: DirectorState | undefined;
   selectedSceneId: string | undefined;
   headerEditField: 'title' | 'note' | undefined;
@@ -34,6 +35,7 @@ export function deriveStreamTransportUiState(args: {
 }): {
   backDisabled: boolean;
   playDisabled: boolean;
+  playDisabledReason?: string;
   pauseDisabled: boolean;
   nextDisabled: boolean;
 } {
@@ -42,9 +44,18 @@ export function deriveStreamTransportUiState(args: {
   const paused = status === 'paused';
   const hasRuntimeReference = Boolean(args.runtime?.cursorSceneId);
   const hasEnabledScene = args.playbackStream.sceneOrder.some((id) => !args.playbackStream.scenes[id]?.disabled);
+  let playDisabledReason: string | undefined;
+  if (args.playbackTimeline.status !== 'valid') {
+    playDisabledReason = args.playbackTimeline.notice ?? 'Stream timeline has calculation errors.';
+  } else if (!hasEnabledScene) {
+    playDisabledReason = 'No enabled Stream scenes are available to play.';
+  } else if (args.isPatchTransportPlaying === true) {
+    playDisabledReason = 'Patch playback is active.';
+  }
   return {
     backDisabled: running,
-    playDisabled: args.playbackTimeline.status !== 'valid' || !hasEnabledScene || args.isPatchTransportPlaying === true,
+    playDisabled: playDisabledReason !== undefined,
+    playDisabledReason,
     pauseDisabled: status !== 'running',
     nextDisabled: !args.selectedSceneId && !running && !paused && !hasRuntimeReference,
   };
@@ -95,6 +106,15 @@ function getStreamCurrentMs(runtime: StreamEnginePublicState['runtime'], state: 
     return (runtime.offsetStreamMs ?? 0) + (Date.now() - runtime.originWallTimeMs) * rate;
   }
   return runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs ?? 0;
+}
+
+function formatStreamDuration(playbackTimeline: StreamEnginePublicState['playbackTimeline']): string {
+  if (playbackTimeline.status !== 'valid') {
+    return '/ timeline error';
+  }
+  return playbackTimeline.expectedDurationMs !== undefined
+    ? `/ ${formatTimecode(playbackTimeline.expectedDurationMs / 1000)}`
+    : '/ --:--:--';
 }
 
 function createRateButton(ctx: StreamHeaderRenderContext): HTMLButtonElement {
@@ -177,7 +197,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   slider.min = '0';
   slider.step = '0.01';
   slider.setAttribute('aria-label', 'Stream timeline scrubber');
-  const durationMs = runtime?.expectedDurationMs;
+  const durationMs = ctx.playbackTimeline.expectedDurationMs ?? runtime?.expectedDurationMs;
   const currentMs = getStreamCurrentMs(runtime, currentState);
   if (durationMs === undefined || durationMs <= 0) {
     slider.disabled = true;
@@ -223,6 +243,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
 export function syncStreamHeaderRuntime(
   headerEl: HTMLElement,
   runtime: StreamEnginePublicState['runtime'],
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'],
   currentState: DirectorState | undefined,
 ): void {
   const currentMs = getStreamCurrentMs(runtime, currentState);
@@ -230,8 +251,12 @@ export function syncStreamHeaderRuntime(
   if (timecode) {
     timecode.textContent = formatTimecode(currentMs / 1000);
   }
+  const duration = headerEl.querySelector<HTMLElement>('[data-stream-duration="true"]');
+  if (duration) {
+    duration.textContent = formatStreamDuration(playbackTimeline);
+  }
   const slider = headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]');
-  const durationMs = runtime?.expectedDurationMs;
+  const durationMs = playbackTimeline.expectedDurationMs ?? runtime?.expectedDurationMs;
   if (!slider) {
     return;
   }
@@ -330,6 +355,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   const selectedScene = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
   const selectedScenePlayable = playableSceneId(playbackStream, ctx.playbackTimeline, selectedSceneId) !== undefined;
   const currentMs = getStreamCurrentMs(runtime, currentState);
+  const timelineIssue = ctx.validationMessages.find((message) => message.includes('Stream timeline')) ?? ctx.playbackTimeline.notice;
   const transportState = deriveStreamTransportUiState({
     runtime,
     playbackTimeline: ctx.playbackTimeline,
@@ -339,9 +365,16 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   });
 
   const timecode = document.createElement('div');
-  timecode.className = 'timecode stream-timecode';
-  timecode.dataset.streamTimecode = 'true';
-  timecode.textContent = formatTimecode(currentMs / 1000);
+  timecode.className = 'stream-timecode-wrap';
+  const currentTimecode = document.createElement('span');
+  currentTimecode.className = 'timecode stream-timecode';
+  currentTimecode.dataset.streamTimecode = 'true';
+  currentTimecode.textContent = formatTimecode(currentMs / 1000);
+  const duration = document.createElement('span');
+  duration.className = 'stream-duration-total';
+  duration.dataset.streamDuration = 'true';
+  duration.textContent = formatStreamDuration(ctx.playbackTimeline);
+  timecode.append(currentTimecode, duration);
 
   const transport = document.createElement('div');
   transport.className = 'stream-transport transport-cluster';
@@ -362,12 +395,15 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
     '',
     () => void window.xtream.stream.transport(createGlobalStreamPlayCommand({ runtime, playbackStream, playbackTimeline: ctx.playbackTimeline, selectedSceneId })),
   );
+  const playDisabledDetail =
+    transportState.playDisabledReason && ctx.playbackTimeline.status === 'invalid' && timelineIssue ? timelineIssue : transportState.playDisabledReason;
   const playTooltip =
-    runtime?.status === 'paused'
+    playDisabledDetail ??
+    (runtime?.status === 'paused'
       ? 'Resume stream'
       : selectedScenePlayable
         ? 'Play from selected scene'
-        : 'Play from cursor';
+        : 'Play from cursor');
   decorateIconButton(play, 'Play', playTooltip);
   play.disabled = transportState.playDisabled;
   const pause = createButton('Pause', 'secondary', () => void window.xtream.stream.transport({ type: 'pause' }));
@@ -379,6 +415,11 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   decorateIconButton(next, 'SkipForward', 'Jump to next scene');
   next.disabled = transportState.nextDisabled;
   transport.append(back, play, pause, next, createRateButton(ctx));
+
+  const transportStatus = document.createElement('div');
+  transportStatus.className = 'stream-transport-status';
+  transportStatus.hidden = !playDisabledDetail && !timelineIssue;
+  transportStatus.textContent = playDisabledDetail ?? timelineIssue ?? '';
 
   const titleStack = document.createElement('div');
   titleStack.className = 'stream-scene-title-stack';
@@ -417,7 +458,10 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
 
   const headerCenter = document.createElement('div');
   headerCenter.className = 'stream-header-center';
-  headerCenter.append(transport, titleStack);
+  const transportStack = document.createElement('div');
+  transportStack.className = 'stream-transport-stack';
+  transportStack.append(transport, transportStatus);
+  headerCenter.append(transportStack, titleStack);
   const headerMain = document.createElement('div');
   headerMain.className = 'stream-header-main';
   headerMain.append(timecode, headerCenter, actions);

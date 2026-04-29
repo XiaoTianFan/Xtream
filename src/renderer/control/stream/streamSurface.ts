@@ -301,7 +301,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (!mounted || !currentState || !streamState) {
       return;
     }
-    syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, currentState);
+    syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
     syncListRuntimeProgress(requireRef('workspace'), streamState);
     syncSceneEditRunningLock();
   }
@@ -421,6 +421,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       playbackStream: streamState!.playbackStream,
       runtime: streamState!.runtime,
       playbackTimeline: streamState!.playbackTimeline,
+      validationMessages: streamState!.validationMessages,
       currentState,
       selectedSceneId,
       headerEditField,

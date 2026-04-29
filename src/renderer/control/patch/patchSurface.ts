@@ -114,7 +114,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
 
   header = createPatchHeaderController({
     getState: () => currentState,
-    getSoloOutputCount: mixerPanel.getSoloOutputCount,
     getIsStreamPlaybackActive: options.getIsStreamPlaybackActive,
     renderState: options.renderState,
     setShowStatus: options.setShowStatus,
@@ -168,12 +167,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     });
     elements.expandMixerButton.addEventListener('click', () => {
       setTemporaryMixerWidth(getMaxMixerWidth());
-    });
-    elements.clearSoloButton.addEventListener('click', () => {
-      mixerPanel.setSoloOutputIds([]);
-    });
-    elements.resetMetersButton.addEventListener('click', () => {
-      mixerPanel.resetMeters(currentState);
     });
     elements.createDisplayButton.addEventListener('click', async () => {
       const display = await window.xtream.displays.create({ layout: { type: 'single', visualId: Object.keys(currentState?.visuals ?? {})[0] } });
@@ -234,6 +227,13 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     render,
     install,
     tick,
+    getSoloOutputCount: mixerPanel.getSoloOutputCount,
+    clearSoloOutputs: () => {
+      mixerPanel.setSoloOutputIds([]);
+    },
+    resetMetersFromOperator: () => {
+      mixerPanel.resetMeters(currentState);
+    },
     syncPreviewElements: (presentation: DirectorState) => {
       syncPreviewElements(presentation);
     },

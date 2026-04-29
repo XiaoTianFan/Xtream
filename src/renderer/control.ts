@@ -13,6 +13,7 @@ import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
+import { createGlobalOperatorFooterController } from './control/shell/globalOperatorFooter';
 import { createLaunchDashboardController, setLaunchDashboardLoadingUi } from './control/shell/launchDashboard';
 import { setWorkspacePresentationLoadingUi } from './control/shell/presentationLoadingUi';
 import { waitForLaunchPresentationReady } from './control/shell/launchPresentationReady';
@@ -157,24 +158,24 @@ const streamSurface = createStreamSurfaceController({
   showActions,
 });
 
-window.xtream.audioRuntime.onSoloOutputIds((ids) => {
-  engineSoloOutputIds = ids;
-  patchSurface.applyEngineSoloOutputIds(ids);
-  streamSurface.applyEngineSoloOutputIds(ids);
-});
-
-window.xtream.stream.onState((state) => {
-  latestStreamState = state;
-  patchSurface.syncTransportInputs();
-  scheduleRefreshStreamMediaIssues();
-});
-void window.xtream.stream.getState().then((s) => {
-  latestStreamState = s;
-  patchSurface.syncTransportInputs();
+const globalOperatorFooter = createGlobalOperatorFooterController({
+  elements: {
+    globalAudioMuteButton: elements.globalAudioMuteButton,
+    displayBlackoutButton: elements.displayBlackoutButton,
+    performanceModeButton: elements.performanceModeButton,
+    clearSoloButton: elements.clearSoloButton,
+    resetMetersButton: elements.resetMetersButton,
+  },
+  getState: () => currentState,
+  renderState,
+  getSoloOutputCount: () => patchSurface.getSoloOutputCount(),
+  clearSoloOutputs: () => patchSurface.clearSoloOutputs(),
+  resetMetersRequested: () => patchSurface.resetMetersFromOperator(),
 });
 
 const surfaceRouter = createSurfaceRouter({
   getCurrentState: () => currentState,
+  syncGlobalOperator: (state) => globalOperatorFooter.sync(state),
   surfaces: [
     patchSurface,
     streamSurface,
@@ -188,6 +189,23 @@ const surfaceRouter = createSurfaceRouter({
       getDisplayTelemetry: patchSurface.getDisplayTelemetry,
     }),
   ],
+});
+
+window.xtream.audioRuntime.onSoloOutputIds((ids) => {
+  engineSoloOutputIds = ids;
+  patchSurface.applyEngineSoloOutputIds(ids);
+  streamSurface.applyEngineSoloOutputIds(ids);
+  globalOperatorFooter.sync(currentState);
+});
+
+window.xtream.stream.onState((state) => {
+  latestStreamState = state;
+  patchSurface.syncTransportInputs();
+  scheduleRefreshStreamMediaIssues();
+});
+void window.xtream.stream.getState().then((s) => {
+  latestStreamState = s;
+  patchSurface.syncTransportInputs();
 });
 
 hydrateControlShellAfterShow = async (result: ShowConfigOperationResult) => {
@@ -238,10 +256,11 @@ installInteractionLock(patchElements.audioPanel);
 installInteractionLock(patchElements.displayList);
 installInteractionLock(patchElements.outputPanel);
 installInteractionLock(patchElements.detailsContent);
-patchElements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
+elements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
 installShellIcons();
 installPatchIcons();
 patchSurface.install();
+globalOperatorFooter.install();
 launchDashboard.show();
 
 document.addEventListener('keydown', (event) => {

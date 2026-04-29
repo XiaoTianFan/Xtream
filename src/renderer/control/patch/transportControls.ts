@@ -6,7 +6,6 @@ import { derivePatchTransportUiState } from './patchTransportUiState';
 
 type TransportControllerOptions = {
   getState: () => DirectorState | undefined;
-  getSoloOutputCount: () => number;
   getIsStreamPlaybackActive: () => boolean;
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
@@ -14,7 +13,7 @@ type TransportControllerOptions = {
 
 export type TransportController = ReturnType<typeof createTransportController>;
 
-export function createTransportController({ getState, getSoloOutputCount, getIsStreamPlaybackActive, renderState, setShowStatus }: TransportControllerOptions) {
+export function createTransportController({ getState, getIsStreamPlaybackActive, renderState, setShowStatus }: TransportControllerOptions) {
   let timecodeEditor: HTMLInputElement | undefined;
   let rateDragStart: { clientX: number; rate: number } | undefined;
   let timelineScrubPointerActive = false;
@@ -59,23 +58,6 @@ export function createTransportController({ getState, getSoloOutputCount, getIsS
     elements.showStatus.textContent = state.readiness.ready
       ? 'Show readiness: ready'
       : `Show readiness: blocked by ${state.readiness.issues.filter((issue) => issue.severity === 'error').length} issue(s)`;
-    elements.globalAudioMuteButton.classList.toggle('active', state.globalAudioMuted);
-    elements.globalAudioMuteButton.textContent = state.globalAudioMuted ? 'Audio Muted' : 'Audio Mute';
-    elements.globalAudioMuteButton.setAttribute('aria-pressed', String(state.globalAudioMuted));
-    const soloOutputCount = getSoloOutputCount();
-    elements.clearSoloButton.disabled = soloOutputCount === 0;
-    elements.clearSoloButton.classList.toggle('active', soloOutputCount > 0);
-    elements.clearSoloButton.setAttribute('aria-pressed', String(soloOutputCount > 0));
-    elements.clearSoloButton.title = soloOutputCount > 0 ? 'Clear all soloed outputs' : 'No soloed outputs';
-    elements.displayBlackoutButton.classList.toggle('active', state.globalDisplayBlackout);
-    elements.displayBlackoutButton.textContent = state.globalDisplayBlackout ? 'Display Blackout On' : 'Display Blackout';
-    elements.displayBlackoutButton.setAttribute('aria-pressed', String(state.globalDisplayBlackout));
-    elements.performanceModeButton.classList.toggle('active', state.performanceMode);
-    elements.performanceModeButton.textContent = state.performanceMode ? 'Performance Mode On' : 'Performance Mode';
-    elements.performanceModeButton.setAttribute('aria-pressed', String(state.performanceMode));
-    elements.performanceModeButton.title = state.performanceMode
-      ? 'Performance mode disables control-window video previews and live meter sampling.'
-      : 'Disable control-window preview and meter workloads for weaker playback machines.';
   };
 
   const syncTimelineScrubber = (state: DirectorState): void => {

@@ -44,14 +44,15 @@ describe('deriveStreamTransportUiState', () => {
 
   it('disables Stream play when the playback timeline is invalid', () => {
     const { stream } = getDefaultStreamPersistence();
-    expect(
-      deriveStreamTransportUiState({
-        runtime: null,
-        playbackTimeline: timeline('invalid'),
-        selectedSceneId: 'scene-1',
-        playbackStream: stream,
-      }).playDisabled,
-    ).toBe(true);
+    const state = deriveStreamTransportUiState({
+      runtime: null,
+      playbackTimeline: timeline('invalid'),
+      selectedSceneId: 'scene-1',
+      playbackStream: stream,
+    });
+
+    expect(state.playDisabled).toBe(true);
+    expect(state.playDisabledReason).toContain('timeline');
   });
 
   it('keeps pause pause-only', () => {
@@ -73,15 +74,16 @@ describe('deriveStreamTransportUiState', () => {
 
   it('disables Stream play while Patch transport is active', () => {
     const { stream } = getDefaultStreamPersistence();
-    expect(
-      deriveStreamTransportUiState({
-        runtime: null,
-        playbackTimeline: timeline('valid'),
-        selectedSceneId: 'scene-1',
-        playbackStream: stream,
-        isPatchTransportPlaying: true,
-      }).playDisabled,
-    ).toBe(true);
+    const state = deriveStreamTransportUiState({
+      runtime: null,
+      playbackTimeline: timeline('valid'),
+      selectedSceneId: 'scene-1',
+      playbackStream: stream,
+      isPatchTransportPlaying: true,
+    });
+
+    expect(state.playDisabled).toBe(true);
+    expect(state.playDisabledReason).toContain('Patch');
   });
 });
 

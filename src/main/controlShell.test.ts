@@ -22,6 +22,16 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="resetMetersButton"');
   });
 
+  it('places status-footer under surface mount after patch workspace, not inside patchSurface', () => {
+    const patchStart = controlHtml.indexOf('id="patchSurface"');
+    const surfacePanelIdx = controlHtml.indexOf('id="surfacePanel"');
+    const footerIdx = controlHtml.indexOf('class="status-footer"');
+    expect(patchStart).toBeGreaterThanOrEqual(0);
+    expect(surfacePanelIdx).toBeGreaterThan(patchStart);
+    expect(footerIdx).toBeGreaterThan(surfacePanelIdx);
+    expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('globalAudioMuteButton');
+  });
+
   it('includes the launch dashboard with actions and recents', () => {
     expect(controlHtml).toContain('id="launchDashboard"');
     expect(controlHtml).toContain('id="launchOpenShowButton"');

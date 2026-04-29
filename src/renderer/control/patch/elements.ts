@@ -44,15 +44,13 @@ export const patchElements = {
     document.querySelector<HTMLButtonElement>('#visualPoolLayoutToggleButton'),
     'visualPoolLayoutToggleButton',
   ),
+  liveGridPreviewToggleButton: assertElement(
+    document.querySelector<HTMLButtonElement>('#liveGridPreviewToggleButton'),
+    'liveGridPreviewToggleButton',
+  ),
   createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
   expandMixerButton: assertElement(document.querySelector<HTMLButtonElement>('#expandMixerButton'), 'expandMixerButton'),
-  clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
-  resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
-  globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
-  displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
-  performanceModeButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceModeButton'), 'performanceModeButton'),
-  runtimeVersionLabel: assertElement(document.querySelector<HTMLSpanElement>('#runtimeVersionLabel'), 'runtimeVersionLabel'),
   createDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#createDisplayButton'), 'createDisplayButton'),
 };
 

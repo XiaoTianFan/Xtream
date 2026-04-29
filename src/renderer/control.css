@@ -327,13 +327,16 @@ input[type="range"].mini-slider:disabled {
 
 .surface-mount {
   display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--status-footer-height);
   min-width: 0;
   min-height: 0;
 }
 
 .patch-surface {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) var(--splitter-hit) var(--operator-footer-height) var(--status-footer-height);
+  grid-template-rows: auto minmax(0, 1fr) var(--splitter-hit) var(--operator-footer-height);
+  grid-row: 1;
+  grid-column: 1;
   min-width: 0;
   min-height: 0;
 }
@@ -344,8 +347,10 @@ input[type="range"].mini-slider:disabled {
 
 .app-frame.launch-blocked .patch-surface,
 .app-frame.launch-blocked .surface-panel,
+.app-frame.launch-blocked .status-footer,
 .app-frame.extraction-blocked .patch-surface,
-.app-frame.extraction-blocked .surface-panel {
+.app-frame.extraction-blocked .surface-panel,
+.app-frame.extraction-blocked .status-footer {
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;
@@ -968,6 +973,8 @@ body.extraction-blocked .nav-rail {
 }
 
 .surface-panel {
+  grid-row: 1;
+  grid-column: 1;
   overflow: auto;
   min-height: 0;
   background: var(--surface-low);
@@ -1218,6 +1225,83 @@ details.surface-card {
   text-align: center;
 }
 
+.visual-pool-card__preview--live {
+  outline: none;
+}
+
+.visual-pool-card__preview--live:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: -2px;
+}
+
+.visual-pool-card__live-idle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 3.5rem;
+}
+
+.visual-pool-card__live-hover-actions {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: var(--compact);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  pointer-events: none;
+}
+
+.visual-pool-card__preview--live:is(:hover, :focus-within) .visual-pool-card__live-hover-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.visual-pool-card__live-preview-off-hint {
+  max-width: 92%;
+  text-align: center;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  color: var(--text-secondary);
+}
+
+.visual-pool-card__live-overlay-btn {
+  box-sizing: border-box;
+  width: 2.65rem;
+  height: 2.65rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, var(--surface) 92%, #fff),
+    color-mix(in srgb, var(--surface) 72%, #0a0a0b)
+  );
+  box-shadow:
+    inset 0 2px 3px rgb(255 255 255 / 0.14),
+    inset 0 -3px 5px rgb(0 0 0 / 0.38),
+    0 4px 14px rgb(0 0 0 / 0.45);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.visual-pool-card__live-overlay-btn:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: 2px;
+}
+
+.visual-pool-card__live-overlay-btn .control-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
 .visual-pool-card__footer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1268,7 +1352,14 @@ details.surface-card {
 }
 
 .pool-toolbar {
-  grid-template-columns: minmax(0, 1fr) 8rem;
+  grid-template-columns: minmax(0, 1fr) auto minmax(6.5rem, 8rem);
+  align-items: center;
+}
+
+.pool-toolbar .pool-toolbar-icon {
+  justify-self: center;
+  min-width: 1.75rem;
+  min-height: 1.5rem;
 }
 
 .media-pool .pool-tab {
@@ -2900,8 +2991,33 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   flex-wrap: nowrap;
 }
 
-.stream-timecode {
+.stream-timecode-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
   white-space: nowrap;
+}
+
+.stream-duration-total {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.stream-transport-stack {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.stream-transport-status {
+  max-width: 22rem;
+  color: var(--accent-ochre);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stream-header .transport-cluster button {
@@ -3793,6 +3909,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 }
 
 .status-footer {
+  grid-row: 2;
+  grid-column: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
