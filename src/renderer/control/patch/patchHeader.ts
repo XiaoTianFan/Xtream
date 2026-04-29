@@ -3,6 +3,7 @@ import type { DirectorState } from '../../../shared/types';
 import type { ShowActions } from '../app/showActions';
 import { syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
+import { derivePatchTransportUiState } from './patchTransportUiState';
 import { createTransportController } from './transportControls';
 
 type PatchHeaderControllerOptions = {
@@ -104,9 +105,60 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     transport.syncTimelineScrubber(state);
   }
 
+  function handleWorkspaceTransportKeydown(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.altKey || event.metaKey) {
+      return false;
+    }
+    const isToggleKey = event.code === 'Space' || event.key === 'Enter';
+    const isBackspace = event.key === 'Backspace';
+    if (!isToggleKey && !isBackspace) {
+      return false;
+    }
+    if (event.code === 'Space' && event.repeat) {
+      return false;
+    }
+    if (event.key === 'Enter' && elements.timecode.contains(event.target as Node)) {
+      return false;
+    }
+    const state = options.getState();
+    if (!state) {
+      return false;
+    }
+    const ui = derivePatchTransportUiState({
+      ready: state.readiness.ready,
+      patchPaused: state.paused,
+      currentSeconds: getDirectorSeconds(state),
+      streamPlaybackActive: options.getIsStreamPlaybackActive(),
+    });
+    if (isToggleKey) {
+      if (state.paused) {
+        if (ui.playDisabled) {
+          return false;
+        }
+        void transport.sendTransport({ type: 'play' });
+      } else {
+        if (ui.pauseDisabled) {
+          return false;
+        }
+        void transport.sendTransport({ type: 'pause' });
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    if (ui.playDisabled) {
+      return false;
+    }
+    void transport.sendTransport({ type: 'seek', seconds: 0 }).then(() => void transport.sendTransport({ type: 'play' }));
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   return {
     install,
     sync,
     tick,
+    handleWorkspaceTransportKeydown,
   };
 }

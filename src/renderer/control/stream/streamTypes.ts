@@ -39,6 +39,7 @@ export type StreamSurfaceOptions = {
 };
 
 export type StreamSurfaceController = SurfaceController & {
+  handleWorkspaceTransportKeydown: (event: KeyboardEvent) => boolean;
   applyOutputMeterReport: (report: OutputMeterReport) => void;
   applyEngineSoloOutputIds: (outputIds: VirtualOutputId[]) => void;
   tickMixerBallistics: () => void;

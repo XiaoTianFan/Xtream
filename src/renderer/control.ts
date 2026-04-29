@@ -6,6 +6,7 @@ import { combineVisibleIssues } from './control/app/appStatus';
 import { installInteractionLock, isPanelInteractionActive } from './control/app/interactionLocks';
 import { createShowActions } from './control/app/showActions';
 import { createSurfaceRouter } from './control/app/surfaceRouter';
+import { isWorkspaceTransportShortcutSuppressedTarget } from './control/app/workspaceTransportKeys';
 import { createConfigSurfaceController } from './control/config/configSurface';
 import { createStreamSurfaceController } from './control/stream/streamSurface';
 import { patchElements } from './control/patch/elements';
@@ -330,6 +331,19 @@ launchDashboard.show();
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     patchSurface.dismissContextMenu();
+    return;
+  }
+  if (launchShellRef.controller?.isVisible()) {
+    return;
+  }
+  if (isWorkspaceTransportShortcutSuppressedTarget(event.target)) {
+    return;
+  }
+  const surface = surfaceRouter.getActiveSurface();
+  if (surface === 'patch') {
+    patchSurface.handleWorkspaceTransportKeydown(event);
+  } else if (surface === 'stream') {
+    streamSurface.handleWorkspaceTransportKeydown(event);
   }
 });
 document.addEventListener('scroll', patchSurface.dismissContextMenu, true);

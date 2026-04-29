@@ -28,7 +28,7 @@ import {
 import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
-import { renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
+import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
 
@@ -803,6 +803,71 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mixerPanel?.tickMeterBallistics(performance.now());
   }
 
+  function syncReferenceFromTransport(next: StreamEnginePublicState): void {
+    const cursorSceneId = next.runtime?.cursorSceneId;
+    if (cursorSceneId && next.stream.scenes[cursorSceneId]) {
+      selectedSceneId = cursorSceneId;
+      sceneEditSelection = { kind: 'scene' };
+      bottomRenderSignature = '';
+      renderCurrent();
+    }
+  }
+
+  function handleWorkspaceTransportKeydown(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.altKey || event.metaKey) {
+      return false;
+    }
+    if (!currentState || !streamState) {
+      return false;
+    }
+    const isToggleKey = event.code === 'Space' || event.key === 'Enter';
+    const isBackspace = event.key === 'Backspace';
+    if (!isToggleKey && !isBackspace) {
+      return false;
+    }
+    if (event.code === 'Space' && event.repeat) {
+      return false;
+    }
+    const transportState = deriveStreamTransportUiState({
+      runtime: streamState.runtime,
+      playbackTimeline: streamState.playbackTimeline,
+      selectedSceneId,
+      playbackStream: streamState.playbackStream,
+      isPatchTransportPlaying: currentState.paused === false,
+    });
+    if (isToggleKey) {
+      const running = streamState.runtime?.status === 'running' || streamState.runtime?.status === 'preloading';
+      if (running) {
+        if (transportState.pauseDisabled) {
+          return false;
+        }
+        void window.xtream.stream.transport({ type: 'pause' });
+      } else {
+        if (transportState.playDisabled) {
+          return false;
+        }
+        void window.xtream.stream.transport(
+          createGlobalStreamPlayCommand({
+            runtime: streamState.runtime,
+            playbackStream: streamState.playbackStream,
+            playbackTimeline: streamState.playbackTimeline,
+            selectedSceneId,
+          }),
+        );
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    if (transportState.backDisabled) {
+      return false;
+    }
+    void window.xtream.stream.transport({ type: 'back-to-first' }).then(syncReferenceFromTransport);
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   return {
     id: 'stream',
     mount,
@@ -819,5 +884,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     },
     exportProjectUiSnapshot,
     applyImportedProjectUi,
+    handleWorkspaceTransportKeydown,
   };
 }

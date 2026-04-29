@@ -236,6 +236,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       syncPreviewElements(presentation);
     },
     dismissContextMenu: mediaPool.dismissContextMenu,
+    handleWorkspaceTransportKeydown: (event: KeyboardEvent) => header.handleWorkspaceTransportKeydown(event),
     clearSelection,
     applyOutputMeterReport: mixerPanel.applyOutputMeterReport,
     applyEngineSoloOutputIds: mixerPanel.applyEngineSoloOutputIds,
