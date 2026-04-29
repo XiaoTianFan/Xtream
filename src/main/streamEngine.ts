@@ -68,6 +68,12 @@ export class StreamEngine extends EventEmitter {
   private scheduleConsumedSceneIds = new Set<SceneId>();
   /** When true, the current session was started via scene-row / flow-card "run from here" (vs global play). Affects predecessor consumption and manual inclusion. */
   private streamPlayUsedSceneRowIntent = false;
+  /**
+   * After {@link resumeFromPausedCursor} from manual-tail paused state; prevents immediate
+   * {@link applyStreamAutoPauseAfterManualTail} until a scene is actually running/paused, and freezes
+   * stream ms while idle so operators can leave transport LIVE without phantom clock drift.
+   */
+  private manualTailResumeIdleHold = false;
 
   constructor(private readonly director: Director) {
     super();
@@ -96,6 +102,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
     this.streamPlayUsedSceneRowIntent = false;
+    this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
     this.orphanedAudioSubCues = [];
     this.orphanedVisualSubCues = [];
@@ -354,6 +361,7 @@ export class StreamEngine extends EventEmitter {
   }
 
   private startFromStreamTime(timeMs: number, referenceSceneId?: SceneId, sceneRowRunFromHereIntent = false): void {
+    this.manualTailResumeIdleHold = false;
     const schedule = this.playbackTimeline;
     const now = Date.now();
     this.runtime = {
@@ -402,6 +410,7 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime || this.runtime.status !== 'running') {
       return;
     }
+    this.manualTailResumeIdleHold = false;
     const current = this.getRuntimeStreamMs();
     this.runtime.status = 'paused';
     this.runtime.pausedAtStreamMs = current;
@@ -419,6 +428,7 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime || this.runtime.status !== 'paused') {
       return;
     }
+    this.manualTailResumeIdleHold = true;
     const current = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
     const now = Date.now();
     this.runtime.status = 'running';
@@ -461,6 +471,7 @@ export class StreamEngine extends EventEmitter {
     if (this.playbackTimeline.status !== 'valid') {
       return;
     }
+    this.manualTailResumeIdleHold = false;
     if (!this.runtime) {
       this.ensureIdleRuntime();
     }
@@ -681,6 +692,41 @@ export class StreamEngine extends EventEmitter {
     return false;
   }
 
+  /**
+   * Whether precomputed schedule `startMs`/`endMs` for `sceneId` may be used when runtime has not
+   * yet resolved that row (e.g. follow-* still `ready`). Walks the follow chain to the root: any
+   * manual on the path must be schedule-active; `at-timecode` roots are always allowed.
+   */
+  private upstreamManualChainAllowsScheduleFallback(
+    sceneId: SceneId,
+    schedule: CalculatedStreamTimeline,
+    stream: PersistedStreamConfig,
+    visited: Set<SceneId> = new Set(),
+  ): boolean {
+    if (visited.has(sceneId)) {
+      return false;
+    }
+    visited.add(sceneId);
+    const scene = stream.scenes[sceneId];
+    if (!scene || scene.disabled) {
+      return false;
+    }
+    if (scene.trigger.type === 'manual') {
+      return this.manualSceneSchedulePlaybackActive(sceneId, schedule, stream);
+    }
+    if (scene.trigger.type === 'at-timecode') {
+      return true;
+    }
+    if (scene.trigger.type === 'follow-start' || scene.trigger.type === 'follow-end') {
+      const up = resolveFollowsSceneId(stream, sceneId, scene.trigger);
+      if (!up) {
+        return true;
+      }
+      return this.upstreamManualChainAllowsScheduleFallback(up, schedule, stream, visited);
+    }
+    return true;
+  }
+
   private predEffectiveStartMs(
     predId: SceneId,
     sceneStates: Record<SceneId, SceneRuntimeState>,
@@ -711,7 +757,7 @@ export class StreamEngine extends EventEmitter {
     if (st?.scheduledStartMs !== undefined) {
       return st.scheduledStartMs;
     }
-    return ent.startMs;
+    return this.upstreamManualChainAllowsScheduleFallback(predId, schedule, stream) ? ent.startMs : undefined;
   }
 
   private predEffectiveEndMs(
@@ -745,7 +791,7 @@ export class StreamEngine extends EventEmitter {
       }
       return ent.endMs;
     }
-    return ent.endMs;
+    return this.upstreamManualChainAllowsScheduleFallback(predId, schedule, stream) ? ent.endMs : undefined;
   }
 
   /**
@@ -988,6 +1034,7 @@ export class StreamEngine extends EventEmitter {
 
     const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
     if (runningEntries.length > 0) {
+      this.manualTailResumeIdleHold = false;
       const candidateSceneId = runningEntries.reduce((latest, state) => {
         const latestStart = latest.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
         const stateStart = state.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
@@ -1038,7 +1085,11 @@ export class StreamEngine extends EventEmitter {
       this.stopTicking();
     } else if (this.runtime.status === 'running') {
       const nextAuto = this.nextScheduledAutoStartMsAfter(currentMs, sceneStates, schedule, stream);
-      if (runningEntries.length === 0 && nextAuto === undefined) {
+      if (
+        runningEntries.length === 0 &&
+        nextAuto === undefined &&
+        !this.manualTailResumeIdleHold
+      ) {
         this.applyStreamAutoPauseAfterManualTail(currentMs);
       }
     }
@@ -1072,6 +1123,9 @@ export class StreamEngine extends EventEmitter {
       return 0;
     }
     if (this.runtime.status === 'running' || this.runtime.status === 'preloading') {
+      if (this.manualTailResumeIdleHold) {
+        return this.runtime.offsetStreamMs ?? this.runtime.currentStreamMs ?? 0;
+      }
       const rate = this.getGlobalRate();
       const anchor = this.runtime.originWallTimeMs ?? Date.now();
       return (this.runtime.offsetStreamMs ?? 0) + (Date.now() - anchor) * rate;

@@ -46,29 +46,69 @@
   padding: var(--compact);
 }
 
-.asset-row {
+.media-list-region .asset-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 0.85fr) minmax(0, 1.25fr) auto auto;
+  grid-template-columns: min-content minmax(0, 1fr) minmax(0, 1.15fr) var(--media-pool-row-tail, 1.75rem);
   align-items: center;
-  gap: 0.35rem;
-  height: 2.75rem;
-  min-height: 2.75rem;
+  column-gap: 0.45rem;
+  min-height: 2.85rem;
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
-  padding: 0.25rem 0.38rem;
+  padding: 0.3rem 0.4rem;
   cursor: pointer;
   font-size: 0.72rem;
 }
 
 
-.asset-row strong {
+.media-list-region .asset-row__label {
   min-width: 0;
   overflow: hidden;
   font-size: 0.72rem;
-  line-height: 1.1;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.media-list-region .asset-row__status.status-dot {
+  display: block;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: currentcolor;
+}
+
+.media-list-region .asset-row > .asset-meta {
+  justify-self: stretch;
+  max-width: 100%;
+  text-align: right;
+}
+
+.media-list-region .asset-row__tail {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--media-pool-row-tail, 1.75rem);
+  justify-self: end;
+  align-self: center;
+}
+
+.media-list-region .asset-row__tail .asset-marker {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 1.25rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+}
+
+.media-list-region .asset-row__tail .row-action {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  z-index: 2;
 }
 
 .asset-row-meta-cluster {
@@ -82,8 +122,8 @@
   text-align: right;
 }
 
-.asset-row:hover,
-.asset-row.selected,
+.media-list-region .asset-row:hover,
+.media-list-region .asset-row.selected,
 .display-card.selected,
 .audio-card.selected,
 .mixer-strip.selected {
@@ -580,8 +620,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   padding: 0;
 }
 
-.asset-row:hover .row-action,
-.asset-row:focus-within .row-action {
+.media-list-region .asset-row:hover .row-action,
+.media-list-region .asset-row:focus-within .row-action {
   opacity: 1;
 }
 
@@ -807,13 +847,6 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   visibility: hidden;
   border-color: transparent;
   color: transparent;
-}
-
-.asset-row-placement {
-  justify-self: end;
-  width: 0.48rem;
-  height: 0.48rem;
-  border: 1px solid currentcolor;
 }
 
 .status-dot.ready {

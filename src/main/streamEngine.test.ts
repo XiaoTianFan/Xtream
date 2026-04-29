@@ -1403,4 +1403,128 @@ describe('StreamEngine', () => {
     expect(st?.status).toBe('paused');
     expect(st?.pausedAtStreamMs).toBe(4000);
   });
+
+  it('does not auto-start transitive follow rows at planner times when a manual ancestor has not run', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(50_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['s0', 's1', 's2', 's3'];
+    stream.scenes = {
+      s0: {
+        id: 's0',
+        title: 's0',
+        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s1: {
+        id: 's1',
+        title: 's1',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s2: {
+        id: 's2',
+        title: 's2',
+        trigger: { type: 'follow-end', followsSceneId: 's1' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+      s3: {
+        id: 's3',
+        title: 's3',
+        trigger: { type: 'follow-end', followsSceneId: 's2' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    vi.advanceTimersByTime(1600);
+    const st = engine.getPublicState().runtime;
+    expect(st?.sceneStates['s0']?.status).toBe('complete');
+    expect(st?.sceneStates['s1']?.status).toBe('ready');
+    expect(st?.sceneStates['s2']?.status).toBe('ready');
+    expect(st?.sceneStates['s3']?.status).toBe('ready');
+    expect(st?.sceneStates['s2']?.scheduledStartMs).toBeUndefined();
+    expect(st?.sceneStates['s3']?.scheduledStartMs).toBeUndefined();
+    expect(st?.status).toBe('paused');
+    expect(st?.originWallTimeMs).toBeUndefined();
+    expect(st?.pausedAtStreamMs).toBeGreaterThanOrEqual(900);
+  });
+
+  it('stays running after global play resuming from manual-tail pause (does not immediately re-pause)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(50_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['s0', 's1', 's2', 's3'];
+    stream.scenes = {
+      s0: {
+        id: 's0',
+        title: 's0',
+        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s1: {
+        id: 's1',
+        title: 's1',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s2: {
+        id: 's2',
+        title: 's2',
+        trigger: { type: 'follow-end', followsSceneId: 's1' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+      s3: {
+        id: 's3',
+        title: 's3',
+        trigger: { type: 'follow-end', followsSceneId: 's2' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    vi.advanceTimersByTime(1600);
+    let st = engine.getPublicState().runtime;
+    expect(st?.status).toBe('paused');
+    const msAtPause = st?.pausedAtStreamMs;
+    engine.applyTransport({ type: 'play', source: 'global' });
+    st = engine.getPublicState().runtime;
+    expect(st?.status).toBe('running');
+    vi.advanceTimersByTime(500);
+    st = engine.getPublicState().runtime;
+    expect(st?.status).toBe('running');
+    expect(st?.currentStreamMs).toBe(msAtPause);
+  });
 });

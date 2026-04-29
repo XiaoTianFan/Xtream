@@ -44,10 +44,6 @@ export const patchElements = {
     document.querySelector<HTMLButtonElement>('#visualPoolLayoutToggleButton'),
     'visualPoolLayoutToggleButton',
   ),
-  liveGridPreviewToggleButton: assertElement(
-    document.querySelector<HTMLButtonElement>('#liveGridPreviewToggleButton'),
-    'liveGridPreviewToggleButton',
-  ),
   createOutputButton: assertElement(document.querySelector<HTMLButtonElement>('#createOutputButton'), 'createOutputButton'),
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
   expandMixerButton: assertElement(document.querySelector<HTMLButtonElement>('#expandMixerButton'), 'expandMixerButton'),

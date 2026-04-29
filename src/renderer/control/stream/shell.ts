@@ -74,15 +74,7 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
     option.textContent = label;
     poolSortSelect.append(option);
   }
-  const liveGridPreviewToggleButton = document.createElement('button');
-  liveGridPreviewToggleButton.type = 'button';
-  liveGridPreviewToggleButton.id = 'streamLiveGridPreviewToggleButton';
-  liveGridPreviewToggleButton.className = 'icon-button pool-toolbar-icon';
-  liveGridPreviewToggleButton.hidden = true;
-  liveGridPreviewToggleButton.setAttribute('aria-pressed', 'true');
-  liveGridPreviewToggleButton.setAttribute('aria-label', 'Live previews in grid');
-
-  toolbar.append(searchLabel, liveGridPreviewToggleButton, poolSortSelect);
+  toolbar.append(searchLabel, poolSortSelect);
 
   const mediaListRegion = document.createElement('div');
   mediaListRegion.className = 'media-list-region drop-target';
@@ -111,7 +103,6 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
     poolSortSelect,
     addVisualsButton,
     visualPoolLayoutToggleButton,
-    liveGridPreviewToggleButton,
   };
 }
 

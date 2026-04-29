@@ -18,27 +18,6 @@ type PoolSort = 'label' | 'duration' | 'status';
 type VisualPoolLayout = 'list' | 'grid';
 
 const VISUAL_POOL_LAYOUT_STORAGE_KEY = 'xtream.visualPoolLayout';
-const LIVE_GRID_PREVIEW_STORAGE_KEY = 'xtream.liveGridPreviewEnabled';
-
-function readStoredLiveGridPreviewEnabled(): boolean {
-  try {
-    const v = localStorage.getItem(LIVE_GRID_PREVIEW_STORAGE_KEY);
-    if (v === '0' || v === 'false') {
-      return false;
-    }
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-function persistLiveGridPreviewEnabled(enabled: boolean): void {
-  try {
-    localStorage.setItem(LIVE_GRID_PREVIEW_STORAGE_KEY, enabled ? '1' : '0');
-  } catch {
-    /* ignore */
-  }
-}
 
 function readStoredVisualPoolLayout(): VisualPoolLayout {
   try {
@@ -86,7 +65,7 @@ function createPoolPlacementBadge(placement: PoolPlacementKind | undefined): HTM
 
 export type MediaPoolController = {
   createRenderSignature: (state: DirectorState) => string;
-  /** Tab/search/sort/layout/live-preview chrome only — for stream surface routing; avoids asset-metadata churn. */
+  /** Tab/search/sort/layout chrome only — for stream surface routing; avoids asset-metadata churn. */
   createStreamSurfaceShellSignature: () => string;
   render: (state: DirectorState) => void;
   syncPoolSelectionHighlight: (state: DirectorState) => void;
@@ -109,7 +88,6 @@ export type MediaPoolElements = {
   poolSortSelect: HTMLSelectElement;
   addVisualsButton: HTMLButtonElement;
   visualPoolLayoutToggleButton: HTMLButtonElement;
-  liveGridPreviewToggleButton: HTMLButtonElement;
 };
 
 type MediaPoolControllerOptions = {
@@ -136,7 +114,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   let activeLiveCaptureModalKeydown: ((event: KeyboardEvent) => void) | undefined;
   let activeLiveCaptureModalCleanups: Array<() => void> = [];
   let visualPoolLayout: VisualPoolLayout = readStoredVisualPoolLayout();
-  let liveGridPreviewEnabled = readStoredLiveGridPreviewEnabled();
   let visualPoolGridCleanups: Array<() => void> = [];
   let lastListVisualsDomKey: string | undefined;
   let lastGridVisualsDomKey: string | undefined;
@@ -240,12 +217,12 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
   }
 
   function createRenderSignature(state: DirectorState): string {
-    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}:${liveGridPreviewEnabled ? '1' : '0'}`;
+    return `${createVisualRenderSignature(state)}:${createAudioRenderSignature(state)}:${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}`;
   }
 
   /** For Stream workspace shell routing only — excludes per-visual/audio churn so pool metadata does not rebuild the scene list. */
   function createStreamSurfaceShellSignature(): string {
-    return `${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}:${liveGridPreviewEnabled ? '1' : '0'}`;
+    return `${activePoolTab}:${poolSearchQuery}:${poolSort}:${visualPoolLayout}`;
   }
 
   function createVisualRow(visual: VisualState): HTMLElement {
@@ -262,8 +239,9 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       }
     });
     const status = document.createElement('span');
-    status.className = `status-dot ${visual.ready ? 'ready' : visual.error ? 'blocked' : 'standby'}`;
+    status.className = `asset-row__status status-dot ${visual.ready ? 'ready' : visual.error ? 'blocked' : 'standby'}`;
     const label = document.createElement('strong');
+    label.className = 'asset-row__label';
     label.textContent = visual.label;
     const meta = document.createElement('span');
     meta.className = 'asset-meta';
@@ -278,7 +256,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     const placementBadge = createPoolPlacementBadge(
       getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
     );
-    placementBadge.classList.add('asset-row-placement');
     const remove = createButton('Remove', 'secondary row-action', async () => {
       if (!confirmPoolRecordRemoval(visual.label)) {
         return;
@@ -291,7 +268,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    row.append(status, label, meta, placementBadge, remove);
+    const tail = document.createElement('div');
+    tail.className = 'asset-row__tail';
+    tail.append(placementBadge, remove);
+    row.append(status, label, meta, tail);
     return row;
   }
 
@@ -320,7 +300,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       (cleanup) => {
         visualPoolGridCleanups.push(cleanup);
       },
-      { livePoolPreviewGloballyAllowed: liveGridPreviewEnabled },
+      { livePoolPreviewGloballyAllowed: true },
     );
 
     const footer = document.createElement('div');
@@ -342,6 +322,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     const textCol = document.createElement('div');
     textCol.className = 'visual-pool-card__text';
     textCol.append(label, meta);
+    const placementBadge = createPoolPlacementBadge(
+      getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
+    );
+    placementBadge.classList.add('visual-pool-card__placement-marker');
     const remove = createButton('Remove', 'secondary row-action', async () => {
       if (!confirmPoolRecordRemoval(visual.label)) {
         return;
@@ -354,14 +338,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    const placementBadge = createPoolPlacementBadge(
-      getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
-    );
-    placementBadge.classList.add('visual-pool-card__placement-marker');
-    const actionStack = document.createElement('div');
-    actionStack.className = 'visual-pool-card__footer-actions';
-    actionStack.append(remove, placementBadge);
-    footer.append(status, textCol, actionStack);
+    const tail = document.createElement('div');
+    tail.className = 'visual-pool-card__tail';
+    tail.append(placementBadge, remove);
+    footer.append(status, textCol, tail);
     card.append(preview, footer);
     return card;
   }
@@ -380,8 +360,9 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       }
     });
     const status = document.createElement('span');
-    status.className = `status-dot ${source.ready ? 'ready' : source.error ? 'blocked' : 'standby'}`;
+    status.className = `asset-row__status status-dot ${source.ready ? 'ready' : source.error ? 'blocked' : 'standby'}`;
     const label = document.createElement('strong');
+    label.className = 'asset-row__label';
     label.textContent = source.label;
     const origin = source.type === 'external-file' ? source.path ?? 'External file' : `Embedded from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
     const metaPrimary = document.createElement('span');
@@ -394,7 +375,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     const placementBadge = createPoolPlacementBadge(
       getAudioPoolPlacement(source, options.getShowConfigPath(), isWindowsStylePath()),
     );
-    placementBadge.classList.add('asset-row-placement');
     const remove = createButton('Remove', 'secondary row-action', async () => {
       if (!confirmPoolRecordRemoval(source.label)) {
         return;
@@ -407,7 +387,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    row.append(status, label, meta, placementBadge, remove);
+    const tail = document.createElement('div');
+    tail.className = 'asset-row__tail';
+    tail.append(placementBadge, remove);
+    row.append(status, label, meta, tail);
     return row;
   }
 
@@ -896,21 +879,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     }
   }
 
-  function syncLiveGridPreviewToggle(): void {
-    const btn = elements.liveGridPreviewToggleButton;
-    const show = activePoolTab === 'visuals' && visualPoolLayout === 'grid';
-    btn.hidden = !show;
-    if (!show) {
-      return;
-    }
-    btn.setAttribute('aria-pressed', String(liveGridPreviewEnabled));
-    if (liveGridPreviewEnabled) {
-      decorateIconButton(btn, 'Play', 'Live previews in grid: on — click to turn off');
-    } else {
-      decorateIconButton(btn, 'Pause', 'Live previews in grid: off — click to turn on');
-    }
-  }
-
   function syncPoolTabs(): void {
     const visualActive = activePoolTab === 'visuals';
     elements.visualTabButton.classList.toggle('active', visualActive);
@@ -920,7 +888,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.addVisualsButton.title = visualActive ? 'Add visuals' : 'Add external audio';
     elements.addVisualsButton.setAttribute('aria-label', visualActive ? 'Add visuals' : 'Add external audio');
     syncVisualPoolLayoutToggle();
-    syncLiveGridPreviewToggle();
   }
 
   function setPoolTab(tab: PoolTab): void {
@@ -1042,12 +1009,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       event.stopPropagation();
       visualPoolLayout = visualPoolLayout === 'list' ? 'grid' : 'list';
       persistVisualPoolLayout(visualPoolLayout);
-      renderCurrentState();
-    });
-    elements.liveGridPreviewToggleButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      liveGridPreviewEnabled = !liveGridPreviewEnabled;
-      persistLiveGridPreviewEnabled(liveGridPreviewEnabled);
       renderCurrentState();
     });
     elements.addVisualsButton.addEventListener('click', async (event) => {
