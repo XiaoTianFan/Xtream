@@ -1,9 +1,16 @@
 import type { AudioSourceState, DirectorState, LiveDesktopSourceSummary, VisualId, VisualState } from '../../../shared/types';
+import {
+  getAudioPoolPlacement,
+  getVisualPoolPlacement,
+  POOL_PLACEMENT_ABBREV,
+  type PoolPlacementKind,
+} from '../../../shared/poolAssetPlacement';
 import { createButton, createHint } from '../shared/dom';
 import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from './embeddedAudioImport';
+import { chooseMediaImportMode, openMediaImportModal, runMediaImportAfterPickerChoice } from './mediaImportModal';
 import { mountVisualPoolGridPreview } from './visualPoolGridPreview';
 
 type PoolTab = 'visuals' | 'audio';
@@ -53,6 +60,30 @@ function persistVisualPoolLayout(layout: VisualPoolLayout): void {
   }
 }
 
+function isWindowsStylePath(): boolean {
+  return typeof navigator !== 'undefined' && /Windows|Win32/i.test(navigator.userAgent);
+}
+
+function createPoolPlacementBadge(placement: PoolPlacementKind | undefined): HTMLElement {
+  const el = document.createElement('span');
+  el.className = 'asset-marker';
+  if (!placement) {
+    el.classList.add('asset-marker--empty');
+    el.setAttribute('aria-hidden', 'true');
+    return el;
+  }
+  el.classList.add(placement);
+  el.textContent = POOL_PLACEMENT_ABBREV[placement];
+  if (placement === 'representation') {
+    el.title = 'Embedded playback from the video source';
+  } else if (placement === 'file') {
+    el.title = 'File is stored under this project’s assets folder';
+  } else {
+    el.title = 'Linked to the original file location';
+  }
+  return el;
+}
+
 export type MediaPoolController = {
   createRenderSignature: (state: DirectorState) => string;
   /** Tab/search/sort/layout/live-preview chrome only — for stream surface routing; avoids asset-metadata churn. */
@@ -92,6 +123,8 @@ type MediaPoolControllerOptions = {
   probeVisualMetadata: (visual: VisualState) => void;
   createEmbeddedAudioRepresentation: (visualId: VisualId) => Promise<void>;
   extractEmbeddedAudioFile: (visualId: VisualId) => Promise<void>;
+  /** Absolute path to loaded `show…json` — used for REP/LNK/FIL placement labels. */
+  getShowConfigPath: () => string | undefined;
 };
 
 export function createMediaPoolController(elements: MediaPoolElements, options: MediaPoolControllerOptions): MediaPoolController {
@@ -242,6 +275,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       meta.title = visual.error;
       row.title = visual.error;
     }
+    const placementBadge = createPoolPlacementBadge(
+      getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
+    );
+    placementBadge.classList.add('asset-row-placement');
     const remove = createButton('Remove', 'secondary row-action', async () => {
       if (!confirmPoolRecordRemoval(visual.label)) {
         return;
@@ -254,7 +291,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    row.append(status, label, meta, remove);
+    row.append(status, label, meta, placementBadge, remove);
     return row;
   }
 
@@ -317,14 +354,21 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${visual.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    footer.append(status, textCol, remove);
+    const placementBadge = createPoolPlacementBadge(
+      getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
+    );
+    placementBadge.classList.add('visual-pool-card__placement-marker');
+    const actionStack = document.createElement('div');
+    actionStack.className = 'visual-pool-card__footer-actions';
+    actionStack.append(remove, placementBadge);
+    footer.append(status, textCol, actionStack);
     card.append(preview, footer);
     return card;
   }
 
   function createAudioSourceRow(source: AudioSourceState, state: DirectorState): HTMLElement {
     const row = document.createElement('article');
-    row.className = `asset-row audio-source-row${options.isSelected('audio-source', source.id) ? ' selected' : ''}`;
+    row.className = `asset-row${options.isSelected('audio-source', source.id) ? ' selected' : ''}`;
     row.dataset.assetId = source.id;
     row.tabIndex = 0;
     row.addEventListener('click', () => selectPoolEntity({ type: 'audio-source', id: source.id }));
@@ -340,19 +384,17 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     const label = document.createElement('strong');
     label.textContent = source.label;
     const origin = source.type === 'external-file' ? source.path ?? 'External file' : `Embedded from ${state.visuals[source.visualId]?.label ?? source.visualId}`;
-    const meta = document.createElement('span');
-    meta.className = 'asset-meta';
-    const marker = document.createElement('span');
-    marker.className = `asset-marker ${source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'representation' : 'file'}`;
-    marker.textContent = source.type === 'embedded-visual' && source.extractionMode === 'representation' ? 'REP' : 'FILE';
     const metaPrimary = document.createElement('span');
     metaPrimary.textContent = `${source.type === 'external-file' ? 'external' : 'embedded'}${formatAudioChannelLabel(source)} | ${formatDuration(source.durationSeconds)}`;
     const metaOrigin = document.createElement('span');
     metaOrigin.textContent = origin;
+    const meta = document.createElement('span');
+    meta.className = 'asset-meta';
     meta.append(metaPrimary, metaOrigin);
-    const rightMeta = document.createElement('div');
-    rightMeta.className = 'asset-row-meta-cluster';
-    rightMeta.append(marker, meta);
+    const placementBadge = createPoolPlacementBadge(
+      getAudioPoolPlacement(source, options.getShowConfigPath(), isWindowsStylePath()),
+    );
+    placementBadge.classList.add('asset-row-placement');
     const remove = createButton('Remove', 'secondary row-action', async () => {
       if (!confirmPoolRecordRemoval(source.label)) {
         return;
@@ -365,7 +407,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     decorateIconButton(remove, 'X', `Remove ${source.label} from pool`);
     remove.addEventListener('click', (event) => event.stopPropagation());
-    row.append(status, label, rightMeta, remove);
+    row.append(status, label, meta, placementBadge, remove);
     return row;
   }
 
@@ -569,11 +611,22 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     menu.addEventListener('click', (event) => event.stopPropagation());
     const localFiles = createButton('Local static files', 'secondary context-menu-item', async () => {
       dismissAudioSourceContextMenu();
-      const visuals = await window.xtream.visuals.add();
-      options.queueEmbeddedAudioImportPrompt(visuals);
-      visuals?.forEach(options.probeVisualMetadata);
-      if (visuals?.[0]) {
-        options.setSelectedEntity({ type: 'visual', id: visuals[0].id });
+      const modeChoice = await chooseMediaImportMode('visual');
+      if (modeChoice.kind !== 'mode') {
+        return;
+      }
+      const paths = await window.xtream.visuals.chooseFiles();
+      if (paths.length === 0) {
+        return;
+      }
+      const result = await runMediaImportAfterPickerChoice('visual', paths, modeChoice.mode);
+      if (result.kind !== 'visual') {
+        return;
+      }
+      options.queueEmbeddedAudioImportPrompt(result.visuals);
+      result.visuals.forEach(options.probeVisualMetadata);
+      if (result.visuals[0]) {
+        options.setSelectedEntity({ type: 'visual', id: result.visuals[0].id });
       }
       options.renderState(await window.xtream.director.getState());
     });
@@ -969,18 +1022,19 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
         options.setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
         return;
       }
-      if (activePoolTab === 'visuals') {
-        const visuals = await window.xtream.visuals.addDropped(paths);
-        options.queueEmbeddedAudioImportPrompt(visuals);
-        visuals.forEach(options.probeVisualMetadata);
-        if (visuals[0]) {
-          options.setSelectedEntity({ type: 'visual', id: visuals[0].id });
+      const kind = activePoolTab === 'visuals' ? ('visual' as const) : ('audio' as const);
+      const result = await openMediaImportModal(kind, paths);
+      if (result.kind === 'canceled') {
+        return;
+      }
+      if (kind === 'visual' && result.kind === 'visual') {
+        options.queueEmbeddedAudioImportPrompt(result.visuals);
+        result.visuals.forEach(options.probeVisualMetadata);
+        if (result.visuals[0]) {
+          options.setSelectedEntity({ type: 'visual', id: result.visuals[0].id });
         }
-      } else {
-        const sources = await window.xtream.audioSources.addDropped(paths);
-        if (sources[0]) {
-          options.setSelectedEntity({ type: 'audio-source', id: sources[0].id });
-        }
+      } else if (kind === 'audio' && result.kind === 'audio' && result.sources[0]) {
+        options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
       }
       options.renderState(await window.xtream.director.getState());
     });
@@ -999,9 +1053,20 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.addVisualsButton.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (activePoolTab === 'audio') {
-        const source = await window.xtream.audioSources.addFile();
-        if (source) {
-          options.setSelectedEntity({ type: 'audio-source', id: source.id });
+        const modeChoice = await chooseMediaImportMode('audio');
+        if (modeChoice.kind !== 'mode') {
+          return;
+        }
+        const picked = await window.xtream.audioSources.chooseFile();
+        if (!picked) {
+          return;
+        }
+        const result = await runMediaImportAfterPickerChoice('audio', [picked], modeChoice.mode);
+        if (result.kind !== 'audio') {
+          return;
+        }
+        if (result.sources[0]) {
+          options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
         }
         options.renderState(await window.xtream.director.getState());
       } else {

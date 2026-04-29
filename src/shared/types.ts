@@ -981,13 +981,20 @@ export type ControlProjectUiStateV1 = {
   stream?: ControlProjectUiStreamState;
 };
 
+export type MediaImportMode = 'link' | 'copy';
+
+export type MediaPoolImportFilesPayload = {
+  filePaths: string[];
+  mode: MediaImportMode;
+};
+
 export type IpcChannels = {
   'director:get-state': () => DirectorState;
   'director:apply-preset': (preset: PresetId) => PresetResult;
   'director:transport': (command: TransportCommand) => DirectorState;
   'director:update-global-state': (update: GlobalStateUpdate) => DirectorState;
-  'visual:add': () => VisualState[] | undefined;
-  'visual:add-dropped': (filePaths: string[]) => VisualState[];
+  'visual:choose-files': () => string[];
+  'visual:import-files': (payload: MediaPoolImportFilesPayload) => VisualState[];
   'visual:update': (visualId: VisualId, update: VisualUpdate) => VisualState;
   'visual:replace': (visualId: VisualId) => VisualState | undefined;
   'visual:clear': (visualId: VisualId) => VisualState;
@@ -999,8 +1006,8 @@ export type IpcChannels = {
   'live-capture:prepare-display-stream': (visualId: VisualId, sourceId?: string) => boolean;
   'live-capture:release-display-stream': (visualId: VisualId) => void;
   'live-capture:permission-status': () => Record<string, string>;
-  'audio-source:add-file': () => AudioSourceCreateResult;
-  'audio-source:add-dropped': (filePaths: string[]) => AudioSourceState[];
+  'audio-source:choose-file': () => string | undefined;
+  'audio-source:import-files': (payload: MediaPoolImportFilesPayload) => AudioSourceState[];
   'audio-source:add-embedded': (visualId: VisualId, mode?: EmbeddedAudioExtractionMode) => AudioSourceState;
   'audio-source:extract-embedded': (visualId: VisualId, format?: AudioExtractionFormat) => Promise<AudioSourceState>;
   'audio-source:replace-file': (audioSourceId: AudioSourceId) => AudioSourceCreateResult;
@@ -1021,6 +1028,7 @@ export type IpcChannels = {
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
   'show:create-project': () => ShowConfigOperationResult | undefined;
+  'show:get-current-path': () => string | undefined;
   'show:get-launch-data': () => LaunchShowData;
   'show:open-default': () => ShowConfigOperationResult | undefined;
   'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;

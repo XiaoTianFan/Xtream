@@ -549,6 +549,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       probeVisualMetadata: embeddedAudioImport.probeVisualMetadata,
       createEmbeddedAudioRepresentation: embeddedAudioImport.createEmbeddedAudioRepresentation,
       extractEmbeddedAudioFile: embeddedAudioImport.extractEmbeddedAudioFile,
+      getShowConfigPath: options.getShowConfigPath,
     });
     mediaPool.install();
     mixerPanel = createMixerPanelController({ outputPanel: shell.outputPanel }, {

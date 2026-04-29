@@ -36,6 +36,7 @@ export type StreamSurfaceOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;
   showActions: ShowActions;
+  getShowConfigPath: () => string | undefined;
 };
 
 export type StreamSurfaceController = SurfaceController & {

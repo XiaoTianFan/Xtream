@@ -319,4 +319,54 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.activeTimeline.activeAudioSourceIds).toHaveLength(2);
     expect(derived.activeTimeline.assignedVideoIds).toHaveLength(2);
   });
+
+  it('freezes derived director timeline when transport is running but no scene row is playing media', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(99_000);
+    const state = {
+      paused: false,
+      rate: 1,
+      anchorWallTimeMs: 0,
+      offsetSeconds: 0,
+      loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: 1,
+      globalDisplayBlackoutFadeOutSeconds: 1,
+      visuals: {},
+      audioSources: {},
+      outputs: {},
+      displays: {},
+      activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+      audioRendererReady: true,
+      readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+      corrections: { displays: {} },
+      previews: {},
+      audioExtractionFormat: 'm4a',
+      controlDisplayPreviewMaxFps: 15,
+      performanceMode: false,
+    } as DirectorState;
+    const streamState = {
+      stream: { id: 's', label: 's', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 's', label: 's', sceneOrder: [], scenes: {} },
+      editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      validationMessages: [],
+      runtime: {
+        status: 'running',
+        originWallTimeMs: 90_000,
+        offsetStreamMs: 1000,
+        currentStreamMs: 10_000,
+        sceneStates: {
+          a: { sceneId: 'a', status: 'ready' },
+          b: { sceneId: 'b', status: 'ready' },
+        },
+      },
+    } satisfies StreamEnginePublicState;
+
+    const derived = deriveDirectorStateForStream(state, streamState);
+
+    expect(derived.paused).toBe(true);
+    expect(derived.offsetSeconds).toBe(10);
+    expect(derived.anchorWallTimeMs).toBe(99_000);
+  });
 });

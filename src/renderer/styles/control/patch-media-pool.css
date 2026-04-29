@@ -396,3 +396,81 @@
 .audio-panel {
   grid-template-columns: 1fr;
 }
+
+/* Media pool: link vs copy import modal */
+.media-import-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--compact);
+  margin-top: var(--gutter);
+}
+
+.media-import-modal--busy {
+  display: grid;
+  justify-items: center;
+  gap: 1rem;
+  padding: 1.5rem 0.5rem 1rem;
+  min-height: 8rem;
+}
+
+.media-import-modal__spinner {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent-teal) 28%, transparent);
+  border-top-color: var(--accent-teal);
+  animation: extraction-spin 0.9s linear infinite;
+}
+
+.media-import-modal__status {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.media-import-modal--error {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.media-import-modal__error-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.media-import-modal__error-pre {
+  margin: 0;
+  max-height: min(280px, 40vh);
+  overflow: auto;
+  padding: var(--compact);
+  border: 1px solid var(--border-subtle);
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--status-critical);
+}
+
+.media-import-modal-panel .live-capture-modal {
+  min-height: min(340px, 50vh);
+}
+
+/* Visual grid: remove + placement marker stack (LNK/FIL/REP) — marker matches row-action footprint */
+.visual-pool-card__footer-actions {
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  justify-items: end;
+  align-content: start;
+  gap: 0.12rem;
+}
+
+.visual-pool-card__footer-actions .visual-pool-card__placement-marker {
+  box-sizing: border-box;
+  width: 1.25rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  min-height: 1.25rem;
+  font-size: 0.5rem;
+}
+

@@ -10,6 +10,7 @@ import {
   getDefaultShowConfigPath,
   getRecentShowsPath,
   SHOW_AUDIO_ASSET_DIRECTORY,
+  SHOW_VISUAL_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
   migrateV3ToV4,
   migrateV4ToV5,
@@ -378,6 +379,7 @@ describe('show config persistence helpers', () => {
   it('uses the userData path for the default show config', () => {
     expect(getDefaultShowConfigPath('F:\\XtreamData')).toBe(`F:\\XtreamData\\default-show\\${SHOW_PROJECT_FILENAME}`);
     expect(SHOW_AUDIO_ASSET_DIRECTORY).toBe(path.join('assets', 'audio'));
+    expect(SHOW_VISUAL_ASSET_DIRECTORY).toBe(path.join('assets', 'visuals'));
   });
 
   it('creates diagnostics with current runtime state and issues', () => {

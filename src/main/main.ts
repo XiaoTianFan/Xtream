@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
+import { copyFilesIntoProjectAssets } from './mediaImport';
 import { mergeAppControlSettings, readAppControlSettings } from './appControlSettings';
 import { getAppIconPath } from './appIcon';
 import { Director } from './director';
@@ -17,6 +18,7 @@ import {
   getDefaultShowConfigPath,
   addRecentShow,
   SHOW_AUDIO_ASSET_DIRECTORY,
+  SHOW_VISUAL_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
   readRecentShows,
   readShowConfig,
@@ -50,6 +52,7 @@ import type {
   PresetResult,
   LaunchShowData,
   MediaValidationIssue,
+  MediaPoolImportFilesPayload,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -661,14 +664,18 @@ async function ensureShowProjectStructure(configPath: string): Promise<void> {
   if (path.basename(configPath) !== SHOW_PROJECT_FILENAME) {
     return;
   }
-  await mkdir(path.join(path.dirname(configPath), SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+  const root = path.dirname(configPath);
+  await mkdir(path.join(root, SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+  await mkdir(path.join(root, SHOW_VISUAL_ASSET_DIRECTORY), { recursive: true });
 }
 
 function ensureShowProjectStructureSync(configPath: string): void {
   if (path.basename(configPath) !== SHOW_PROJECT_FILENAME) {
     return;
   }
-  fs.mkdirSync(path.join(path.dirname(configPath), SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+  const root = path.dirname(configPath);
+  fs.mkdirSync(path.join(root, SHOW_AUDIO_ASSET_DIRECTORY), { recursive: true });
+  fs.mkdirSync(path.join(root, SHOW_VISUAL_ASSET_DIRECTORY), { recursive: true });
 }
 
 function createExtractionFilePath(visualId: string, format: AudioExtractionFormat): string {
@@ -922,22 +929,29 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('visual:add', async () => {
+  ipcMain.handle('visual:choose-files', async () => {
     const items = await pickVisualFiles(['openFile', 'multiSelections']);
-    if (!items) {
-      return undefined;
-    }
-    const visuals = director.addVisuals(items);
-    scheduleShowConfigAutoSave();
-    return visuals;
+    return items?.map((item) => item.path) ?? [];
   });
 
-  ipcMain.handle('visual:add-dropped', (_event, filePaths: string[]) => {
-    const items = createDroppedVisualImportItems(filePaths);
+  ipcMain.handle('visual:import-files', async (_event, payload: MediaPoolImportFilesPayload) => {
+    const items = createDroppedVisualImportItems(payload.filePaths);
     if (items.length === 0) {
       return [];
     }
-    const visuals = director.addVisuals(items);
+    let toAdd: VisualImportItem[] = items;
+    if (payload.mode === 'copy') {
+      if (!currentShowConfigPath) {
+        throw new Error('No show is open.');
+      }
+      const destPaths = await copyFilesIntoProjectAssets(
+        currentShowConfigPath,
+        items.map((item) => item.path),
+        'visual',
+      );
+      toAdd = destPaths.map((destination) => createVisualImportItem(destination));
+    }
+    const visuals = director.addVisuals(toAdd);
     scheduleShowConfigAutoSave();
     return visuals;
   });
@@ -1004,7 +1018,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('live-capture:permission-status', () => getLivePermissionStatus());
 
-  ipcMain.handle('audio-source:add-file', async () => {
+  ipcMain.handle('audio-source:choose-file', async () => {
     const result = await showOpenDialog({
       title: 'Add audio source',
       properties: ['openFile'],
@@ -1017,19 +1031,23 @@ function registerIpcHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return undefined;
     }
-    const audioPath = result.filePaths[0];
-    const source = director.addAudioFileSource(audioPath, toRendererFileUrl(audioPath));
-    scheduleShowConfigAutoSave();
-    return source;
+    return result.filePaths[0];
   });
 
-  ipcMain.handle('audio-source:add-dropped', (_event, filePaths: string[]) => {
-    const paths = createDroppedAudioFilePaths(filePaths);
+  ipcMain.handle('audio-source:import-files', async (_event, payload: MediaPoolImportFilesPayload) => {
+    const paths = createDroppedAudioFilePaths(payload.filePaths);
     if (paths.length === 0) {
       return [];
     }
+    let pathsToAdd = paths;
+    if (payload.mode === 'copy') {
+      if (!currentShowConfigPath) {
+        throw new Error('No show is open.');
+      }
+      pathsToAdd = await copyFilesIntoProjectAssets(currentShowConfigPath, paths, 'audio');
+    }
     const sources: AudioSourceState[] = [];
-    for (const filePath of paths) {
+    for (const filePath of pathsToAdd) {
       sources.push(director.addAudioFileSource(filePath, toRendererFileUrl(filePath)));
     }
     scheduleShowConfigAutoSave();
@@ -1207,6 +1225,8 @@ function registerIpcHandlers(): void {
       },
     };
   });
+
+  ipcMain.handle('show:get-current-path', (): string | undefined => currentShowConfigPath);
 
   ipcMain.handle('show:open-default', async (): Promise<ShowConfigOperationResult | undefined> => {
     const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));

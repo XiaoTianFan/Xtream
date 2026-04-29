@@ -37,14 +37,25 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
   }
   const nowWallTimeMs = Date.now();
 
-  const offsetSeconds =
-    runtime.status === 'running'
-      ? (runtime.offsetStreamMs ?? runtime.currentStreamMs ?? 0) / 1000
-      : (runtime.pausedAtStreamMs ?? runtime.currentStreamMs ?? runtime.offsetStreamMs ?? 0) / 1000;
+  const sceneStateValues = Object.values(runtime.sceneStates ?? {});
+  /** No scene playing, but we have per-row state — avoid chasing a planned start while manual rows wait. */
+  const freezeDerivedTimeline =
+    runtime.status === 'running' &&
+    runtime.originWallTimeMs !== undefined &&
+    sceneStateValues.length > 0 &&
+    !sceneStateValues.some((s) => s.status === 'running' || s.status === 'preloading');
+
+  const paused = runtime.status !== 'running' || freezeDerivedTimeline;
+  const offsetSeconds = paused
+    ? (runtime.pausedAtStreamMs ?? runtime.currentStreamMs ?? runtime.offsetStreamMs ?? 0) / 1000
+    : (runtime.offsetStreamMs ?? runtime.currentStreamMs ?? 0) / 1000;
   const derived: DirectorState = {
     ...state,
-    paused: runtime.status !== 'running',
-    anchorWallTimeMs: runtime.status === 'running' ? (runtime.originWallTimeMs ?? Date.now()) : Date.now(),
+    paused,
+    anchorWallTimeMs:
+      runtime.status === 'running' && !freezeDerivedTimeline
+        ? (runtime.originWallTimeMs ?? Date.now())
+        : Date.now(),
     offsetSeconds,
     loop: { enabled: false, startSeconds: 0 },
     audioSources: { ...state.audioSources },

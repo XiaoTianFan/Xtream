@@ -30,6 +30,7 @@ import type {
   DiagnosticsExportAttachPayload,
   LaunchShowData,
   MediaValidationIssue,
+  MediaPoolImportFilesPayload,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -78,8 +79,8 @@ const api = {
     },
   },
   visuals: {
-    add: (): Promise<VisualState[] | undefined> => ipcRenderer.invoke('visual:add'),
-    addDropped: (filePaths: string[]): Promise<VisualState[]> => ipcRenderer.invoke('visual:add-dropped', filePaths),
+    chooseFiles: (): Promise<string[]> => ipcRenderer.invoke('visual:choose-files'),
+    importFiles: (payload: MediaPoolImportFilesPayload): Promise<VisualState[]> => ipcRenderer.invoke('visual:import-files', payload),
     update: (visualId: VisualId, update: VisualUpdate): Promise<VisualState> => ipcRenderer.invoke('visual:update', visualId, update),
     replace: (visualId: VisualId): Promise<VisualState | undefined> => ipcRenderer.invoke('visual:replace', visualId),
     clear: (visualId: VisualId): Promise<VisualState> => ipcRenderer.invoke('visual:clear', visualId),
@@ -97,8 +98,9 @@ const api = {
     permissionStatus: (): Promise<Record<string, string>> => ipcRenderer.invoke('live-capture:permission-status'),
   },
   audioSources: {
-    addFile: (): Promise<AudioSourceState | undefined> => ipcRenderer.invoke('audio-source:add-file'),
-    addDropped: (filePaths: string[]): Promise<AudioSourceState[]> => ipcRenderer.invoke('audio-source:add-dropped', filePaths),
+    chooseFile: (): Promise<string | undefined> => ipcRenderer.invoke('audio-source:choose-file'),
+    importFiles: (payload: MediaPoolImportFilesPayload): Promise<AudioSourceState[]> =>
+      ipcRenderer.invoke('audio-source:import-files', payload),
     addEmbedded: (visualId: VisualId, mode?: 'representation' | 'file'): Promise<AudioSourceState> =>
       ipcRenderer.invoke('audio-source:add-embedded', visualId, mode),
     extractEmbedded: (visualId: VisualId, format?: AudioExtractionFormat): Promise<AudioSourceState> =>
@@ -158,6 +160,7 @@ const api = {
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
     createProject: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:create-project'),
     getLaunchData: (): Promise<LaunchShowData> => ipcRenderer.invoke('show:get-launch-data'),
+    getCurrentPath: (): Promise<string | undefined> => ipcRenderer.invoke('show:get-current-path'),
     openDefault: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-default'),
     openRecent: (filePath: string): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-recent', filePath),
     updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),

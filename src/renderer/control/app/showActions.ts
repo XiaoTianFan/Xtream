@@ -1,5 +1,6 @@
 import type { DirectorState, MediaValidationIssue, ShowConfigOperationResult } from '../../../shared/types';
 import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
+import { setShownProjectPath } from './showProjectPath';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 
 type ShowActionsOptions = {
@@ -24,6 +25,7 @@ export type ShowActions = ReturnType<typeof createShowActions>;
 export function createShowActions(options: ShowActionsOptions) {
   async function saveShow(): Promise<void> {
     const result = await window.xtream.show.save();
+    setShownProjectPath(result.filePath);
     options.renderState(result.state);
     options.setShowStatus(`Saved show config: ${result.filePath ?? 'default location'}`, result.issues);
   }
@@ -31,6 +33,7 @@ export function createShowActions(options: ShowActionsOptions) {
   async function saveShowAs(): Promise<void> {
     const result = await window.xtream.show.saveAs();
     if (result) {
+      setShownProjectPath(result.filePath);
       options.renderState(result.state);
       options.setShowStatus(`Saved show config: ${result.filePath ?? 'selected location'}`, result.issues);
     }
@@ -45,6 +48,7 @@ export function createShowActions(options: ShowActionsOptions) {
     }
     const flowStartMs = performance.now();
     const runId = result.openProfileRunId ?? `so-local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setShownProjectPath(result.filePath);
     logShowOpenProfile({
       runId,
       checkpoint: 'renderer_open_flow_start',

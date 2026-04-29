@@ -128,9 +128,15 @@ function getStreamCurrentMs(runtime: StreamEnginePublicState['runtime'], state: 
   if (!runtime) {
     return 0;
   }
-  if (runtime.status === 'running' && runtime.originWallTimeMs !== undefined) {
+  const states = Object.values(runtime.sceneStates ?? {});
+  const originWall = runtime.originWallTimeMs;
+  const wallClockRunning =
+    (runtime.status === 'running' || runtime.status === 'preloading') &&
+    originWall !== undefined &&
+    (states.length === 0 || states.some((s) => s.status === 'running' || s.status === 'preloading'));
+  if (wallClockRunning) {
     const rate = state?.rate && state.rate > 0 ? state.rate : 1;
-    return (runtime.offsetStreamMs ?? 0) + (Date.now() - runtime.originWallTimeMs) * rate;
+    return (runtime.offsetStreamMs ?? 0) + (Date.now() - originWall) * rate;
   }
   return runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs ?? 0;
 }

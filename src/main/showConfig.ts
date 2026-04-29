@@ -26,6 +26,7 @@ export const SHOW_CONFIG_EXTENSION = 'xtream-show.json';
 export const SHOW_PROJECT_FILENAME = `show.${SHOW_CONFIG_EXTENSION}`;
 export const DEFAULT_SHOW_PROJECT_FOLDER = 'default-show';
 export const SHOW_AUDIO_ASSET_DIRECTORY = path.join('assets', 'audio');
+export const SHOW_VISUAL_ASSET_DIRECTORY = path.join('assets', 'visuals');
 export const RECENT_SHOWS_FILENAME = 'recent-shows.json';
 export const RECENT_SHOWS_LIMIT = 8;
 

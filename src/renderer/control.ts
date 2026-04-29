@@ -23,6 +23,7 @@ import { installShellIcons } from './control/shell/shellIcons';
 import { renderIssues as renderIssueList } from './control/shared/issues';
 import { installShowOpenProfileLogBridge, subscribeShowOpenProfileLogBuffer } from './control/config/showOpenProfileUi';
 import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../shared/showOpenProfile';
+import { getShownProjectPath, setShownProjectPath } from './control/app/showProjectPath';
 import type { ControlSurface } from './control/shared/types';
 
 let currentState: DirectorState | undefined;
@@ -166,6 +167,7 @@ const streamSurface = createStreamSurfaceController({
   renderState,
   setShowStatus,
   showActions,
+  getShowConfigPath: () => getShownProjectPath(),
 });
 
 const globalOperatorFooter = createGlobalOperatorFooterController({
@@ -225,6 +227,7 @@ void window.xtream.stream.getState().then((s) => {
 
 hydrateControlShellAfterShow = async (result, ctx) => {
   const filePath = result.filePath;
+  setShownProjectPath(filePath);
   if (!filePath) {
     return;
   }
@@ -353,6 +356,7 @@ elements.launchOpenShowButton.addEventListener('click', async () => {
   try {
     const result = await window.xtream.show.open();
     if (result) {
+      setShownProjectPath(result.filePath);
       await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
       return;
     }
@@ -414,7 +418,12 @@ installShowOpenProfileLogBridge();
 void launchDashboard.load();
 void loadAudioDevices();
 void loadDisplayMonitors();
-void window.xtream.director.getState().then(renderState);
+void window.xtream.director.getState().then((state) => {
+  renderState(state);
+  void window.xtream.show.getCurrentPath().then((p) => {
+    setShownProjectPath(p);
+  });
+});
 
 animationFrame = window.requestAnimationFrame(tick);
 previewSyncTimer = window.setInterval(() => {

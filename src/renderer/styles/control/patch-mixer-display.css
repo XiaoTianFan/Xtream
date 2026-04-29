@@ -48,7 +48,7 @@
 
 .asset-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 0.85fr) minmax(0, 1.25fr) auto;
+  grid-template-columns: auto minmax(0, 0.85fr) minmax(0, 1.25fr) auto auto;
   align-items: center;
   gap: 0.35rem;
   height: 2.75rem;
@@ -61,9 +61,6 @@
   font-size: 0.72rem;
 }
 
-.asset-row.audio-source-row {
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.35fr) auto;
-}
 
 .asset-row strong {
   min-width: 0;
@@ -801,7 +798,19 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   color: var(--accent-teal);
 }
 
-.status-dot {
+.asset-marker.link {
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border-subtle));
+  color: var(--text-secondary);
+}
+
+.asset-marker--empty {
+  visibility: hidden;
+  border-color: transparent;
+  color: transparent;
+}
+
+.asset-row-placement {
+  justify-self: end;
   width: 0.48rem;
   height: 0.48rem;
   border: 1px solid currentcolor;

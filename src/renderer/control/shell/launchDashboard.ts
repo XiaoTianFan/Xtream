@@ -3,6 +3,7 @@ import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../sh
 import type { ControlSurface } from '../shared/types';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 import { elements } from './elements';
+import { setShownProjectPath } from '../app/showProjectPath';
 import { waitForLaunchPresentationReady } from './launchPresentationReady';
 
 /** Shows centered loading overlay + scrim on the launch modal (immediate, synchronous). */
@@ -64,6 +65,7 @@ export function createLaunchDashboardController({
     try {
       clearSelection();
       clearLiveVisualPoolThumbnailCache();
+      setShownProjectPath(result.filePath);
       renderState(result.state);
       logShowOpenProfile({
         runId,

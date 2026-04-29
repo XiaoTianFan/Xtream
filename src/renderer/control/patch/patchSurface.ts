@@ -6,6 +6,7 @@ import { createDetailsPaneController } from './detailsPane';
 import { syncPreviewElements } from './displayPreview';
 import { createDisplayWorkspaceController } from './displayWorkspace';
 import { createEmbeddedAudioImportController } from './embeddedAudioImport';
+import { getShownProjectPath } from '../app/showProjectPath';
 import {
   applyLayoutPrefs,
   getMaxMixerWidth,
@@ -110,6 +111,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     probeVisualMetadata: embeddedAudioImport.probeVisualMetadata,
     createEmbeddedAudioRepresentation: embeddedAudioImport.createEmbeddedAudioRepresentation,
     extractEmbeddedAudioFile: embeddedAudioImport.extractEmbeddedAudioFile,
+    getShowConfigPath: () => getShownProjectPath(),
   });
 
   header = createPatchHeaderController({
