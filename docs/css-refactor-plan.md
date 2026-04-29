@@ -15,24 +15,15 @@ This document describes how to split `src/renderer/control.css` into multiple ma
 - Renaming hundreds of HTML/TS class strings.
 - Changing `display.css`, `audio.css`, or non-control bundles (unless shared token files are explicitly reused later).
 
-## Current state (baseline)
+## Historical baseline (before refactor)
 
 | Item | Notes |
 |------|--------|
 | Entry | `control.ts` imports `./control.css`. |
-| Tailwind | `control.css` begins with `@import "tailwindcss";` and `@import "./scrollbar.css";`. |
-| Tokens | **`@theme { … }`** defines a subset of colors and fonts (`--color-*`, `--font-*`). **` :root`** duplicates overlapping concepts with different names (`--surface`, `--text-primary`, …) and adds layout tokens (`--gutter`, `--media-pool-width`, …). |
-| Scrollbars | `scrollbar.css` uses `--scrollbar-*` variables assumed to exist (today set under `:root` in `control.css`). |
+| Layout | A single multi-thousand-line `control.css` mixed Tailwind, tokens, shell, patch, stream, and shared primitives. |
+| Tokens | `@theme` and `:root` overlapped naming (`--color-bg-base` vs `--bg-base`); handwritten rules relied on `:root` aliases staying in sync. |
 
-### Token duplication today
-
-- **Colors:** `@theme` uses `--color-bg-base`, while `:root` uses `--bg-base` for the same role. Tailwind utilities would see the former; hand-written rules use the latter.
-- **Fonts:** `@theme` sets `--font-timecode` / `--font-data` / `--font-body`; `:root` repeats long `font-family` stacks on `body` and references `var(--font-timecode)` in places—consistency depends on both blocks staying in sync.
-
-### Gaps to fix during unification
-
-- Audit **undefined or one-off variables** (e.g. `var(--text-muted)` appears in stream styles; confirm definition or alias to an existing token).
-- **`--slider-fill` / `--slider-rail`:** Scoped under `input[type="range"].mini-slider` in places; document whether these belong in global tokens or stay component-scoped.
+**Resolved in this refactor:** Token story is unified in `tokens.css` (`@theme` canonical names + `:root` aliases). `--text-muted` is aliased; `--slider-fill` / `--slider-rail` remain **scoped on** `input[type="range"].mini-slider` (see `base.css`), not global `:root`.
 
 ---
 
@@ -46,22 +37,21 @@ src/renderer/
   scrollbar.css               ← unchanged location (or moved under styles/ if desired)
   styles/
     control/
-      README.md               ← optional: import order + ownership (one screen)
+      README.md               ← import order + ownership (see file)
       00-tailwind-entry.css   ← @import "tailwindcss"; @import scrollbar
       tokens.css              ← @theme + unified :root token layer
       base.css                ← global resets, body, buttons, inputs, mini-slider
       shell.css               ← app shell, rail, frame, launch/extraction overlays, loading scrims
-      patch-layout.css        ← patch surface grid, top-bar, workspace, operator footer, surface-panel
-      patch-media-pool.css    ← media pool, pool tabs, toolbars, list rows in patch context
-      patch-mixer.css         ← mixer panel, strips, pan knob, mixer meters/toggles as grouped here today
-      patch-displays.css      ← display cards, display workspace, monitor/preview styles before stream block
-      stream.css              ← .stream-* from .stream-surface through stream scene edit, media queries at end of stream block
-      shared-components.css   ← cross-surface primitives: icon-button, control-icon, badges, db-control, status-footer, sr-only, warning/issue (or split further if still large)
+      patch-layout.css           ← patch surface, transport/top bar, workspace grid, surface-* config shells (ends before pool columns)
+      patch-media-pool.css       ← `.panel`, media pool columns, splitter, visual pool grid, tabs, mapping grids
+      patch-mixer-display.css    ← Mixer strips, pans, meters, displays/cards/previews/modals/details/routing (monolith order preserved)
+      stream.css                   ← `.stream-*` (incl. `@media (max-width: 980px)` for stream layout)
+      shared-components.css        ← `.db-control`, `.badge`, `.status-footer`, `.sr-only`, `.icon-button`, `.control-icon`, panel-header icon sizing
 ```
 
 **Naming:** Numeric prefix `00-*` optional; what matters is a **fixed import order** documented in `control.css` (see below).
 
-The exact split above is a **starting point**. When extracting, prefer **natural boundaries** (blank lines / feature areas) over arbitrary line counts. If `patch-mixer.css` or `stream.css` remains very large, split again (e.g. `stream-header.css`, `stream-scene-list.css`).
+The exact split above is a **starting point**. When extracting, prefer **natural boundaries** (blank lines / feature areas) over arbitrary line counts. If `patch-mixer-display.css` or `stream.css` remains very large, split again (e.g. `stream-header.css`, `stream-scene-list.css`).
 
 ---
 
@@ -120,33 +110,45 @@ If specificity issues appear when mixing utilities with custom CSS, introduce `@
 - Replace the top of `control.css` with imports: tailwind + scrollbar → `tokens.css` → rest still inline **or** copy-paste unchanged body below until Phase 2.
 - Run `npm run build:renderer` and smoke-test Control (open show, patch surface, stream rail, config).
 
+**Status (done):** `tokens.css` holds `@theme` plus `:root` aliases (`--surface` → `var(--color-surface)`, etc.) including `--color-on-surface`, `--color-outline-variant`, and `--text-muted` → `--color-text-secondary`. Subsequent imports are split under `styles/control/` (`base`, `shell`, patch partials; then `stream.css` and `shared-components.css` after Phase 4).
+
 ### Phase 2 — Base + shell
 
 - Move global reset / `body` / `button` / `input` / `.mini-slider` to `base.css`.
 - Move `.app-shell` through launch/extraction/scrim rules into `shell.css`.
 - **Snapshot:** Grep for rules that reference only shell classes to avoid stragglers.
 
+**Status (done):** `base.css` and `shell.css` live under `src/renderer/styles/control/`. `@keyframes extraction-spin` is defined once at the top of `shell.css`.
+
 ### Phase 3 — Patch
 
 - Move `.patch-surface`, `.top-bar`, `.workspace`, `.operator-footer`, `.surface-panel`, media pool, mixer, display cards in the patch context to the patch\* files.
 - Keep **selector order** identical within each moved block to avoid cascade differences.
+
+**Status (done):** `patch-layout.css` (.patch-surface … timeline/loop chrome … surface-cards/log … ends before `.panel`/pool columns). `patch-media-pool.css` (`.panel` through `.audio-panel`). `patch-mixer-display.css` carries **mixer + displays + previews + routing + detail panes** in **one file** because the legacy sheet interleaves those rules (splitting further would reorder selectors). Duplicate launch/extraction block that had landed in `control-surfaces.css` **removed** at split time so shell styles stay single-sourced.
 
 ### Phase 4 — Stream + shared
 
 - Move `.stream-*` and trailing shared utilities (`.status-footer`, `.badge`, `.icon-button`, media queries that only touch stream) into `stream.css` / `shared-components.css`.
 - Resolve any **cross-file ordering** issue (e.g. `.display-card` used in both patch and stream): if today one block wins by source order, preserve that order via file import order or a single shared partial.
 
+**Status (done):** `control-surfaces.css` was split into `stream.css` (all `.stream-*` rules plus the stream-only `@media (max-width: 980px)` block) and `shared-components.css` (global `.db-control`, `.badge`, `.status-footer`, `.sr-only`, `.control-icon`, `.icon-button`). Import order is `patch-mixer-display.css` → `stream.css` → `shared-components.css`, so stream-specific rules precede shared primitives as before. **`@media (max-width: 1180px)` for `.output-source-row` / `.output-source-mid` / `.output-source-actions`** lives in `patch-mixer-display.css` next to the patch mixer output-source rules (it is not stream-specific); that closes the gap where it had sat at the end of the old combined surfaces file.
+
 ### Phase 5 — Cleanup
 
 - Delete dead comments; ensure `tokens.css` has no unused `@theme` keys.
 - Optional: add `styles/control/README.md` with “who owns what” and import order.
 
+**Status (done):** `styles/control/README.md` documents import order, file ownership, and editing notes (`--slider-fill` / `--slider-rail` locality). Noise-only comments trimmed where applicable; Mixer file banner updated. **`@theme` keys** remain defined for Tailwind and are all consumed via `:root` aliases in the same file (no orphaned theme entries).
+
 ---
 
 ## Verification checklist
 
-- [ ] `npm run typecheck` passes.  
-- [ ] `npm run build:renderer` passes.  
+Roadmap phases 1–5 are complete for **implementation**. Automated checks (`npm run typecheck`, `npm run build:renderer`) succeed; keep the remaining rows as **manual QA** before release.
+
+- [x] `npm run typecheck` passes.  
+- [x] `npm run build:renderer` passes.  
 - [ ] **Visual:** Patch surface—transport, loop popover, timeline scrubber, media pool, mixer, display assignment area.  
 - [ ] **Visual:** Stream surface—header, scene list, scene edit, bottom pane.  
 - [ ] **Visual:** Config/performance surfaces, launch dashboard, extraction overlay, workspace loading overlay.  
@@ -168,7 +170,8 @@ If specificity issues appear when mixing utilities with custom CSS, introduce `@
 
 ## References
 
-- Entry: `src/renderer/control.ts` → `import './control.css'`.  
+- Entry: `src/renderer/control.ts` → `import './control.css'`.
+- **Ownership / import order:** `src/renderer/styles/control/README.md`.
 - Vite root: `src/renderer` (`vite.config.ts`).  
 - Tailwind v4 + Vite: `@import "tailwindcss";` and `@theme` in CSS (current project pattern).
 
@@ -177,3 +180,5 @@ If specificity issues appear when mixing utilities with custom CSS, introduce `@
 ## Summary
 
 **Split** `control.css` into a small entry plus `styles/control/*.css` ordered by shell → patch → stream → shared. **Unify** tokens by making `@theme` the canonical definition for themeable values and **aliasing** legacy `:root` names used throughout the app, plus layout-only variables in one `tokens.css`. Execute in **phases** with build + visual checks after each phase so the control UI remains stable while maintainability improves.
+
+**Refactor roadmap:** Phases 1–5 are **implemented** (`README.md`, cleanup, documented token/slider conventions). Outstanding verification is **manual** UX QA (checkboxes above for visual/state/scrollbar parity).

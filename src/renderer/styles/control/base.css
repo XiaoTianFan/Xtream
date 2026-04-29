@@ -1,0 +1,145 @@
+* {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+}
+
+body {
+  margin: 0;
+  min-width: 1024px;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  min-height: var(--utility-button-height);
+  border: 1px solid var(--border-subtle);
+  padding: 0.35rem 0.55rem;
+  background: var(--surface-active);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+button.secondary {
+  background: var(--surface-low);
+  color: var(--on-surface);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent-teal);
+  color: #fff;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent-ochre);
+  outline-offset: 2px;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+h2 {
+  margin-bottom: 0.55rem;
+  color: var(--on-surface);
+  font-size: 0.8rem;
+}
+
+h3 {
+  margin: 0.35rem 0 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  padding: 0.45rem 0.5rem;
+  background: #0e0e0f;
+  color: var(--text-primary);
+}
+
+input[type="range"].mini-slider {
+  /* Rail/fill are local to this component; values come from theme aliases on :root */
+  --slider-rail: var(--outline-variant);
+  --slider-fill: var(--accent-teal);
+  appearance: none;
+  width: 100%;
+  height: 1rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  accent-color: var(--accent-teal);
+  cursor: pointer;
+}
+
+input[type="range"].mini-slider::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(90deg, var(--slider-fill) var(--progress, 0%), var(--slider-rail) var(--progress, 0%));
+}
+
+input[type="range"].mini-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  margin-top: -3px;
+  border: 1px solid var(--surface-tint, #bcc8d0);
+  background: var(--slider-fill);
+}
+
+input[type="range"].mini-slider::-moz-range-track {
+  height: 2px;
+  background: var(--slider-rail);
+}
+
+input[type="range"].mini-slider::-moz-range-progress {
+  height: 2px;
+  background: var(--slider-fill);
+}
+
+input[type="range"].mini-slider::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--surface-tint, #bcc8d0);
+  border-radius: 0;
+  background: var(--slider-fill);
+}
+
+input[type="range"].mini-slider:disabled {
+  opacity: 0.45;
+}
