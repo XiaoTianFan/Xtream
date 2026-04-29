@@ -1,6 +1,6 @@
 /**
  * Control UI — import order matters for cascade.
- * tailwind → scrollbar → tokens → base → shell → patch-* → stream → shared components.
+ * tailwind → scrollbar → tokens → base → shell → patch-* → stream → config-layout → shared components.
  */
 @import "tailwindcss";
 @import "./scrollbar.css";
@@ -11,4 +11,5 @@
 @import "./styles/control/patch-media-pool.css";
 @import "./styles/control/patch-mixer-display.css";
 @import "./styles/control/stream.css";
+@import "./styles/control/config-layout.css";
 @import "./styles/control/shared-components.css";

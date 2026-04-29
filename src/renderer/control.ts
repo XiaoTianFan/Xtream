@@ -135,6 +135,11 @@ const showActions = createShowActions({
     setWorkspacePresentationLoadingUi(false);
     setLaunchDashboardLoadingUi(false);
   },
+  presentLaunchDashboardForCreate: async () => {
+    setLaunchDashboardLoadingUi(false);
+    launchShellRef.controller!.show();
+    await launchShellRef.controller!.load();
+  },
 });
 
 const patchSurface = createPatchSurfaceController({
@@ -186,6 +191,7 @@ const surfaceRouter = createSurfaceRouter({
     createPerformanceSurfaceController(),
     createConfigSurfaceController({
       renderState,
+      getDirectorState: () => currentState,
       setShowStatus,
       showActions,
       getOperationIssues: () => currentIssues,

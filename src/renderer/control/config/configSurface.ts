@@ -16,9 +16,37 @@ import { createDetailLine, createSurfaceCard, wrapSurfaceGrid } from '../shared/
 import { elements } from '../shell/elements';
 import type { ShowOpenProfileLogEntry } from '../../../shared/showOpenProfile';
 import { clearShowOpenProfileLogBuffer, getShowOpenProfileLogBuffer, getShowOpenProfileLogRevision } from './showOpenProfileUi';
+import {
+  applyConfigLayoutPrefs,
+  createConfigLayoutController,
+  readConfigLayoutPrefs,
+  type ConfigLayoutRefs,
+} from './configLayoutPrefs';
+import { createStreamTabBar } from '../stream/streamDom';
+
+const CONFIG_TAB_SESSION_KEY = 'xtream.control.config.tab.v1';
+
+type ConfigTabId = 'overview' | 'project' | 'actions' | 'diagnostics' | 'advanced';
+
+const CONFIG_TAB_ORDER: ConfigTabId[] = ['overview', 'project', 'actions', 'diagnostics', 'advanced'];
+
+function readStoredConfigTab(): ConfigTabId {
+  try {
+    const raw = sessionStorage.getItem(CONFIG_TAB_SESSION_KEY);
+    if (raw && (CONFIG_TAB_ORDER as string[]).includes(raw)) {
+      return raw as ConfigTabId;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'overview';
+}
+
+let configActiveTab: ConfigTabId = readStoredConfigTab();
 
 type ConfigSurfaceOptions = {
   renderState: (state: DirectorState) => void;
+  getDirectorState: () => DirectorState | undefined;
   setShowStatus: (message: string) => void;
   showActions: ShowActions;
   getOperationIssues: () => MediaValidationIssue[];
@@ -26,12 +54,106 @@ type ConfigSurfaceOptions = {
   getDisplayTelemetry: (display: DisplayWindowState) => string;
 };
 
+const layoutRefs: ConfigLayoutRefs = {};
+const layoutCtl = createConfigLayoutController(layoutRefs);
+let shellMounted = false;
+let upperMount: HTMLElement | null = null;
+let resizeHandlerInstalled = false;
+
+function requireLayoutRef(name: string): HTMLElement {
+  const el = layoutRefs[name as keyof ConfigLayoutRefs];
+  if (!el) {
+    throw new Error(`Missing config layout ref: ${name}`);
+  }
+  return el;
+}
+
+function onWindowResize(): void {
+  layoutCtl.syncSplitterAria();
+}
+
 export function createConfigSurfaceController(options: ConfigSurfaceOptions): SurfaceController {
+  function mountShell(): void {
+    if (shellMounted) {
+      return;
+    }
+    shellMounted = true;
+    elements.surfacePanel.classList.add('config-surface-panel');
+
+    const root = document.createElement('section');
+    root.className = 'config-surface';
+    layoutRefs.root = root;
+
+    const upper = document.createElement('div');
+    upper.className = 'config-surface-upper';
+    upperMount = upper;
+
+    const splitter = document.createElement('div');
+    splitter.className = 'splitter horizontal';
+    splitter.setAttribute('role', 'separator');
+    splitter.setAttribute('aria-orientation', 'horizontal');
+    splitter.setAttribute('aria-label', 'Resize settings and profile log panes');
+    splitter.tabIndex = 0;
+    layoutRefs.configBottomSplitter = splitter;
+
+    const logPane = document.createElement('aside');
+    logPane.className = 'config-surface-log';
+    logPane.setAttribute('aria-label', 'Show open profile log');
+    layoutRefs.logPane = logPane;
+
+    root.append(upper, splitter, logPane);
+    elements.surfacePanel.replaceChildren(root);
+
+    applyConfigLayoutPrefs(layoutRefs, readConfigLayoutPrefs());
+    layoutCtl.installSplitters(requireLayoutRef);
+
+    if (!resizeHandlerInstalled) {
+      resizeHandlerInstalled = true;
+      window.addEventListener('resize', onWindowResize);
+    }
+  }
+
+  function unmountShell(): void {
+    if (!shellMounted) {
+      return;
+    }
+    shellMounted = false;
+    upperMount = null;
+    layoutRefs.root = undefined;
+    layoutRefs.logPane = undefined;
+    layoutRefs.configBottomSplitter = undefined;
+    elements.surfacePanel.classList.remove('config-surface-panel');
+    elements.surfacePanel.replaceChildren();
+    if (resizeHandlerInstalled) {
+      resizeHandlerInstalled = false;
+      window.removeEventListener('resize', onWindowResize);
+    }
+  }
+
+  function setActiveTab(next: ConfigTabId): void {
+    configActiveTab = next;
+    try {
+      sessionStorage.setItem(CONFIG_TAB_SESSION_KEY, next);
+    } catch {
+      /* ignore */
+    }
+    const nextState = options.getDirectorState();
+    if (nextState) {
+      options.renderState(nextState);
+    }
+  }
+
   return {
     id: 'config',
+    mount: mountShell,
+    unmount: unmountShell,
     createRenderSignature: (state) =>
-      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}:${getShowOpenProfileLogRevision()}`,
-    render: (state) => renderConfigSurface(state, options),
+      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}:${getShowOpenProfileLogRevision()}:${configActiveTab}`,
+    render: (state) => {
+      mountShell();
+      renderIntoShell(state, options, setActiveTab);
+      layoutCtl.syncSplitterAria();
+    },
   };
 }
 
@@ -44,37 +166,36 @@ function formatProfileLogLine(entry: ShowOpenProfileLogEntry): string {
   return `${t} [${entry.source}] ${rid} ${entry.checkpoint} +${Math.round(entry.sinceRunStartMs)}ms${seg}${extra}`;
 }
 
-function renderShowOpenProfileLogPanel(): HTMLElement {
+function renderShowOpenProfileLogCard(): HTMLElement {
   const card = createSurfaceCard('Show open profile log');
-  card.append(
-    createHint(
-      'Structured checkpoints when opening a show (main process + control window).',
-    ),
-  );
-  const row = document.createElement('div');
-  row.className = 'button-row';
-  row.append(
-    createButton('Clear log', 'secondary', () => {
-      clearShowOpenProfileLogBuffer();
-    }),
-  );
-  card.append(row);
 
-  const wrap = document.createElement('div');
-  wrap.className = 'show-open-profile-log-wrap';
+  const panel = document.createElement('div');
+  panel.className = 'config-log-panel';
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'config-log-toolbar';
+  const clearBtn = createButton('Clear log', 'secondary config-log-clear', () => {
+    clearShowOpenProfileLogBuffer();
+  });
+  toolbar.append(clearBtn);
+
+  const scroll = document.createElement('div');
+  scroll.className = 'config-log-scroll';
   const pre = document.createElement('pre');
-  pre.className = 'show-open-profile-log-pre';
+  pre.className = 'config-log-pre';
   const lines = [...getShowOpenProfileLogBuffer()].map(formatProfileLogLine);
   pre.textContent = lines.length > 0 ? lines.join('\n') : 'No entries yet. Open a show to record checkpoints.';
-  wrap.append(pre);
-  card.append(wrap);
+  scroll.append(pre);
+
+  panel.append(toolbar, scroll);
+  card.append(panel);
   requestAnimationFrame(() => {
-    wrap.scrollTop = wrap.scrollHeight;
+    scroll.scrollTop = scroll.scrollHeight;
   });
   return card;
 }
 
-function renderDiagnosticsRow(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
+function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
   const issues = [...state.readiness.issues, ...options.getOperationIssues()];
   const issueCard = createSurfaceCard('Readiness Issues');
   if (issues.length === 0) {
@@ -130,7 +251,7 @@ function createDirectorStatePanel(state: DirectorState): HTMLElement {
   return details;
 }
 
-function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions): void {
+function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
   const summary = createSurfaceCard('Runtime');
   summary.append(
     createDetailLine('Runtime Version', XTREAM_RUNTIME_VERSION),
@@ -138,6 +259,14 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
     createDetailLine('Global Audio', state.globalAudioMuted ? 'muted' : 'live'),
     createDetailLine('Display Blackout', state.globalDisplayBlackout ? 'active' : 'off'),
     createDetailLine('Performance Mode', state.performanceMode ? 'on' : 'off'),
+  );
+
+  const topology = createSurfaceCard('Patch Topology');
+  topology.append(
+    createDetailLine('Visuals', String(Object.keys(state.visuals).length)),
+    createDetailLine('Audio Sources', String(Object.keys(state.audioSources).length)),
+    createDetailLine('Displays', String(Object.keys(state.displays).length)),
+    createDetailLine('Virtual Outputs', String(Object.keys(state.outputs).length)),
   );
 
   const showProject = createSurfaceCard('Show project');
@@ -183,7 +312,9 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
       (controlDisplayPreviewMaxFps) => window.xtream.show.updateSettings({ controlDisplayPreviewMaxFps }),
       options.renderState,
     ),
-    createHint('Display preview max FPS caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.'),
+    createHint(
+      'Display preview max FPS caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.',
+    ),
   );
 
   const streamPlayback = createSurfaceCard('Stream playback');
@@ -207,24 +338,68 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
   );
   actions.append(actionRow);
 
-  const topology = createSurfaceCard('Patch Topology');
-  topology.append(
-    createDetailLine('Visuals', String(Object.keys(state.visuals).length)),
-    createDetailLine('Audio Sources', String(Object.keys(state.audioSources).length)),
-    createDetailLine('Displays', String(Object.keys(state.displays).length)),
-    createDetailLine('Virtual Outputs', String(Object.keys(state.outputs).length)),
+  switch (tab) {
+    case 'overview':
+      return wrapSurfaceGrid(summary, topology);
+    case 'project':
+      return wrapSurfaceGrid(showProject, streamPlayback);
+    case 'actions':
+      return wrapSurfaceGrid(actions);
+    case 'diagnostics':
+      return renderDiagnosticsContent(state, options);
+    case 'advanced':
+      return wrapSurfaceGrid(createDirectorStatePanel(state));
+  }
+}
+
+function renderIntoShell(state: DirectorState, options: ConfigSurfaceOptions, setActiveTab: (next: ConfigTabId) => void): void {
+  if (!upperMount || !layoutRefs.logPane) {
+    return;
+  }
+
+  const tabRow = document.createElement('div');
+  tabRow.className = 'stream-workspace-tab-row';
+  tabRow.append(
+    createStreamTabBar(
+      'Config sections',
+      [
+        ['overview', 'Overview'],
+        ['project', 'Show & playback'],
+        ['actions', 'Actions'],
+        ['diagnostics', 'Diagnostics'],
+        ['advanced', 'Advanced'],
+      ],
+      configActiveTab,
+      (next) => setActiveTab(next as ConfigTabId),
+    ),
   );
 
-  const workspace = document.createElement('div');
-  workspace.className = 'surface-workspace';
-  workspace.append(
-    wrapSurfaceGrid(summary, showProject, streamPlayback, actions, topology),
-    renderDiagnosticsRow(state, options),
-    wrapSurfaceGrid(createDirectorStatePanel(state)),
-    renderShowOpenProfileLogPanel(),
-  );
+  const panels = document.createElement('div');
+  panels.className = 'config-tab-panels';
 
-  elements.surfacePanel.replaceChildren(workspace);
+  const tabLabels: Record<ConfigTabId, string> = {
+    overview: 'Overview and patch topology',
+    project: 'Show file and stream playback settings',
+    actions: 'System actions',
+    diagnostics: 'Readiness, displays, and audio routing',
+    advanced: 'Director state JSON',
+  };
+
+  for (const id of CONFIG_TAB_ORDER) {
+    const section = document.createElement('section');
+    section.className = 'config-tab-panel';
+    section.id = `config-tab-${id}`;
+    section.hidden = id !== configActiveTab;
+    section.setAttribute('role', 'tabpanel');
+    section.setAttribute('aria-label', tabLabels[id]);
+    if (id === configActiveTab) {
+      section.append(panelForTab(id, state, options));
+    }
+    panels.append(section);
+  }
+
+  upperMount.replaceChildren(tabRow, panels);
+  layoutRefs.logPane!.replaceChildren(renderShowOpenProfileLogCard());
 }
 
 async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSurfaceOptions): Promise<void> {
