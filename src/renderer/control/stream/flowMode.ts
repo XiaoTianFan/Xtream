@@ -48,6 +48,12 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
       ctx.clearDetailPane();
       ctx.refreshSceneSelectionUi();
     });
+    card.addEventListener('dblclick', () => {
+      ctx.setPlaybackAndEditFocus(sceneId);
+      ctx.setBottomTab('scene');
+      ctx.clearDetailPane();
+      ctx.refreshSceneSelectionUi();
+    });
     flow.append(card);
   });
   return flow;

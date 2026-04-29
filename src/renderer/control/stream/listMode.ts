@@ -298,6 +298,15 @@ function createSceneRowWrap(
     ctx.clearDetailPane();
     ctx.refreshSceneSelectionUi();
   });
+  row.addEventListener('dblclick', (event) => {
+    if ((event.target as HTMLElement).closest('button')) {
+      return;
+    }
+    ctx.setPlaybackAndEditFocus(scene.id);
+    ctx.setBottomTab('scene');
+    ctx.clearDetailPane();
+    ctx.refreshSceneSelectionUi();
+  });
 
   const expanded = ctx.expandedListSceneIds.has(scene.id);
   const expandBtn = document.createElement('button');
