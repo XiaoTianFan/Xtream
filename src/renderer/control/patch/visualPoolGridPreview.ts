@@ -5,6 +5,8 @@ import { getVisualPoolThumbDataUrl, setVisualPoolThumbDataUrl } from './visualPo
 import { decorateIconButton } from '../shared/icons';
 
 const LIVE_POOL_GRID_SNAPSHOT_MS = 2000;
+/** If file video pool preview never reaches seeked/error, settle with error so launch gating does not hang. */
+const POOL_FILE_VIDEO_PREVIEW_TIMEOUT_MS = 20_000;
 
 export type VisualPoolGridMountOptions = {
   /** When false, live grid cards never attach capture (cached / placeholder only). */
@@ -170,6 +172,7 @@ function mountLazyLivePoolGridPreview(
       hint.className = 'visual-pool-card__live-preview-off-hint';
       hint.textContent = 'Grid live preview off — use toolbar to enable.';
       appendHoverActions(container, hint);
+      reportPoolPreviewStatus(visual, true);
       return;
     }
 
@@ -183,6 +186,7 @@ function mountLazyLivePoolGridPreview(
         void beginLiveAttachment();
       });
       appendHoverActions(container, resumeBtn);
+      reportPoolPreviewStatus(visual, true);
       return;
     }
 
@@ -194,6 +198,7 @@ function mountLazyLivePoolGridPreview(
       void beginLiveAttachment();
     });
     appendHoverActions(container, playBtn);
+    reportPoolPreviewStatus(visual, true);
   }
 
   async function beginLiveAttachment(): Promise<void> {
@@ -385,9 +390,24 @@ export function mountVisualPoolGridPreview(
     video.preload = 'metadata';
     video.src = visual.url;
     applyVisualStyle(video, visual);
+
+    let settled = false;
+    const settle = (ready: boolean, error?: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeoutId);
+      reportPoolPreviewStatus(visual, ready, error);
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      settle(false, 'Pool video preview timed out.');
+    }, POOL_FILE_VIDEO_PREVIEW_TIMEOUT_MS);
+
     video.addEventListener(
       'error',
-      () => reportPoolPreviewStatus(visual, false, 'Pool video preview failed to load.'),
+      () => settle(false, 'Pool video preview failed to load.'),
       { once: true },
     );
     const onLoaded = (): void => {
@@ -396,13 +416,14 @@ export function mountVisualPoolGridPreview(
     const onSeeked = (): void => {
       video.pause();
       tryCacheVideoFrame(visual, video);
-      reportPoolPreviewStatus(visual, true);
+      settle(true);
       video.removeEventListener('loadeddata', onLoaded);
       video.removeEventListener('seeked', onSeeked);
     };
     video.addEventListener('loadeddata', onLoaded);
     video.addEventListener('seeked', onSeeked);
     registerCleanup(() => {
+      window.clearTimeout(timeoutId);
       video.pause();
       video.removeAttribute('src');
       video.load();

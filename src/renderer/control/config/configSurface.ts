@@ -14,6 +14,8 @@ import { patchElements } from '../patch/elements';
 import { createButton, createHint, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
 import { createDetailLine, createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
 import { elements } from '../shell/elements';
+import type { ShowOpenProfileLogEntry } from '../../../shared/showOpenProfile';
+import { clearShowOpenProfileLogBuffer, getShowOpenProfileLogBuffer, getShowOpenProfileLogRevision } from './showOpenProfileUi';
 
 type ConfigSurfaceOptions = {
   renderState: (state: DirectorState) => void;
@@ -28,9 +30,48 @@ export function createConfigSurfaceController(options: ConfigSurfaceOptions): Su
   return {
     id: 'config',
     createRenderSignature: (state) =>
-      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}`,
+      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}:${getShowOpenProfileLogRevision()}`,
     render: (state) => renderConfigSurface(state, options),
   };
+}
+
+function formatProfileLogLine(entry: ShowOpenProfileLogEntry): string {
+  const iso = new Date(entry.loggedAt).toISOString();
+  const t = iso.slice(11, 23);
+  const seg = entry.segmentMs !== undefined ? ` seg=${Math.round(entry.segmentMs)}ms` : '';
+  const extra = entry.extra !== undefined && Object.keys(entry.extra).length > 0 ? ` ${JSON.stringify(entry.extra)}` : '';
+  const rid = entry.runId.length > 12 ? `…${entry.runId.slice(-10)}` : entry.runId;
+  return `${t} [${entry.source}] ${rid} ${entry.checkpoint} +${Math.round(entry.sinceRunStartMs)}ms${seg}${extra}`;
+}
+
+function renderShowOpenProfileLogPanel(): HTMLElement {
+  const card = createSurfaceCard('Show open profile log');
+  card.append(
+    createHint(
+      'Structured checkpoints when opening a show (main process + control window).',
+    ),
+  );
+  const row = document.createElement('div');
+  row.className = 'button-row';
+  row.append(
+    createButton('Clear log', 'secondary', () => {
+      clearShowOpenProfileLogBuffer();
+    }),
+  );
+  card.append(row);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'show-open-profile-log-wrap';
+  const pre = document.createElement('pre');
+  pre.className = 'show-open-profile-log-pre';
+  const lines = [...getShowOpenProfileLogBuffer()].map(formatProfileLogLine);
+  pre.textContent = lines.length > 0 ? lines.join('\n') : 'No entries yet. Open a show to record checkpoints.';
+  wrap.append(pre);
+  card.append(wrap);
+  requestAnimationFrame(() => {
+    wrap.scrollTop = wrap.scrollHeight;
+  });
+  return card;
 }
 
 function renderDiagnosticsRow(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
@@ -180,6 +221,7 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
     wrapSurfaceGrid(summary, showProject, streamPlayback, actions, topology),
     renderDiagnosticsRow(state, options),
     wrapSurfaceGrid(createDirectorStatePanel(state)),
+    renderShowOpenProfileLogPanel(),
   );
 
   elements.surfacePanel.replaceChildren(workspace);

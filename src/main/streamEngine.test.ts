@@ -95,7 +95,7 @@ describe('StreamEngine', () => {
     const order = afterBack.stream.sceneOrder;
     expect(afterBack.runtime?.status).toBe('idle');
     expect(afterBack.runtime?.cursorSceneId).toBe(order[1]);
-    expect(afterBack.runtime?.sceneStates[order[1]]?.status).toBe('ready-to-start');
+    expect(afterBack.runtime?.sceneStates[order[1]]?.status).toBe('ready');
     expect(engine.isStreamPlaybackActive()).toBe(false);
   });
 

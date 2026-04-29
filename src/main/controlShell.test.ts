@@ -19,6 +19,7 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="runtimeVersionLabel"');
     expect(controlHtml).toContain('id="globalAudioMuteButton"');
     expect(controlHtml).toContain('id="displayBlackoutButton"');
+    expect(controlHtml).toContain('id="displayIdentifyFlashButton"');
     expect(controlHtml).toContain('id="resetMetersButton"');
   });
 

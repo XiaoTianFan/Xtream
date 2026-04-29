@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ShowOpenProfileLogEntry } from '../shared/showOpenProfile';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
@@ -10,6 +11,7 @@ import type {
   DirectorEventName,
   DirectorState,
   DisplayCreateOptions,
+  DisplayIdentifyFlashPayload,
   DisplayMonitorInfo,
   DisplayUpdate,
   DisplayWindowState,
@@ -66,6 +68,12 @@ const api = {
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke('display:remove', id),
     listMonitors: (): Promise<DisplayMonitorInfo[]> => ipcRenderer.invoke('display:list-monitors'),
     reopen: (id: string): Promise<DisplayWindowState> => ipcRenderer.invoke('display:reopen', id),
+    flashIdentifyLabels: (durationMs?: number): Promise<void> => ipcRenderer.invoke('display:flash-identify-labels', durationMs),
+    onIdentifyFlash: (callback: (payload: DisplayIdentifyFlashPayload) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: DisplayIdentifyFlashPayload) => callback(payload);
+      ipcRenderer.on('display:identify-flash', listener);
+      return () => ipcRenderer.removeListener('display:identify-flash', listener);
+    },
   },
   visuals: {
     add: (): Promise<VisualState[] | undefined> => ipcRenderer.invoke('visual:add'),
@@ -155,7 +163,15 @@ const api = {
   },
   controlUi: {
     getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),
-    saveSnapshot: (filePath: string, snapshot: ControlProjectUiStateV1): Promise<void> => ipcRenderer.invoke('controlUi:save-snapshot', filePath, snapshot),
+    saveSnapshot: (filePath: string, snapshot: ControlProjectUiStateV1): Promise<void> =>
+      ipcRenderer.invoke('controlUi:save-snapshot', filePath, snapshot),
+  },
+  showOpenProfile: {
+    onLog: (callback: (entry: ShowOpenProfileLogEntry) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, entry: ShowOpenProfileLogEntry) => callback(entry);
+      ipcRenderer.on('show-open-profile:log', listener);
+      return () => ipcRenderer.removeListener('show-open-profile:log', listener);
+    },
   },
   renderer: {
     ready: (report: RendererReadyReport): Promise<void> => ipcRenderer.invoke('renderer:ready', report),

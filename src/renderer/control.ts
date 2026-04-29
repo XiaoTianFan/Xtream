@@ -20,6 +20,8 @@ import { waitForLaunchPresentationReady } from './control/shell/launchPresentati
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
 import { renderIssues as renderIssueList } from './control/shared/issues';
+import { installShowOpenProfileLogBridge, subscribeShowOpenProfileLogBuffer } from './control/config/showOpenProfileUi';
+import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../shared/showOpenProfile';
 import type { ControlSurface } from './control/shared/types';
 
 let currentState: DirectorState | undefined;
@@ -94,7 +96,7 @@ function tick(): void {
 }
 
 /** Replaced after surfaces exist; always called only after full init. */
-let hydrateControlShellAfterShow: (result: ShowConfigOperationResult) => Promise<void> = async () => undefined;
+let hydrateControlShellAfterShow: (result: ShowConfigOperationResult, ctx?: ShowOpenProfileFlowContext) => Promise<void> = async () => undefined;
 
 /** Set before launchDashboard init; used so menu-driven open/create can gate on presentation readiness. */
 const launchShellRef: {
@@ -115,17 +117,18 @@ const showActions = createShowActions({
       launchShellRef.controller.hide();
     }
   },
-  hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
+  hydrateAfterShowLoaded: (result, ctx) => hydrateControlShellAfterShow(result, ctx),
   beginLaunchPresentationLoad: () => {
     setWorkspacePresentationLoadingUi(true);
     if (launchShellRef.controller?.isVisible()) {
       setLaunchDashboardLoadingUi(true);
     }
   },
-  awaitLaunchPresentationReady: async () => {
+  awaitLaunchPresentationReady: async (ctx) => {
     await waitForLaunchPresentationReady({
       getActiveSurface: () => surfaceRouter.getActiveSurface(),
       setShowStatus,
+      showOpenProfile: ctx,
     });
   },
   clearLaunchPresentationLoading: () => {
@@ -165,6 +168,7 @@ const globalOperatorFooter = createGlobalOperatorFooterController({
     performanceModeButton: elements.performanceModeButton,
     clearSoloButton: elements.clearSoloButton,
     resetMetersButton: elements.resetMetersButton,
+    displayIdentifyFlashButton: elements.displayIdentifyFlashButton,
   },
   getState: () => currentState,
   renderState,
@@ -191,6 +195,13 @@ const surfaceRouter = createSurfaceRouter({
   ],
 });
 
+subscribeShowOpenProfileLogBuffer(() => {
+  const s = currentState;
+  if (s && surfaceRouter.getActiveSurface() === 'config') {
+    surfaceRouter.render(s);
+  }
+});
+
 window.xtream.audioRuntime.onSoloOutputIds((ids) => {
   engineSoloOutputIds = ids;
   patchSurface.applyEngineSoloOutputIds(ids);
@@ -208,24 +219,74 @@ void window.xtream.stream.getState().then((s) => {
   patchSurface.syncTransportInputs();
 });
 
-hydrateControlShellAfterShow = async (result: ShowConfigOperationResult) => {
+hydrateControlShellAfterShow = async (result, ctx) => {
   const filePath = result.filePath;
   if (!filePath) {
     return;
   }
+  if (ctx) {
+    logShowOpenProfile({
+      runId: ctx.runId,
+      checkpoint: 'renderer_hydrate_enter',
+      sinceRunStartMs: performance.now() - ctx.flowStartMs,
+    });
+  }
+  let seg = performance.now();
   const snapshot = await window.xtream.controlUi.getForPath(filePath);
+  if (ctx) {
+    logShowOpenProfile({
+      runId: ctx.runId,
+      checkpoint: 'renderer_hydrate_after_control_ui_get',
+      sinceRunStartMs: performance.now() - ctx.flowStartMs,
+      segmentMs: performance.now() - seg,
+      extra: { hasSnapshot: Boolean(snapshot) },
+    });
+  }
+  seg = performance.now();
   if (!snapshot || snapshot.v !== 1) {
+    if (ctx) {
+      logShowOpenProfile({
+        runId: ctx.runId,
+        checkpoint: 'renderer_hydrate_skip_no_snapshot',
+        sinceRunStartMs: performance.now() - ctx.flowStartMs,
+        extra: { hasSnapshot: Boolean(snapshot), v: snapshot?.v },
+      });
+    }
     return;
   }
   if (snapshot.patch && Object.keys(snapshot.patch).length > 0) {
     patchSurface.applyImportedLayoutUi(snapshot.patch);
   }
+  if (ctx) {
+    logShowOpenProfile({
+      runId: ctx.runId,
+      checkpoint: 'renderer_hydrate_after_patch_apply',
+      sinceRunStartMs: performance.now() - ctx.flowStartMs,
+      segmentMs: performance.now() - seg,
+    });
+  }
+  seg = performance.now();
   const streamPublic = await window.xtream.stream.getState();
+  if (ctx) {
+    logShowOpenProfile({
+      runId: ctx.runId,
+      checkpoint: 'renderer_hydrate_after_stream_get_state',
+      sinceRunStartMs: performance.now() - ctx.flowStartMs,
+      segmentMs: performance.now() - seg,
+    });
+  }
   streamSurface.applyImportedProjectUi(snapshot.stream, result.state, streamPublic);
   const rawSurface = snapshot.activeSurface as ControlSurface | 'logs';
   const surfaceId: ControlSurface = rawSurface === 'logs' ? 'config' : rawSurface;
   if (surfaceId === 'patch' || surfaceId === 'stream' || surfaceId === 'performance' || surfaceId === 'config') {
     surfaceRouter.setPersistedActiveSurface(surfaceId);
+  }
+  if (ctx) {
+    logShowOpenProfile({
+      runId: ctx.runId,
+      checkpoint: 'renderer_hydrate_exit',
+      sinceRunStartMs: performance.now() - ctx.flowStartMs,
+    });
   }
 };
 
@@ -246,7 +307,7 @@ launchShellRef.controller = createLaunchDashboardController({
   renderState,
   setShowStatus,
   clearSelection: patchSurface.clearSelection,
-  hydrateAfterShowLoaded: (result) => hydrateControlShellAfterShow(result),
+  hydrateAfterShowLoaded: (result, ctx) => hydrateControlShellAfterShow(result, ctx),
   getActiveSurface: () => surfaceRouter.getActiveSurface(),
 });
 const launchDashboard = launchShellRef.controller;
@@ -332,6 +393,7 @@ window.xtream.audioRuntime.onMeterLanes((report) => {
   streamSurface.applyOutputMeterReport(report);
 });
 void window.xtream.renderer.ready({ kind: 'control' });
+installShowOpenProfileLogBridge();
 void launchDashboard.load();
 void loadAudioDevices();
 void loadDisplayMonitors();

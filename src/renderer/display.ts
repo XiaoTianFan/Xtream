@@ -15,11 +15,13 @@ import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from 
 import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
 import { attachLiveVisualStream, reportLiveVisualError } from './control/media/liveCaptureRuntime';
 import { deriveDirectorStateForStream } from './streamProjection';
+import { formatDisplayWindowTitle } from '../shared/displayWindowTitle';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
 const displayId = params.get('id') ?? 'unknown-display';
 const showDiagnosticsOverlay = params.get('diagnostics') === '1';
+document.title = formatDisplayWindowTitle({ id: displayId });
 
 let currentRenderSignature = '';
 let currentState: DirectorState | undefined;
@@ -68,6 +70,31 @@ if (!root) {
 
 const displayRoot = root;
 
+const identifyOverlay = document.querySelector<HTMLElement>('#displayIdentifyOverlay');
+let identifyHideTimer: number | undefined;
+
+function setupIdentifyFlashOverlay(): (() => void) | undefined {
+  if (!identifyOverlay) {
+    return undefined;
+  }
+  return window.xtream.displays.onIdentifyFlash((payload) => {
+    if (identifyHideTimer !== undefined) {
+      window.clearTimeout(identifyHideTimer);
+    }
+    identifyOverlay.textContent = payload.label;
+    identifyOverlay.hidden = false;
+    identifyOverlay.setAttribute('aria-hidden', 'false');
+    const ms = payload.durationMs > 0 ? payload.durationMs : 3000;
+    identifyHideTimer = window.setTimeout(() => {
+      identifyOverlay.hidden = true;
+      identifyOverlay.setAttribute('aria-hidden', 'true');
+      identifyHideTimer = undefined;
+    }, ms);
+  });
+}
+
+const unsubscribeIdentifyFlash = setupIdentifyFlashOverlay();
+
 function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): void {
   displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
   for (const cleanup of liveVisualCleanups.values()) {
@@ -90,6 +117,7 @@ function handleState(state: DirectorState): void {
   displayRoot.classList.toggle('blacked-out', effectiveState.globalDisplayBlackout);
   const display = effectiveState.displays[displayId];
   if (!display) {
+    document.title = formatDisplayWindowTitle({ id: displayId });
     displayRoot.replaceChildren();
     const missing = document.createElement('section');
     missing.className = 'display-output';
@@ -97,6 +125,7 @@ function handleState(state: DirectorState): void {
     displayRoot.append(missing);
     return;
   }
+  document.title = formatDisplayWindowTitle(display);
   const renderSignature = createRenderSignature(display.layout, effectiveState.visuals);
   if (currentRenderSignature !== renderSignature) {
     renderLayout(display.layout, effectiveState.visuals);
@@ -427,6 +456,10 @@ syncTimer = window.setInterval(() => {
 }, DISPLAY_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {
+  unsubscribeIdentifyFlash?.();
+  if (identifyHideTimer !== undefined) {
+    window.clearTimeout(identifyHideTimer);
+  }
   for (const cleanup of liveVisualCleanups.values()) {
     cleanup();
   }

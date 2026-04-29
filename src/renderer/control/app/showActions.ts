@@ -1,4 +1,5 @@
 import type { DirectorState, MediaValidationIssue, ShowConfigOperationResult } from '../../../shared/types';
+import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 
 type ShowActionsOptions = {
@@ -7,11 +8,11 @@ type ShowActionsOptions = {
   clearSelection: () => void;
   onShowOpened: () => void;
   onShowCreated: () => void;
-  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
+  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult, ctx?: ShowOpenProfileFlowContext) => Promise<void>;
   /** Sync: show workspace + launch loading overlays before dialogs/hydrate (workspace opaque backdrop whenever opening/creating). */
   beginLaunchPresentationLoad?: () => void;
   /** Wait for presentation-ready (after hydrate); loading overlay must already be visible when applicable. */
-  awaitLaunchPresentationReady?: () => Promise<void>;
+  awaitLaunchPresentationReady?: (ctx?: ShowOpenProfileFlowContext) => Promise<void>;
   /** Clear launch loading overlay before hiding launch shell. */
   clearLaunchPresentationLoading?: () => void;
 };
@@ -40,13 +41,36 @@ export function createShowActions(options: ShowActionsOptions) {
       options.clearLaunchPresentationLoading?.();
       return;
     }
+    const flowStartMs = performance.now();
+    const runId = result.openProfileRunId ?? `so-local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    logShowOpenProfile({
+      runId,
+      checkpoint: 'renderer_open_flow_start',
+      sinceRunStartMs: 0,
+      extra: { route: 'menu_open', hasMainRunId: Boolean(result.openProfileRunId) },
+    });
     clearLiveVisualPoolThumbnailCache();
     try {
       options.renderState(result.state);
-      await options.hydrateAfterShowLoaded?.(result);
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_after_first_render_state',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
+      await options.hydrateAfterShowLoaded?.(result, { runId, flowStartMs });
       options.renderState(result.state);
       options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
-      await options.awaitLaunchPresentationReady?.();
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_before_wait_ready',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
+      await options.awaitLaunchPresentationReady?.({ runId, flowStartMs });
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_open_flow_done',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
     } finally {
       options.clearLaunchPresentationLoading?.();
     }
@@ -60,14 +84,37 @@ export function createShowActions(options: ShowActionsOptions) {
       options.clearLaunchPresentationLoading?.();
       return;
     }
+    const flowStartMs = performance.now();
+    const runId = result.openProfileRunId ?? `so-local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    logShowOpenProfile({
+      runId,
+      checkpoint: 'renderer_open_flow_start',
+      sinceRunStartMs: 0,
+      extra: { route: 'menu_create', hasMainRunId: Boolean(result.openProfileRunId) },
+    });
     clearLiveVisualPoolThumbnailCache();
     try {
       options.clearSelection();
       options.renderState(result.state);
-      await options.hydrateAfterShowLoaded?.(result);
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_after_first_render_state',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
+      await options.hydrateAfterShowLoaded?.(result, { runId, flowStartMs });
       options.renderState(result.state);
       options.setShowStatus(`Created show project: ${result.filePath ?? 'selected folder'}`, result.issues);
-      await options.awaitLaunchPresentationReady?.();
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_before_wait_ready',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
+      await options.awaitLaunchPresentationReady?.({ runId, flowStartMs });
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_open_flow_done',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
     } finally {
       options.clearLaunchPresentationLoading?.();
     }

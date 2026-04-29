@@ -94,6 +94,31 @@ body {
   text-transform: uppercase;
 }
 
+.display-identify-overlay {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 2147483647;
+  max-width: min(90vw, 28rem);
+  padding: 0.55rem 1rem;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-teal) 55%, #1a1c20);
+  background: color-mix(in srgb, #0a0a0b 88%, var(--accent-teal));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.55);
+  color: #f5f7fb;
+  font-size: clamp(1rem, 2.8vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  text-align: right;
+  pointer-events: none;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 0.75);
+}
+
+.display-identify-overlay[hidden] {
+  display: none;
+}
+
 .split {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

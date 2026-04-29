@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, systemPreferences, webContents as electronWebContents } from 'electron';
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -24,6 +25,7 @@ import {
   writeShowConfig,
 } from './showConfig';
 import { getActiveDisplays } from '../shared/layouts';
+import type { ShowOpenProfileLogEntry, ShowOpenProfilePayload } from '../shared/showOpenProfile';
 import { mergeShowConfigPatchRouting } from '../shared/streamWorkspace';
 import type {
   AudioMetadataReport,
@@ -79,6 +81,13 @@ let soloOutputIds: VirtualOutputId[] = [];
 let showExplicitDirty = false;
 /** Skip flushing pending autosave on shutdown (Don't save branch). */
 let skipAutoSaveFlushOnShutdown = false;
+
+function forwardShowOpenProfileFromMain(payload: ShowOpenProfilePayload): void {
+  if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
+    const entry: ShowOpenProfileLogEntry = { ...payload, loggedAt: Date.now(), source: 'main' };
+    controlWindow.webContents.send('show-open-profile:log', entry);
+  }
+}
 
 function normalizeShowProjectKey(configPath: string): string {
   return path.resolve(configPath).toLowerCase();
@@ -513,15 +522,48 @@ async function showOpenDialog(options: Electron.OpenDialogOptions): Promise<Elec
   return controlWindow ? dialog.showOpenDialog(controlWindow, options) : dialog.showOpenDialog(options);
 }
 
-function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<ReturnType<typeof readShowConfig>>): ShowConfigOperationResult {
+function restoreShowConfigFromDiskConfig(
+  configPath: string,
+  config: Awaited<ReturnType<typeof readShowConfig>>,
+  profile?: { runId: string; t0: number },
+): ShowConfigOperationResult {
   if (!displayRegistry) {
     throw new Error('Display registry is not initialized.');
   }
+  const log = (checkpoint: string, segmentMs?: number, extra?: Record<string, unknown>): void => {
+    if (!profile) {
+      return;
+    }
+    forwardShowOpenProfileFromMain({
+      runId: profile.runId,
+      checkpoint,
+      sinceRunStartMs: Date.now() - profile.t0,
+      segmentMs,
+      extra,
+    });
+  };
+
+  let seg = Date.now();
+  log('main_restore_enter');
+
   const issues = validateShowConfigMedia(config);
+  log('main_validate_media_done', Date.now() - seg, { issueCount: issues.length });
+  seg = Date.now();
+
   const mediaUrls = buildMediaUrls(config);
+  log('main_build_media_urls_done', Date.now() - seg);
+  seg = Date.now();
+
   displayRegistry.closeAll();
+  log('main_display_close_all_done', Date.now() - seg);
+  seg = Date.now();
+
   director.restoreShowConfig(config, mediaUrls);
-  for (const display of mergeShowConfigPatchRouting(config).displays) {
+  log('main_director_restore_done', Date.now() - seg);
+  seg = Date.now();
+
+  const displays = mergeShowConfigPatchRouting(config).displays;
+  for (const display of displays) {
     const state = displayRegistry.create({
       id: display.id,
       label: display.label,
@@ -533,15 +575,53 @@ function restoreShowConfigFromDiskConfig(configPath: string, config: Awaited<Ret
     });
     director.registerDisplay(state);
   }
+  log('main_displays_register_done', Date.now() - seg, { displayCount: displays.length });
+  seg = Date.now();
+
   currentShowConfigPath = configPath;
   showExplicitDirty = false;
   streamEngine.loadFromShow(config);
-  return { state: director.getState(), filePath: currentShowConfigPath, issues };
+  log('main_stream_engine_load_done', Date.now() - seg);
+
+  log('main_restore_exit', undefined, { issueCount: issues.length });
+
+  return {
+    state: director.getState(),
+    filePath: currentShowConfigPath,
+    issues,
+    ...(profile ? { openProfileRunId: profile.runId } : {}),
+  };
 }
 
 async function openShowConfigPath(configPath: string): Promise<ShowConfigOperationResult> {
-  const result = restoreShowConfigFromDiskConfig(configPath, await readShowConfig(configPath));
+  const runId = `so-${Date.now()}-${randomBytes(4).toString('hex')}`;
+  const t0 = Date.now();
+  forwardShowOpenProfileFromMain({ runId, checkpoint: 'main_open_path_enter', sinceRunStartMs: 0 });
+  let seg = Date.now();
+  const config = await readShowConfig(configPath);
+  forwardShowOpenProfileFromMain({
+    runId,
+    checkpoint: 'main_read_config_done',
+    sinceRunStartMs: Date.now() - t0,
+    segmentMs: Date.now() - seg,
+  });
+  seg = Date.now();
+  const result = restoreShowConfigFromDiskConfig(configPath, config, { runId, t0 });
+  forwardShowOpenProfileFromMain({
+    runId,
+    checkpoint: 'main_restore_call_done',
+    sinceRunStartMs: Date.now() - t0,
+    segmentMs: Date.now() - seg,
+  });
+  seg = Date.now();
   await addRecentShow(app.getPath('userData'), configPath);
+  forwardShowOpenProfileFromMain({
+    runId,
+    checkpoint: 'main_add_recent_done',
+    sinceRunStartMs: Date.now() - t0,
+    segmentMs: Date.now() - seg,
+  });
+  forwardShowOpenProfileFromMain({ runId, checkpoint: 'main_open_path_exit', sinceRunStartMs: Date.now() - t0 });
   return result;
 }
 
@@ -1268,6 +1348,10 @@ function registerIpcHandlers(): void {
     director.registerDisplay(display);
     scheduleShowConfigAutoSave();
     return display;
+  });
+
+  ipcMain.handle('display:flash-identify-labels', (_event, durationMs?: number) => {
+    displayRegistry?.flashIdentifyLabels(durationMs);
   });
 
   ipcMain.handle('renderer:ready', (_event, report: RendererReadyReport) => {

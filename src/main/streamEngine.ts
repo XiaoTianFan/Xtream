@@ -21,7 +21,6 @@ import type {
 import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlaybackSettings, normalizeStreamPersistence } from '../shared/streamWorkspace';
 import {
   buildStreamSchedule,
-  resolveFollowsSceneId,
   type StreamSchedule,
   validateStreamContent,
   validateStreamStructure,
@@ -621,7 +620,7 @@ export class StreamEngine extends EventEmitter {
       if (start === undefined) {
         status = scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < currentMs ? 'skipped' : 'ready';
       } else if (currentMs < start) {
-        status = this.shouldPreload(sceneId, schedule, currentMs, stream) ? 'ready-to-start' : 'ready';
+        status = 'ready';
       } else if (this.runtime.status === 'idle') {
         if (currentMs < start) {
           status = 'ready';
@@ -629,7 +628,7 @@ export class StreamEngine extends EventEmitter {
           status = 'complete';
           progress = 1;
         } else {
-          status = 'ready-to-start';
+          status = 'ready';
         }
       } else if (end !== undefined && currentMs >= end) {
         status = 'complete';
@@ -792,27 +791,6 @@ export class StreamEngine extends EventEmitter {
 
   private visualCueKey(cue: StreamRuntimeVisualSubCue): string {
     return `${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
-  }
-
-  private shouldPreload(sceneId: SceneId, schedule: CalculatedStreamTimeline, currentMs: number, stream: PersistedStreamConfig): boolean {
-    const scene = stream.scenes[sceneId];
-    const entry = schedule.entries[sceneId];
-    if (!scene || entry.startMs === undefined) {
-      return false;
-    }
-    const idx = stream.sceneOrder.indexOf(sceneId);
-    const runningIdx = stream.sceneOrder.findIndex((id) => {
-      const e = schedule.entries[id];
-      return e.startMs !== undefined && currentMs >= e.startMs && (e.endMs === undefined || currentMs < e.endMs);
-    });
-    if (idx === runningIdx || idx === runningIdx + 1) {
-      return true;
-    }
-    if (scene.preload.enabled && entry.startMs - currentMs <= (scene.preload.leadTimeMs ?? 0)) {
-      return true;
-    }
-    const pred = resolveFollowsSceneId(stream, sceneId, scene.trigger);
-    return pred !== undefined && schedule.entries[pred]?.startMs !== undefined && currentMs >= schedule.entries[pred].startMs!;
   }
 
   private collectActiveSubCues(

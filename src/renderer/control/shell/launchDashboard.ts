@@ -1,4 +1,5 @@
 import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
+import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
 import type { ControlSurface } from '../shared/types';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 import { elements } from './elements';
@@ -19,7 +20,7 @@ type LaunchDashboardOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: ShowConfigOperationResult['issues']) => void;
   clearSelection: () => void;
-  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult) => Promise<void>;
+  hydrateAfterShowLoaded?: (result: ShowConfigOperationResult, ctx?: ShowOpenProfileFlowContext) => Promise<void>;
   getActiveSurface: () => ControlSurface;
 };
 
@@ -51,16 +52,40 @@ export function createLaunchDashboardController({
   };
 
   const complete = async (result: ShowConfigOperationResult, message: string): Promise<void> => {
+    const flowStartMs = performance.now();
+    const runId = result.openProfileRunId ?? `so-local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    logShowOpenProfile({
+      runId,
+      checkpoint: 'renderer_open_flow_start',
+      sinceRunStartMs: 0,
+      extra: { route: 'launch_dashboard', hasMainRunId: Boolean(result.openProfileRunId) },
+    });
     setLaunchDashboardLoadingUi(true);
     try {
       clearSelection();
       clearLiveVisualPoolThumbnailCache();
       renderState(result.state);
-      await hydrateAfterShowLoaded?.(result);
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_after_first_render_state',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
+      await hydrateAfterShowLoaded?.(result, { runId, flowStartMs });
       renderState(result.state);
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_before_wait_ready',
+        sinceRunStartMs: performance.now() - flowStartMs,
+      });
       await waitForLaunchPresentationReady({
         getActiveSurface,
         setShowStatus,
+        showOpenProfile: { runId, flowStartMs },
+      });
+      logShowOpenProfile({
+        runId,
+        checkpoint: 'renderer_open_flow_done',
+        sinceRunStartMs: performance.now() - flowStartMs,
       });
     } finally {
       setLaunchDashboardLoadingUi(false);

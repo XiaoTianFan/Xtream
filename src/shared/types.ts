@@ -607,7 +607,7 @@ export type PersistedShowConfig = PersistedShowConfigV8;
 
 export type SceneRuntimeState = {
   sceneId: SceneId;
-  status: 'disabled' | 'ready' | 'preloading' | 'ready-to-start' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
+  status: 'disabled' | 'ready' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
   scheduledStartMs?: number;
   startedAtStreamMs?: number;
   endedAtStreamMs?: number;
@@ -732,6 +732,8 @@ export type ShowConfigOperationResult = {
   state: DirectorState;
   filePath?: string;
   issues: MediaValidationIssue[];
+  /** Set when the show was opened from disk so the control renderer can correlate profile logs with main. */
+  openProfileRunId?: string;
 };
 
 export type DiagnosticsReport = {
@@ -791,6 +793,11 @@ export type DisplayMonitorInfo = {
   workArea: NonNullable<DisplayWindowState['bounds']>;
   scaleFactor: number;
   internal: boolean;
+};
+
+export type DisplayIdentifyFlashPayload = {
+  label: string;
+  durationMs: number;
 };
 
 export type VisualMetadataReport = {
@@ -988,6 +995,7 @@ export type IpcChannels = {
   'display:remove': (id: DisplayWindowId) => boolean;
   'display:list-monitors': () => DisplayMonitorInfo[];
   'display:reopen': (id: DisplayWindowId) => DisplayWindowState;
+  'display:flash-identify-labels': (durationMs?: number) => void;
   'renderer:ready': (report: RendererReadyReport) => void;
   'renderer:drift': (report: DriftReport) => void;
   'renderer:preview-status': (report: PreviewStatus) => void;

@@ -3,7 +3,12 @@ import type { ControlElements } from './elements';
 
 export type GlobalOperatorFooterElements = Pick<
   ControlElements,
-  'globalAudioMuteButton' | 'displayBlackoutButton' | 'performanceModeButton' | 'clearSoloButton' | 'resetMetersButton'
+  | 'globalAudioMuteButton'
+  | 'displayBlackoutButton'
+  | 'performanceModeButton'
+  | 'clearSoloButton'
+  | 'resetMetersButton'
+  | 'displayIdentifyFlashButton'
 >;
 
 export function syncGlobalOperatorFooter(
@@ -28,6 +33,11 @@ export function syncGlobalOperatorFooter(
   els.performanceModeButton.title = state.performanceMode
     ? 'Performance mode disables control-window video previews and live meter sampling.'
     : 'Disable control-window preview and meter workloads for weaker playback machines.';
+  const hasOpenDisplay = Object.values(state.displays).some((d) => d.health !== 'closed');
+  els.displayIdentifyFlashButton.disabled = !hasOpenDisplay;
+  els.displayIdentifyFlashButton.title = hasOpenDisplay
+    ? 'Show each display window name in the corner for three seconds.'
+    : 'No display windows open to identify.';
 }
 
 type GlobalOperatorFooterControllerOptions = {
@@ -56,6 +66,9 @@ export function createGlobalOperatorFooterController(options: GlobalOperatorFoot
     });
     options.elements.resetMetersButton.addEventListener('click', () => {
       options.resetMetersRequested();
+    });
+    options.elements.displayIdentifyFlashButton.addEventListener('click', () => {
+      void window.xtream.displays.flashIdentifyLabels(3000);
     });
   }
 

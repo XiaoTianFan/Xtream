@@ -31,6 +31,10 @@ export const elements = {
   performanceModeButton: assertElement(document.querySelector<HTMLButtonElement>('#performanceModeButton'), 'performanceModeButton'),
   clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
   resetMetersButton: assertElement(document.querySelector<HTMLButtonElement>('#resetMetersButton'), 'resetMetersButton'),
+  displayIdentifyFlashButton: assertElement(
+    document.querySelector<HTMLButtonElement>('#displayIdentifyFlashButton'),
+    'displayIdentifyFlashButton',
+  ),
 };
 
 export type ControlElements = typeof elements;

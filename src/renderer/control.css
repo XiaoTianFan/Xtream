@@ -1053,6 +1053,25 @@ details.surface-card {
   list-style: none;
 }
 
+.show-open-profile-log-wrap {
+  max-height: 14rem;
+  overflow: auto;
+  margin-top: 0.35rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-low) 88%, transparent);
+}
+
+.show-open-profile-log-pre {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+
 .panel {
   overflow: auto;
   min-width: 0;

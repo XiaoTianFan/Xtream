@@ -1,6 +1,7 @@
 import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
 import { getAppIconPath } from './appIcon';
+import { formatDisplayWindowTitle } from '../shared/displayWindowTitle';
 import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWindowState } from '../shared/types';
 
 type RegistryEntry = {
@@ -12,6 +13,13 @@ type RegistryEntry = {
 const DEFAULT_LAYOUT = { type: 'single' } as const;
 const USE_SIMPLE_FULLSCREEN = process.platform === 'darwin';
 type DisplayBounds = NonNullable<DisplayWindowState['bounds']>;
+
+const DEFAULT_IDENTIFY_DURATION_MS = 3000;
+
+function displayFriendlyName(state: Pick<DisplayWindowState, 'id' | 'label'>): string {
+  const trimmed = state.label?.trim();
+  return trimmed ? trimmed : state.id;
+}
 
 export class DisplayRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -92,7 +100,7 @@ export class DisplayRegistry {
       alwaysOnTop,
       ...(USE_SIMPLE_FULLSCREEN ? { simpleFullscreen: false } : { fullscreen: false }),
       autoHideMenuBar: true,
-      title: `Xtream ${id}`,
+      title: formatDisplayWindowTitle({ id, label: options.label }),
       ...(iconPath ? { icon: iconPath } : {}),
       webPreferences: {
         preload: this.preloadPath,
@@ -121,6 +129,12 @@ export class DisplayRegistry {
 
     this.entries.set(id, { window, state, isClosing: false });
     this.loadDisplay(window, id);
+    window.webContents.once('did-finish-load', () => {
+      const entry = this.entries.get(id);
+      if (entry && !entry.window.isDestroyed()) {
+        entry.window.setTitle(formatDisplayWindowTitle(entry.state));
+      }
+    });
 
     window.on('close', () => {
       this.refreshWindowState(id);
@@ -178,7 +192,7 @@ export class DisplayRegistry {
     }
 
     if (update.label !== undefined) {
-      entry.window.setTitle(`Xtream ${update.label}`);
+      entry.window.setTitle(formatDisplayWindowTitle(nextState));
     }
 
     if (update.alwaysOnTop !== undefined) {
@@ -220,6 +234,18 @@ export class DisplayRegistry {
 
   getAllWindows(): BrowserWindow[] {
     return Array.from(this.entries.values(), (entry) => entry.window);
+  }
+
+  /** Broadcast a short on-screen label to every open display window (control UI). */
+  flashIdentifyLabels(durationMs: number = DEFAULT_IDENTIFY_DURATION_MS): void {
+    const ms = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : DEFAULT_IDENTIFY_DURATION_MS;
+    for (const entry of this.entries.values()) {
+      if (entry.isClosing || entry.window.isDestroyed()) {
+        continue;
+      }
+      const labelText = displayFriendlyName(entry.state);
+      entry.window.webContents.send('display:identify-flash', { label: labelText, durationMs: ms });
+    }
   }
 
   listMonitors(): DisplayMonitorInfo[] {
