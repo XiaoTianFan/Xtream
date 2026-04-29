@@ -1,6 +1,7 @@
 import type {
   AudioSourceState,
   DirectorState,
+  LoopState,
   StreamEnginePublicState,
   VirtualOutputSourceSelection,
   VisualLayoutProfile,
@@ -9,6 +10,7 @@ import type {
 
 type RuntimeOffset = {
   runtimeOffsetSeconds?: number;
+  runtimeLoop?: LoopState;
 };
 
 function cueFadeFactor(cue: { fadeOutStartedWallTimeMs?: number; fadeOutDurationMs?: number }, nowWallTimeMs: number): number {
@@ -91,6 +93,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       ready: source.ready,
       error: source.error,
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
+      runtimeLoop: cue.mediaLoop,
     } as AudioSourceState & RuntimeOffset;
     const selection: VirtualOutputSourceSelection = {
       id: cloneId,
@@ -124,6 +127,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       playbackRate: (visual.playbackRate ?? 1) * cue.playbackRate,
       durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : visual.durationSeconds,
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
+      runtimeLoop: cue.mediaLoop,
     } as VisualState & RuntimeOffset;
     const slots = displaySlots.get(display.id) ?? {};
     const zone = cue.target.zoneId ?? 'single';

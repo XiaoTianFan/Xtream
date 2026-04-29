@@ -1,4 +1,5 @@
 import type {
+  AudioSourceState,
   DirectorState,
   MeterLaneState,
   OutputMeterReport,
@@ -202,14 +203,43 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     }
   }
 
+  /** Strip topology/routing only — excludes runtime fades, meters, decode-ready flips, and async errors (see stream deriveDirectorStateForStream). */
+  function compactAudioSourceForSignature(source: AudioSourceState): Record<string, unknown> {
+    const base: Record<string, unknown> = { id: source.id, label: source.label, type: source.type };
+    if (source.type === 'embedded-visual') {
+      base.visualId = source.visualId;
+    }
+    return base;
+  }
+
+  function compactOutputForSignature(output: VirtualOutputState): Record<string, unknown> {
+    return {
+      id: output.id,
+      label: output.label,
+      sinkId: output.sinkId,
+      sinkLabel: output.sinkLabel,
+      busLevelDb: output.busLevelDb,
+      pan: output.pan,
+      muted: output.muted,
+      outputDelaySeconds: output.outputDelaySeconds,
+      sources: output.sources.map((sel: VirtualOutputSourceSelection) => ({
+        id: sel.id,
+        audioSourceId: sel.audioSourceId,
+        pan: sel.pan,
+        muted: sel.muted,
+        solo: sel.solo,
+      })),
+    };
+  }
+
   function createRenderSignature(state: DirectorState): string {
     return JSON.stringify({
       sources: Object.values(state.audioSources)
         .sort((left, right) => left.id.localeCompare(right.id))
-        .map((source) => source),
+        .map((source) => compactAudioSourceForSignature(source)),
       outputs: Object.values(state.outputs)
         .sort((left, right) => left.id.localeCompare(right.id))
-        .map((output) => ({ ...output, meterDb: undefined, meterLanes: undefined })),
+        .map((output) => compactOutputForSignature(output)),
       devices: options.getAudioDevices().map((device) => `${device.deviceId}:${device.label}`).join('|'),
       solo: createSoloOutputSignature(state),
     });
@@ -283,6 +313,17 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     });
   }
 
+  function syncMixerStripReadyDots(state: DirectorState): void {
+    for (const output of Object.values(state.outputs)) {
+      const strip = elements.outputPanel.querySelector<HTMLElement>(`[data-output-strip="${output.id}"]`);
+      const dot = strip?.querySelector<HTMLElement>('.status-dot');
+      if (!dot) {
+        continue;
+      }
+      dot.className = `status-dot ${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'standby'}`;
+    }
+  }
+
   function syncOutputMeters(state: DirectorState): void {
     const wallMs = Date.now();
     for (const output of Object.values(state.outputs)) {
@@ -294,6 +335,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
       });
     }
     smoothStep(performance.now());
+    syncMixerStripReadyDots(state);
   }
 
   function applyOutputMeterReport(report: OutputMeterReport): void {

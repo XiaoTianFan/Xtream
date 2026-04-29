@@ -141,6 +141,47 @@ describe('streamSchedule', () => {
     expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBeUndefined();
   });
 
+  it('uses scene loop range and count as the scheduled scene duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      loop: { enabled: true as const, range: { startMs: 0, endMs: 5000 }, iterations: { type: 'count' as const, count: 2 } },
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 120 }, {})).toBe(10_000);
+  });
+
+  it('uses sub-cue loops to expand one scene pass before applying scene loops', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      loop: { enabled: true as const, iterations: { type: 'count' as const, count: 2 } },
+      subCueOrder: ['long', 'short'],
+      subCues: {
+        long: {
+          id: 'long',
+          kind: 'visual' as const,
+          visualId: 'long-vid',
+          targets: [{ displayId: 'd0' }],
+        },
+        short: {
+          id: 'short',
+          kind: 'visual' as const,
+          visualId: 'short-vid',
+          targets: [{ displayId: 'd0' }],
+          loop: { enabled: true as const, iterations: { type: 'count' as const, count: 3 } },
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { 'long-vid': 120, 'short-vid': 60 }, {})).toBe(360_000);
+  });
+
   it('sums manual scenes for linear stream duration estimate', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'A'),

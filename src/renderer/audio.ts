@@ -1,6 +1,6 @@
 /// <reference path="./global.d.ts" />
 import { getAudioEffectiveTime, getDirectorSeconds } from '../shared/timeline';
-import type { DirectorState, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
+import type { DirectorState, LoopState, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
 import {
   getFirstMeteredAudioSource,
   sampleMeters,
@@ -73,8 +73,9 @@ driftTimer = window.setInterval(() => {
   }
   const sourceRate = source.playbackRate ?? 1;
   const directorSeconds = getDirectorSeconds(currentState);
-  const runtimeOffsetSeconds = (source as typeof source & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
-  const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * sourceRate, source.durationSeconds, currentState.loop);
+  const runtimeSource = source as typeof source & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
+  const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
+  const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * sourceRate, source.durationSeconds, runtimeSource.runtimeLoop ?? currentState.loop);
   if (!target.audible) {
     return;
   }

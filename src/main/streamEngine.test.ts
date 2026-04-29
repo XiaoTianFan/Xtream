@@ -77,6 +77,30 @@ describe('StreamEngine', () => {
     expect(state.runtime?.currentStreamMs).toBe(1000);
   });
 
+  it('allows Stream seek when Stream already owns active playback', () => {
+    let patchPlaying = false;
+    const director = {
+      ...createDirector({
+        visuals: { v1: { id: 'v1', durationSeconds: 10 } } as DirectorState['visuals'],
+      }),
+      isPatchTransportPlaying: () => patchPlaying,
+    } as unknown as Director;
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+
+    patchPlaying = true;
+    const state = engine.applyTransport({ type: 'seek', timeMs: 7000 });
+
+    expect(state.runtime?.currentStreamMs).toBe(7000);
+    expect(state.runtime?.offsetStreamMs).toBe(7000);
+  });
+
   it('back-to-first skips a disabled leading scene', () => {
     const director = createDirector();
     const engine = new StreamEngine(director);
@@ -141,6 +165,62 @@ describe('StreamEngine', () => {
     engine.loadFromShow({ stream });
     const state = engine.applyTransport({ type: 'play' });
     expect(state.runtime?.expectedDurationMs).toBe(5000);
+  });
+
+  it('seeking into a scene loop pass reactivates sub-cues at the loop phase', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 120 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].loop = {
+      enabled: true,
+      range: { startMs: 0, endMs: 5000 },
+      iterations: { type: 'count', count: 2 },
+    };
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+    const state = engine.applyTransport({ type: 'seek', timeMs: 6000 });
+
+    expect(state.runtime?.expectedDurationMs).toBe(10_000);
+    expect(state.runtime?.currentStreamMs).toBe(6000);
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('ready');
+
+    const playing = engine.applyTransport({ type: 'play' });
+    expect(playing.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(playing.runtime?.activeVisualSubCues).toMatchObject([{ streamStartMs: 5000, localStartMs: 0 }]);
+  });
+
+  it('seeking into a sub-cue loop keeps the shorter cue active', () => {
+    const director = createDirector({
+      visuals: {
+        long: { id: 'long', durationSeconds: 120 },
+        short: { id: 'short', durationSeconds: 60 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['long', 'short'];
+    stream.scenes['scene-1'].subCues = {
+      long: { id: 'long', kind: 'visual', visualId: 'long', targets: [{ displayId: 'd1' }] },
+      short: {
+        id: 'short',
+        kind: 'visual',
+        visualId: 'short',
+        targets: [{ displayId: 'd1' }],
+        loop: { enabled: true, iterations: { type: 'count', count: 3 } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    const state = engine.applyTransport({ type: 'seek', timeMs: 150_000 });
+
+    expect(state.runtime?.expectedDurationMs).toBe(180_000);
+    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.visualId)).toEqual(['short']);
+    expect(state.runtime?.activeVisualSubCues?.[0]?.mediaLoop).toMatchObject({ enabled: true, startSeconds: 0, endSeconds: 60 });
   });
 
   it('surfaces timeline calculation errors in validation state', () => {

@@ -1,5 +1,5 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
-import type { AudioSourceState, DirectorState, MeterLaneState, VirtualOutputSourceSelection, VirtualOutputState } from '../../../shared/types';
+import type { AudioSourceState, DirectorState, LoopState, MeterLaneState, VirtualOutputSourceSelection, VirtualOutputState } from '../../../shared/types';
 import { createPlaybackSyncKey, requestMediaPlay, syncTimedMediaElement } from './mediaSync';
 
 type SinkCapableAudioElement = HTMLAudioElement & {
@@ -229,8 +229,13 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       if (!selection || !source) {
         continue;
       }
-      const runtimeOffsetSeconds = (source as AudioSourceState & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
-      const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
+      const runtimeSource = source as AudioSourceState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
+      const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
+      const target = getAudioEffectiveTime(
+        (directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1),
+        source.durationSeconds,
+        runtimeSource.runtimeLoop ?? state.loop,
+      );
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
       sourceRuntime.gainNode.gain.value = sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
       sourceRuntime.sourcePanner.pan.value = clampAudioPan(selection.pan);
@@ -373,8 +378,13 @@ function pauseRuntimeAtDirectorTarget(runtime: OutputRuntime, state: DirectorSta
       sourceRuntime.element.pause();
       continue;
     }
-    const runtimeOffsetSeconds = (source as AudioSourceState & { runtimeOffsetSeconds?: number }).runtimeOffsetSeconds ?? 0;
-    const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1), source.durationSeconds, state.loop);
+    const runtimeSource = source as AudioSourceState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
+    const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
+    const target = getAudioEffectiveTime(
+      (directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1),
+      source.durationSeconds,
+      runtimeSource.runtimeLoop ?? state.loop,
+    );
     sourceRuntime.element.pause();
     sourceRuntime.element.currentTime = clampElementTime(target.seconds, sourceRuntime.element);
   }

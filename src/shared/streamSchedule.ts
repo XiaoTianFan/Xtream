@@ -11,6 +11,7 @@ import type {
   VisualId,
   VirtualOutputId,
 } from './types';
+import { createLoopValidationMessages, resolveLoopTiming } from './streamLoopTiming';
 import { PATCH_COMPAT_SCENE_ID } from './streamWorkspace';
 
 export type ValidateStreamContentContext = {
@@ -178,22 +179,7 @@ export function validateStreamContent(stream: PersistedStreamConfig, context: Va
     if (!scene) {
       continue;
     }
-    if (scene.loop.enabled) {
-      const start = scene.loop.range?.startMs;
-      const end = scene.loop.range?.endMs;
-      if (start !== undefined && start < 0) {
-        messages.push(`Scene ${sceneId} has negative loop start`);
-      }
-      if (end !== undefined && end < 0) {
-        messages.push(`Scene ${sceneId} has negative loop end`);
-      }
-      if (start !== undefined && end !== undefined && end <= start) {
-        messages.push(`Scene ${sceneId} has invalid loop range`);
-      }
-      if (scene.loop.iterations.type === 'count' && scene.loop.iterations.count <= 0) {
-        messages.push(`Scene ${sceneId} has non-positive loop count`);
-      }
-    }
+    messages.push(...createLoopValidationMessages({ policy: scene.loop, label: `Scene ${sceneId}` }));
     if (scene.preload.leadTimeMs !== undefined && scene.preload.leadTimeMs < 0) {
       messages.push(`Scene ${sceneId} has negative preload lead time`);
     }
@@ -222,6 +208,7 @@ export function validateStreamContent(stream: PersistedStreamConfig, context: Va
         messages.push(`Scene ${sceneId} sub-cue ${subCueId} has non-positive playback rate`);
       }
       if (subCue.kind === 'audio') {
+        messages.push(...createLoopValidationMessages({ policy: subCue.loop, label: `Scene ${sceneId} audio sub-cue ${subCueId}` }));
         if (context.audioSources && !context.audioSources.has(subCue.audioSourceId)) {
           messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing audio source ${subCue.audioSourceId}`);
         }
@@ -236,6 +223,7 @@ export function validateStreamContent(stream: PersistedStreamConfig, context: Va
           }
         }
       } else if (subCue.kind === 'visual') {
+        messages.push(...createLoopValidationMessages({ policy: subCue.loop, label: `Scene ${sceneId} visual sub-cue ${subCueId}` }));
         if (context.visuals && !context.visuals.has(subCue.visualId)) {
           messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing visual ${subCue.visualId}`);
         }
@@ -301,7 +289,7 @@ export type StreamSchedule = {
   notice?: string;
 };
 
-function subCueEffectiveDurationMs(
+function subCueBaseDurationMs(
   sub: PersistedSceneConfig['subCues'][string],
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
@@ -330,7 +318,20 @@ function subCueEffectiveDurationMs(
   if (sub.durationOverrideMs !== undefined) {
     base = Math.min(base, sub.durationOverrideMs);
   }
-  return (sub.startOffsetMs ?? 0) + base;
+  return base;
+}
+
+function subCueEffectiveDurationMs(
+  sub: PersistedSceneConfig['subCues'][string],
+  visualDurations: Record<VisualId, number>,
+  audioDurations: Record<AudioSourceId, number>,
+): number | undefined {
+  const base = subCueBaseDurationMs(sub, visualDurations, audioDurations);
+  if (base === undefined) {
+    return undefined;
+  }
+  const loopTiming = sub.kind === 'control' ? resolveLoopTiming(undefined, base) : resolveLoopTiming(sub.loop, base);
+  return loopTiming.totalDurationMs === undefined ? undefined : (sub.startOffsetMs ?? 0) + loopTiming.totalDurationMs;
 }
 
 /** Longest sub-cue effective duration; undefined if any contributing sub-cue duration is unknown. */
@@ -359,13 +360,8 @@ export function estimateSceneDurationMs(
   if (unknown) {
     return undefined;
   }
-  if (scene.loop.enabled) {
-    if (scene.loop.iterations.type === 'infinite') {
-      return undefined;
-    }
-    return max * scene.loop.iterations.count;
-  }
-  return max;
+  const sceneTiming = resolveLoopTiming(scene.loop, max);
+  return sceneTiming.totalDurationMs;
 }
 
 /**

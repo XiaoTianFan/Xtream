@@ -594,6 +594,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       syncSceneEditRunningLock();
       return;
     }
+    const streamOutputPanel = refs.outputPanel;
+    if (bottomTab === 'mixer' && streamOutputPanel && isPanelInteractionActive(streamOutputPanel)) {
+      return;
+    }
     bottomRenderSignature = signature;
     renderBottomPane();
   }

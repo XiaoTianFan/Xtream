@@ -82,6 +82,7 @@ describe('deriveDirectorStateForStream', () => {
             localStartMs: 500,
             levelDb: -6,
             playbackRate: 1.5,
+            mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 12 },
           },
         ],
         activeVisualSubCues: [
@@ -93,6 +94,7 @@ describe('deriveDirectorStateForStream', () => {
             streamStartMs: 2_000,
             localStartMs: 1_000,
             playbackRate: 0.5,
+            mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 10 },
           },
         ],
       },
@@ -109,10 +111,10 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.loop.enabled).toBe(false);
     expect(derived.outputs['output-main'].sources).toMatchObject([{ levelDb: -6 }]);
     const audioId = derived.outputs['output-main'].sources[0]?.audioSourceId ?? '';
-    expect(derived.audioSources[audioId]).toMatchObject({ playbackRate: 0.75, runtimeOffsetSeconds: 2.5 });
+    expect(derived.audioSources[audioId]).toMatchObject({ playbackRate: 0.75, runtimeOffsetSeconds: 2.5, runtimeLoop: { enabled: true, endSeconds: 12 } });
     expect(derived.displays.d1.layout).toMatchObject({ type: 'single' });
     const visualId = derived.displays.d1.layout.type === 'single' ? derived.displays.d1.layout.visualId ?? '' : '';
-    expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3 });
+    expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3, runtimeLoop: { enabled: true, endSeconds: 10 } });
     expect(derived.activeTimeline.durationSeconds).toBe(20);
   });
 

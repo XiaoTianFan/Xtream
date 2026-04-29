@@ -5,6 +5,7 @@ import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import type {
   DirectorState,
   DisplayWindowState,
+  LoopState,
   StreamEnginePublicState,
   VisualId,
   VisualLayoutProfile,
@@ -282,8 +283,13 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visual = visualId ? state.visuals[visualId] : undefined;
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
-    const runtimeOffsetSeconds = (visual as (VisualState & { runtimeOffsetSeconds?: number }) | undefined)?.runtimeOffsetSeconds ?? 0;
-    const effectiveTarget = getMediaEffectiveTime((baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1), visualDuration, state.loop);
+    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState }) | undefined;
+    const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
+    const effectiveTarget = getMediaEffectiveTime(
+      (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
+      visualDuration,
+      runtime?.runtimeLoop ?? state.loop,
+    );
     syncTimedMediaElement(
       video,
       effectiveTarget,
@@ -421,8 +427,13 @@ driftTimer = window.setInterval(() => {
           const visualId = video.dataset.visualId;
           const state = currentState!;
           const visual = visualId ? state.visuals[visualId] : undefined;
-          const runtimeOffsetSeconds = (visual as (VisualState & { runtimeOffsetSeconds?: number }) | undefined)?.runtimeOffsetSeconds ?? 0;
-          const targetSeconds = getMediaEffectiveTime((directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1), visual?.durationSeconds, state.loop);
+          const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState }) | undefined;
+          const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
+          const targetSeconds = getMediaEffectiveTime(
+            (directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
+            visual?.durationSeconds,
+            runtime?.runtimeLoop ?? state.loop,
+          );
           const drift = video.currentTime - targetSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)

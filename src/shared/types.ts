@@ -665,6 +665,7 @@ export type StreamRuntimeAudioSubCue = {
   muted?: boolean;
   solo?: boolean;
   playbackRate: number;
+  mediaLoop?: LoopState;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;
   fadeOutDurationMs?: number;
@@ -679,6 +680,7 @@ export type StreamRuntimeVisualSubCue = {
   localStartMs: number;
   localEndMs?: number;
   playbackRate: number;
+  mediaLoop?: LoopState;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;
   fadeOutDurationMs?: number;

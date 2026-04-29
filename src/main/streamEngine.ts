@@ -10,6 +10,7 @@ import type {
   SceneId,
   SceneRuntimeState,
   CalculatedStreamTimeline,
+  LoopState,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
@@ -19,6 +20,7 @@ import type {
   SubCueId,
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlaybackSettings, normalizeStreamPersistence } from '../shared/streamWorkspace';
+import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
 import {
   buildStreamSchedule,
   type StreamSchedule,
@@ -249,7 +251,7 @@ export class StreamEngine extends EventEmitter {
   }
 
   applyTransport(command: StreamCommand): StreamEnginePublicState {
-    if (this.director.isPatchTransportPlaying() && this.commandStartsStreamPlayback(command)) {
+    if (this.director.isPatchTransportPlaying() && !this.isStreamPlaybackActive() && this.commandStartsStreamPlayback(command)) {
       return this.getPublicState();
     }
 
@@ -800,19 +802,27 @@ export class StreamEngine extends EventEmitter {
     activeAudio: StreamRuntimeAudioSubCue[],
     activeVisual: StreamRuntimeVisualSubCue[],
   ): void {
+    const scenePhase = this.getSceneLoopPhase(scene, sceneStartMs, currentMs);
     for (const subCueId of scene.subCueOrder) {
       const sub = scene.subCues[subCueId];
       if (!sub || sub.kind === 'control') {
         continue;
       }
       const localStartMs = sub.startOffsetMs ?? 0;
-      if (currentMs < sceneStartMs + localStartMs) {
+      if (scenePhase.phaseMs < localStartMs) {
         continue;
       }
-      const localEndMs = this.getSubCueDurationMs(sub);
-      if (localEndMs !== undefined && currentMs >= sceneStartMs + localStartMs + localEndMs) {
+      const baseDurationMs = this.getSubCueBaseDurationMs(sub);
+      if (baseDurationMs === undefined) {
         continue;
       }
+      const subTiming = resolveLoopTiming(sub.loop, baseDurationMs);
+      const subElapsedMs = scenePhase.phaseMs - localStartMs;
+      if (!isElapsedWithinLoopTotal(subElapsedMs, subTiming)) {
+        continue;
+      }
+      const localEndMs = subTiming.totalDurationMs;
+      const mediaLoop = this.createSubCueMediaLoop(sub, baseDurationMs);
       if (sub.kind === 'audio') {
         for (const outputId of sub.outputIds) {
           activeAudio.push({
@@ -820,7 +830,7 @@ export class StreamEngine extends EventEmitter {
             subCueId,
             audioSourceId: sub.audioSourceId,
             outputId,
-            streamStartMs: sceneStartMs,
+            streamStartMs: scenePhase.phaseZeroStreamMs,
             localStartMs,
             localEndMs,
             levelDb: sub.levelDb ?? 0,
@@ -828,6 +838,7 @@ export class StreamEngine extends EventEmitter {
             muted: sub.muted,
             solo: sub.solo,
             playbackRate: sub.playbackRate ?? 1,
+            mediaLoop,
           });
         }
       } else {
@@ -837,10 +848,11 @@ export class StreamEngine extends EventEmitter {
             subCueId,
             visualId: sub.visualId,
             target,
-            streamStartMs: sceneStartMs,
+            streamStartMs: scenePhase.phaseZeroStreamMs,
             localStartMs,
             localEndMs,
             playbackRate: sub.playbackRate ?? 1,
+            mediaLoop,
           });
         }
       }
@@ -848,14 +860,15 @@ export class StreamEngine extends EventEmitter {
   }
 
   private dispatchControlSubCues(scene: PersistedSceneConfig, sceneStartMs: number, currentMs: number): void {
+    const scenePhase = this.getSceneLoopPhase(scene, sceneStartMs, currentMs);
     for (const subCueId of scene.subCueOrder) {
       const sub = scene.subCues[subCueId];
       if (!sub || sub.kind !== 'control') {
         continue;
       }
-      const start = sceneStartMs + (sub.startOffsetMs ?? 0);
-      const key = `${scene.id}:${subCueId}`;
-      if (currentMs < start || this.dispatchedControlSubCues.has(key)) {
+      const start = sub.startOffsetMs ?? 0;
+      const key = `${scene.id}:${scenePhase.iterationKey}:${subCueId}`;
+      if (scenePhase.phaseMs < start || this.dispatchedControlSubCues.has(key)) {
         continue;
       }
       this.dispatchedControlSubCues.add(key);
@@ -888,7 +901,7 @@ export class StreamEngine extends EventEmitter {
     }
   }
 
-  private getSubCueDurationMs(sub: PersistedSubCueConfig): number | undefined {
+  private getSubCueBaseDurationMs(sub: PersistedSubCueConfig): number | undefined {
     const [visualDurations, audioDurations] = this.getDurationMaps();
     let base: number | undefined;
     if (sub.kind === 'visual') {
@@ -904,6 +917,71 @@ export class StreamEngine extends EventEmitter {
       return Math.min(base, sub.durationOverrideMs);
     }
     return sub.durationOverrideMs ?? base;
+  }
+
+  private getSubCueExpandedDurationMs(sub: PersistedSubCueConfig): number | undefined {
+    const base = this.getSubCueBaseDurationMs(sub);
+    if (base === undefined) {
+      return undefined;
+    }
+    const timing = sub.kind === 'control' ? resolveLoopTiming(undefined, base) : resolveLoopTiming(sub.loop, base);
+    return timing.totalDurationMs;
+  }
+
+  private getScenePassDurationMs(scene: PersistedSceneConfig): number | undefined {
+    let max = 0;
+    for (const subCueId of scene.subCueOrder) {
+      const sub = scene.subCues[subCueId];
+      if (!sub) {
+        continue;
+      }
+      const duration = this.getSubCueExpandedDurationMs(sub);
+      if (duration === undefined) {
+        return undefined;
+      }
+      max = Math.max(max, (sub.startOffsetMs ?? 0) + duration);
+    }
+    return max;
+  }
+
+  private getSceneLoopPhase(
+    scene: PersistedSceneConfig,
+    sceneStartMs: number,
+    currentMs: number,
+  ): { phaseMs: number; phaseZeroStreamMs: number; iterationKey: number } {
+    const elapsedMs = Math.max(0, currentMs - sceneStartMs);
+    const passDurationMs = this.getScenePassDurationMs(scene);
+    if (passDurationMs === undefined) {
+      return { phaseMs: elapsedMs, phaseZeroStreamMs: sceneStartMs, iterationKey: 0 };
+    }
+    const timing = resolveLoopTiming(scene.loop, passDurationMs);
+    const phaseMs = mapElapsedToLoopPhase(elapsedMs, timing);
+    const iterationKey =
+      timing.enabled && timing.loopDurationMs > 0 && elapsedMs >= timing.loopStartMs
+        ? Math.floor((elapsedMs - timing.loopStartMs) / timing.loopDurationMs)
+        : 0;
+    return {
+      phaseMs,
+      phaseZeroStreamMs: currentMs - phaseMs,
+      iterationKey,
+    };
+  }
+
+  private createSubCueMediaLoop(sub: PersistedSubCueConfig, baseDurationMs: number): LoopState | undefined {
+    if (sub.kind === 'control' || !sub.loop?.enabled) {
+      return undefined;
+    }
+    const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
+    const loopStartMs = Math.max(0, sub.loop.range?.startMs ?? 0);
+    const loopEndMs = Math.max(loopStartMs, sub.loop.range?.endMs ?? baseDurationMs);
+    if (loopEndMs <= loopStartMs) {
+      return undefined;
+    }
+    return {
+      enabled: true,
+      startSeconds: (loopStartMs * rate) / 1000,
+      endSeconds: (loopEndMs * rate) / 1000,
+    };
   }
 
   private revalidate(): void {

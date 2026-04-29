@@ -25,6 +25,7 @@ export type StreamHeaderRenderContext = {
 let rateDragStart: { clientX: number; rate: number } | undefined;
 let timelineScrubPointerActive = false;
 let timelineScrubDraftUntil = 0;
+let timelineScrubDraftValueSeconds: number | undefined;
 
 export function deriveStreamTransportUiState(args: {
   runtime: StreamEnginePublicState['runtime'];
@@ -230,12 +231,16 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
     slider.max = String(durationMs / 1000);
     if (!isTimelineScrubDraftActive()) {
       slider.value = String(Math.min(durationMs, Math.max(0, currentMs)) / 1000);
+      timelineScrubDraftValueSeconds = undefined;
+    } else if (timelineScrubDraftValueSeconds !== undefined) {
+      slider.value = String(Math.min(durationMs / 1000, Math.max(0, timelineScrubDraftValueSeconds)));
     }
     syncSliderProgress(slider);
     slider.title = `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
   }
   slider.addEventListener('pointerdown', () => {
     timelineScrubPointerActive = true;
+    timelineScrubDraftValueSeconds = Number(slider.value) || 0;
   });
   slider.addEventListener('pointerup', () => {
     timelineScrubPointerActive = false;
@@ -246,12 +251,14 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   });
   slider.addEventListener('input', () => {
     timelineScrubDraftUntil = performance.now() + 300;
+    timelineScrubDraftValueSeconds = Number(slider.value) || 0;
     syncSliderProgress(slider);
     slider.title =
       durationMs === undefined ? 'Stream timeline unavailable' : `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
   });
   slider.addEventListener('change', () => {
     timelineScrubDraftUntil = performance.now() + 1000;
+    timelineScrubDraftValueSeconds = Number(slider.value) || 0;
     void window.xtream.stream.transport({ type: 'seek', timeMs: (Number(slider.value) || 0) * 1000 }).finally(() => {
       timelineScrubPointerActive = false;
     });
@@ -299,6 +306,9 @@ export function syncStreamHeaderRuntime(
   slider.max = String(durationMs / 1000);
   if (!isTimelineScrubDraftActive()) {
     slider.value = String(Math.min(durationMs, Math.max(0, currentMs)) / 1000);
+    timelineScrubDraftValueSeconds = undefined;
+  } else if (timelineScrubDraftValueSeconds !== undefined) {
+    slider.value = String(Math.min(durationMs / 1000, Math.max(0, timelineScrubDraftValueSeconds)));
   }
   syncSliderProgress(slider);
   slider.title = `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
