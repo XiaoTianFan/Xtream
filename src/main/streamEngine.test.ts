@@ -578,6 +578,52 @@ describe('StreamEngine', () => {
     );
   });
 
+  it('lets removed running content finish naturally with the let-finish orphan policy', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 2 }, v2: { id: 'v2', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.playbackSettings = {
+      pausedPlayBehavior: 'selection-aware',
+      runningEditOrphanPolicy: 'let-finish',
+      runningEditOrphanFadeOutMs: 500,
+    };
+    stream.sceneOrder = ['scene-1', 'scene-2'];
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'follow-end', followsSceneId: 'scene-1' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1', source: 'global' });
+    vi.setSystemTime(1_500);
+
+    const promoted = engine.applyEdit({
+      type: 'update-scene',
+      sceneId: 'scene-1',
+      update: { subCueOrder: [], subCues: {} },
+    });
+
+    expect(promoted.runtime?.activeVisualSubCues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ visualId: 'v1', orphaned: true, fadeOutDurationMs: undefined })]),
+    );
+
+    vi.setSystemTime(3_100);
+    const afterNaturalEnd = engine.applyTransport({ type: 'seek', timeMs: 2100 });
+
+    expect(afterNaturalEnd.runtime?.activeVisualSubCues?.some((cue) => cue.visualId === 'v1')).toBe(false);
+  });
+
   it('does not toggle pause into resume when already paused', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

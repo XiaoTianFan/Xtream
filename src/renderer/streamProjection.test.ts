@@ -115,4 +115,94 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3 });
     expect(derived.activeTimeline.durationSeconds).toBe(20);
   });
+
+  it('applies orphan fade metadata to projected audio level and visual opacity', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_250);
+    const state = {
+      paused: true,
+      rate: 1,
+      anchorWallTimeMs: 0,
+      offsetSeconds: 0,
+      loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: 1,
+      globalDisplayBlackoutFadeOutSeconds: 1,
+      visuals: {
+        v1: { id: 'v1', kind: 'file', type: 'video', label: 'Video', url: 'file://video.mp4', durationSeconds: 10, opacity: 0.8, ready: true },
+      },
+      audioSources: {
+        a1: { id: 'a1', type: 'external-file', label: 'Audio', url: 'file://audio.wav', durationSeconds: 12, ready: true },
+      },
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [],
+          busLevelDb: 0,
+          ready: true,
+          physicalRoutingAvailable: true,
+        },
+      },
+      displays: {
+        d1: { id: 'd1', layout: { type: 'single' }, fullscreen: false, health: 'ready' },
+      },
+      activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+      audioRendererReady: true,
+      readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+      corrections: { displays: {} },
+      previews: {},
+      audioExtractionFormat: 'm4a',
+      controlDisplayPreviewMaxFps: 15,
+      performanceMode: false,
+    } as DirectorState;
+    const streamState = {
+      stream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      validationMessages: [],
+      runtime: {
+        status: 'running',
+        originWallTimeMs: 1_000,
+        offsetStreamMs: 0,
+        sceneStates: {},
+        activeAudioSubCues: [
+          {
+            sceneId: 'scene-1',
+            subCueId: 'aud',
+            audioSourceId: 'a1',
+            outputId: 'output-main',
+            streamStartMs: 0,
+            localStartMs: 0,
+            levelDb: -6,
+            playbackRate: 1,
+            orphaned: true,
+            fadeOutStartedWallTimeMs: 1_000,
+            fadeOutDurationMs: 500,
+          },
+        ],
+        activeVisualSubCues: [
+          {
+            sceneId: 'scene-1',
+            subCueId: 'vis',
+            visualId: 'v1',
+            target: { displayId: 'd1' },
+            streamStartMs: 0,
+            localStartMs: 0,
+            playbackRate: 1,
+            orphaned: true,
+            fadeOutStartedWallTimeMs: 1_000,
+            fadeOutDurationMs: 500,
+          },
+        ],
+      },
+    } satisfies StreamEnginePublicState;
+
+    const derived = deriveDirectorStateForStream(state, streamState);
+
+    expect(derived.outputs['output-main'].sources[0]?.levelDb).toBeCloseTo(-12.02, 2);
+    const visualId = derived.displays.d1.layout.type === 'single' ? derived.displays.d1.layout.visualId ?? '' : '';
+    expect(derived.visuals[visualId]).toMatchObject({ opacity: 0.4 });
+  });
 });

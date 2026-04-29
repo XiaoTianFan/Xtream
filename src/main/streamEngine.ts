@@ -602,7 +602,7 @@ export class StreamEngine extends EventEmitter {
       this.runtime.cursorSceneId = undefined;
       this.stopTicking();
     }
-    this.pruneExpiredOrphans();
+    this.pruneExpiredOrphans(currentMs);
     this.runtime.sceneStates = sceneStates;
     this.runtime.activeAudioSubCues = [...activeAudio, ...this.orphanedAudioSubCues];
     this.runtime.activeVisualSubCues = [...activeVisual, ...this.orphanedVisualSubCues];
@@ -701,10 +701,14 @@ export class StreamEngine extends EventEmitter {
     }
   }
 
-  private pruneExpiredOrphans(): void {
+  private pruneExpiredOrphans(currentStreamMs: number): void {
     const now = Date.now();
-    const keep = <T extends { fadeOutStartedWallTimeMs?: number; fadeOutDurationMs?: number }>(cue: T): boolean =>
-      cue.fadeOutStartedWallTimeMs === undefined || cue.fadeOutDurationMs === undefined || now - cue.fadeOutStartedWallTimeMs < cue.fadeOutDurationMs;
+    const keep = <T extends { streamStartMs: number; localEndMs?: number; fadeOutStartedWallTimeMs?: number; fadeOutDurationMs?: number }>(cue: T): boolean => {
+      if (cue.localEndMs !== undefined && currentStreamMs >= cue.streamStartMs + cue.localEndMs) {
+        return false;
+      }
+      return cue.fadeOutStartedWallTimeMs === undefined || cue.fadeOutDurationMs === undefined || now - cue.fadeOutStartedWallTimeMs < cue.fadeOutDurationMs;
+    };
     this.orphanedAudioSubCues = this.orphanedAudioSubCues.filter(keep);
     this.orphanedVisualSubCues = this.orphanedVisualSubCues.filter(keep);
   }

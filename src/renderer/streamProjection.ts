@@ -11,6 +11,18 @@ type RuntimeOffset = {
   runtimeOffsetSeconds?: number;
 };
 
+function cueFadeFactor(cue: { fadeOutStartedWallTimeMs?: number; fadeOutDurationMs?: number }, nowWallTimeMs: number): number {
+  if (cue.fadeOutStartedWallTimeMs === undefined || cue.fadeOutDurationMs === undefined || cue.fadeOutDurationMs <= 0) {
+    return 1;
+  }
+  const elapsed = nowWallTimeMs - cue.fadeOutStartedWallTimeMs;
+  return Math.max(0, Math.min(1, 1 - elapsed / cue.fadeOutDurationMs));
+}
+
+function gainFactorToDb(factor: number): number {
+  return factor <= 0 ? -120 : 20 * Math.log10(factor);
+}
+
 function isStreamRuntimeActive(streamState: StreamEnginePublicState | undefined): boolean {
   const status = streamState?.runtime?.status;
   return status === 'running' || status === 'paused' || status === 'preloading';
@@ -21,6 +33,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
   if (!isStreamRuntimeActive(streamState) || !runtime) {
     return state;
   }
+  const nowWallTimeMs = Date.now();
 
   const offsetSeconds =
     runtime.status === 'running'
@@ -67,6 +80,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
     if (!source || !output) {
       continue;
     }
+    const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
     const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
     derived.audioSources[cloneId] = {
       ...source,
@@ -81,7 +95,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
     const selection: VirtualOutputSourceSelection = {
       id: cloneId,
       audioSourceId: cloneId,
-      levelDb: cue.levelDb,
+      levelDb: cue.levelDb + gainFactorToDb(fadeFactor),
       pan: cue.pan ?? 0,
     };
     if (cue.muted !== undefined) {
@@ -101,10 +115,12 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
     if (!visual || !display) {
       continue;
     }
+    const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
     const cloneId = `stream-visual:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
     derived.visuals[cloneId] = {
       ...visual,
       id: cloneId,
+      opacity: (visual.opacity ?? 1) * fadeFactor,
       playbackRate: (visual.playbackRate ?? 1) * cue.playbackRate,
       durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : visual.durationSeconds,
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
