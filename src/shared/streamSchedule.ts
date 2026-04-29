@@ -578,6 +578,7 @@ export function buildStreamSchedule(
   }
 
   const status: StreamSchedule['status'] = issues.some((issue) => issue.severity === 'error') ? 'invalid' : 'valid';
+  /** Upper bound of stacked timeline: max of (scheduled start + duration) for every placed scene. Manual rows use the same stacking as other triggers; they contribute full segment length, not "until first manual only". */
   return {
     status,
     entries,

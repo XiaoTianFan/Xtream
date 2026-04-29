@@ -1128,4 +1128,51 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
     expect(state.runtime?.sceneStates['scene-3']?.status).toBe('ready');
   });
+
+  it('holds stream timecode when an auto chain finishes and only manual-gated scenes remain', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 2 }, v2: { id: 'v2', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['scene-1', 'scene-2', 'scene-3'];
+    stream.scenes['scene-1'].trigger = { type: 'manual' };
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    stream.scenes['scene-2'] = {
+      id: 'scene-2',
+      trigger: { type: 'follow-end', followsSceneId: 'scene-1' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    };
+    stream.scenes['scene-3'] = {
+      id: 'scene-3',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'scene-1', source: 'global' });
+    vi.setSystemTime(12_000);
+    engine.applyTransport({ type: 'back-to-first' });
+    vi.setSystemTime(14_000);
+    engine.applyTransport({ type: 'back-to-first' });
+    let st = engine.getPublicState().runtime;
+    expect(st?.sceneStates['scene-2']?.status).toBe('complete');
+    expect(st?.sceneStates['scene-3']?.status).toBe('ready');
+    expect(st?.currentStreamMs).toBe(4000);
+    expect(st?.originWallTimeMs).toBeUndefined();
+    vi.setSystemTime(200_000);
+    engine.applyTransport({ type: 'back-to-first' });
+    st = engine.getPublicState().runtime;
+    expect(st?.currentStreamMs).toBe(4000);
+  });
 });
