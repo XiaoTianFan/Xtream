@@ -10,6 +10,7 @@ import type {
   PersistedVirtualOutputConfig,
   SceneId,
   SceneLoopPolicy,
+  StreamPlaybackSettings,
   StreamId,
   SubCueId,
   VisualId,
@@ -21,6 +22,37 @@ import type {
 export const STREAM_MAIN_ID: StreamId = 'stream-main';
 export const SCENE_FIRST_ID: SceneId = 'scene-1';
 export const PATCH_COMPAT_SCENE_ID: SceneId = 'patch-compat-scene';
+
+export const DEFAULT_STREAM_PLAYBACK_SETTINGS: StreamPlaybackSettings = {
+  pausedPlayBehavior: 'selection-aware',
+  runningEditOrphanPolicy: 'fade-out',
+  runningEditOrphanFadeOutMs: 500,
+};
+
+export function normalizeStreamPlaybackSettings(settings: Partial<StreamPlaybackSettings> | undefined): StreamPlaybackSettings {
+  const fadeOutMs = settings?.runningEditOrphanFadeOutMs;
+  return {
+    pausedPlayBehavior:
+      settings?.pausedPlayBehavior === 'preserve-paused-cursor' || settings?.pausedPlayBehavior === 'selection-aware'
+        ? settings.pausedPlayBehavior
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.pausedPlayBehavior,
+    runningEditOrphanPolicy:
+      settings?.runningEditOrphanPolicy === 'let-finish' || settings?.runningEditOrphanPolicy === 'fade-out'
+        ? settings.runningEditOrphanPolicy
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.runningEditOrphanPolicy,
+    runningEditOrphanFadeOutMs:
+      fadeOutMs !== undefined && Number.isFinite(fadeOutMs)
+        ? Math.min(60_000, Math.max(50, fadeOutMs))
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.runningEditOrphanFadeOutMs,
+  };
+}
+
+export function normalizeStreamPersistence(stream: PersistedStreamConfig): PersistedStreamConfig {
+  return {
+    ...structuredClone(stream),
+    playbackSettings: normalizeStreamPlaybackSettings(stream.playbackSettings),
+  };
+}
 
 export function loopStateToSceneLoopPolicy(loop: LoopState): SceneLoopPolicy {
   if (!loop.enabled) {
@@ -68,6 +100,7 @@ export function getDefaultStreamPersistence(): Pick<PersistedShowConfigV8, 'stre
     label: 'Main Stream',
     sceneOrder: [SCENE_FIRST_ID],
     scenes: { [SCENE_FIRST_ID]: firstScene },
+    playbackSettings: DEFAULT_STREAM_PLAYBACK_SETTINGS,
   };
   return {
     stream: mainStream,

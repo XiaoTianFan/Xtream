@@ -9,6 +9,7 @@ export type StreamHeaderRenderContext = {
   headerEl: HTMLElement;
   stream: PersistedStreamConfig;
   runtime: StreamEnginePublicState['runtime'];
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'];
   currentState: DirectorState | undefined;
   selectedSceneId: string | undefined;
   headerEditField: 'title' | 'note' | undefined;
@@ -21,6 +22,28 @@ export type StreamHeaderRenderContext = {
 let rateDragStart: { clientX: number; rate: number } | undefined;
 let timelineScrubPointerActive = false;
 let timelineScrubDraftUntil = 0;
+
+export function deriveStreamTransportUiState(args: {
+  runtime: StreamEnginePublicState['runtime'];
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'];
+  selectedSceneId: string | undefined;
+}): {
+  backDisabled: boolean;
+  playDisabled: boolean;
+  pauseDisabled: boolean;
+  nextDisabled: boolean;
+} {
+  const status = args.runtime?.status;
+  const running = status === 'running' || status === 'preloading';
+  const paused = status === 'paused';
+  const hasRuntimeReference = Boolean(args.runtime?.cursorSceneId);
+  return {
+    backDisabled: running,
+    playDisabled: args.playbackTimeline.status !== 'valid',
+    pauseDisabled: status !== 'running',
+    nextDisabled: !args.selectedSceneId && !running && !paused && !hasRuntimeReference,
+  };
+}
 
 function isTimelineScrubDraftActive(): boolean {
   return timelineScrubPointerActive || performance.now() < timelineScrubDraftUntil;
@@ -269,6 +292,11 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   const { stream, runtime, selectedSceneId, currentState, headerEl, options } = ctx;
   const selectedScene = selectedSceneId ? stream.scenes[selectedSceneId] : undefined;
   const currentMs = getStreamCurrentMs(runtime, currentState);
+  const transportState = deriveStreamTransportUiState({
+    runtime,
+    playbackTimeline: ctx.playbackTimeline,
+    selectedSceneId,
+  });
 
   const timecode = document.createElement('div');
   timecode.className = 'timecode stream-timecode';
@@ -279,18 +307,17 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   transport.className = 'stream-transport transport-cluster';
   const back = createButton('Back to first', 'secondary', () => void window.xtream.stream.transport({ type: 'back-to-first' }));
   decorateIconButton(back, 'SkipBack', 'Back to first scene');
-  const go = createButton('Go', '', () => void window.xtream.stream.transport({ type: 'go', sceneId: selectedSceneId }));
-  decorateIconButton(go, 'Play', 'Go from selected scene');
-  go.disabled = !selectedSceneId || !currentState?.paused;
-  const pause = createButton('Pause', 'secondary', () =>
-    void window.xtream.stream.transport({ type: runtime?.status === 'paused' ? 'resume' : 'pause' }),
-  );
-  decorateIconButton(pause, runtime?.status === 'paused' ? 'Play' : 'Pause', runtime?.status === 'paused' ? 'Resume stream' : 'Pause stream');
-  pause.disabled = runtime?.status !== 'running' && runtime?.status !== 'paused';
-  const next = createButton('Next', 'secondary', () => void window.xtream.stream.transport({ type: 'jump-next' }));
+  back.disabled = transportState.backDisabled;
+  const play = createButton('Play', '', () => void window.xtream.stream.transport({ type: 'play', sceneId: selectedSceneId, source: 'global' }));
+  decorateIconButton(play, 'Play', runtime?.status === 'paused' ? 'Resume stream' : 'Play stream');
+  play.disabled = transportState.playDisabled;
+  const pause = createButton('Pause', 'secondary', () => void window.xtream.stream.transport({ type: 'pause' }));
+  decorateIconButton(pause, 'Pause', 'Pause stream');
+  pause.disabled = transportState.pauseDisabled;
+  const next = createButton('Next', 'secondary', () => void window.xtream.stream.transport({ type: 'jump-next', referenceSceneId: selectedSceneId }));
   decorateIconButton(next, 'SkipForward', 'Jump to next scene');
-  next.disabled = runtime?.status !== 'running' && runtime?.status !== 'paused';
-  transport.append(back, go, pause, next, createRateButton(ctx));
+  next.disabled = transportState.nextDisabled;
+  transport.append(back, play, pause, next, createRateButton(ctx));
 
   const titleStack = document.createElement('div');
   titleStack.className = 'stream-scene-title-stack';

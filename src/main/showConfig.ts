@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { toRendererFileUrl } from './fileUrls';
-import { buildPatchCompatibilityScene, getDefaultStreamPersistence } from '../shared/streamWorkspace';
+import { buildPatchCompatibilityScene, getDefaultStreamPersistence, normalizeStreamPersistence } from '../shared/streamWorkspace';
 import { validateStreamContent, validateStreamStructure, validateTriggerReferences } from '../shared/streamSchedule';
 import type {
   DiagnosticsReport,
@@ -234,9 +234,9 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
         streams?: unknown;
         activeStreamId?: unknown;
       };
-      return { ...rest, stream } as PersistedShowConfigV8;
+      return { ...rest, stream: normalizeStreamPersistence(stream) } as PersistedShowConfigV8;
     }
-    return candidate as PersistedShowConfigV8;
+    return { ...(candidate as PersistedShowConfigV8), stream: normalizeStreamPersistence((candidate as PersistedShowConfigV8).stream) };
   }
   if (
     candidate.schemaVersion !== 3 &&

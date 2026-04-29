@@ -49,6 +49,21 @@ describe('deriveDirectorStateForStream', () => {
     } as DirectorState;
     const streamState = {
       stream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      editTimeline: {
+        revision: 1,
+        status: 'valid',
+        entries: {},
+        calculatedAtWallTimeMs: 0,
+        issues: [],
+      },
+      playbackTimeline: {
+        revision: 1,
+        status: 'valid',
+        entries: {},
+        calculatedAtWallTimeMs: 0,
+        issues: [],
+      },
       validationMessages: [],
       runtime: {
         status: 'running',

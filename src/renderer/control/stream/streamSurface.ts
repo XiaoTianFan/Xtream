@@ -418,6 +418,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       headerEl: requireRef('header'),
       stream: streamState!.stream,
       runtime: streamState!.runtime,
+      playbackTimeline: streamState!.playbackTimeline,
       currentState,
       selectedSceneId,
       headerEditField,

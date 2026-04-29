@@ -1,5 +1,12 @@
 import { XTREAM_RUNTIME_VERSION } from '../../../shared/version';
-import type { AudioExtractionFormat, DirectorState, DisplayWindowState, MediaValidationIssue } from '../../../shared/types';
+import type {
+  AudioExtractionFormat,
+  DirectorState,
+  DisplayWindowState,
+  MediaValidationIssue,
+  StreamPausedPlayBehavior,
+  StreamPlaybackSettings,
+} from '../../../shared/types';
 import type { ShowActions } from '../app/showActions';
 import type { SurfaceController } from '../app/surfaceRouter';
 import { createSurfaceStateSignature } from '../app/surfaceSignatures';
@@ -138,6 +145,10 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
     createHint('Display preview max FPS caps redraw rate for Patch/Stream display preview cards (file video → canvas). Live capture paths are separate.'),
   );
 
+  const streamPlayback = createSurfaceCard('Stream playback');
+  streamPlayback.append(createHint('These Stream transport preferences are stored in your show project file.'));
+  void renderStreamPlaybackSettings(streamPlayback, options);
+
   const actions = createSurfaceCard('System Actions');
   const actionRow = document.createElement('div');
   actionRow.className = 'button-row';
@@ -166,12 +177,57 @@ function renderConfigSurface(state: DirectorState, options: ConfigSurfaceOptions
   const workspace = document.createElement('div');
   workspace.className = 'surface-workspace';
   workspace.append(
-    wrapSurfaceGrid(summary, showProject, actions, topology),
+    wrapSurfaceGrid(summary, showProject, streamPlayback, actions, topology),
     renderDiagnosticsRow(state, options),
     wrapSurfaceGrid(createDirectorStatePanel(state)),
   );
 
   elements.surfacePanel.replaceChildren(workspace);
+}
+
+async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSurfaceOptions): Promise<void> {
+  const streamState = await window.xtream.stream.getState();
+  const settings: StreamPlaybackSettings = streamState.stream.playbackSettings ?? {
+    pausedPlayBehavior: 'selection-aware',
+    runningEditOrphanPolicy: 'fade-out',
+    runningEditOrphanFadeOutMs: 500,
+  };
+  const commit = async (playbackSettings: Partial<StreamPlaybackSettings>) => {
+    await window.xtream.stream.edit({ type: 'update-stream', playbackSettings });
+    options.renderState(await window.xtream.director.getState());
+  };
+  const pausedPlay = createSelect(
+    'Paused global Play',
+    [
+      ['selection-aware', 'Selection-aware resume'],
+      ['preserve-paused-cursor', 'Preserve paused cursor'],
+    ],
+    settings.pausedPlayBehavior,
+    (pausedPlayBehavior) => void commit({ pausedPlayBehavior: pausedPlayBehavior as StreamPausedPlayBehavior }),
+  );
+  const orphanPolicy = createSelect(
+    'Running edit removals',
+    [
+      ['fade-out', 'Fade removed running content'],
+      ['let-finish', 'Let removed running content finish'],
+    ],
+    settings.runningEditOrphanPolicy,
+    (runningEditOrphanPolicy) =>
+      void commit({ runningEditOrphanPolicy: runningEditOrphanPolicy as StreamPlaybackSettings['runningEditOrphanPolicy'] }),
+  );
+  card.append(
+    pausedPlay,
+    orphanPolicy,
+    createNumberDetailControl(
+      'Removed content fade (s)',
+      settings.runningEditOrphanFadeOutMs / 1000,
+      0.05,
+      60,
+      0.05,
+      (seconds) => commit({ runningEditOrphanFadeOutMs: Math.round(seconds * 1000) }),
+      options.renderState,
+    ),
+  );
 }
 
 function createNumberDetailControl(

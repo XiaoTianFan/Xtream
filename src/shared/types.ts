@@ -530,11 +530,20 @@ export type PersistedStreamConfig = {
   label: string;
   sceneOrder: SceneId[];
   scenes: Record<SceneId, PersistedSceneConfig>;
+  playbackSettings?: StreamPlaybackSettings;
   flowViewport?: {
     x: number;
     y: number;
     zoom: number;
   };
+};
+
+export type StreamPausedPlayBehavior = 'selection-aware' | 'preserve-paused-cursor';
+
+export type StreamPlaybackSettings = {
+  pausedPlayBehavior: StreamPausedPlayBehavior;
+  runningEditOrphanPolicy: 'fade-out' | 'let-finish';
+  runningEditOrphanFadeOutMs: number;
 };
 
 export type PersistedPatchSceneProjection = {
@@ -606,6 +615,33 @@ export type SceneRuntimeState = {
   error?: string;
 };
 
+export type StreamTimelineCalculationStatus = 'valid' | 'invalid';
+
+export type StreamTimelineIssue = {
+  severity: 'error' | 'warning';
+  sceneId?: SceneId;
+  subCueId?: SubCueId;
+  message: string;
+};
+
+export type StreamScheduleEntry = {
+  sceneId: SceneId;
+  startMs?: number;
+  durationMs?: number;
+  endMs?: number;
+  triggerKnown: boolean;
+};
+
+export type CalculatedStreamTimeline = {
+  revision: number;
+  status: StreamTimelineCalculationStatus;
+  entries: Record<SceneId, StreamScheduleEntry>;
+  expectedDurationMs?: number;
+  calculatedAtWallTimeMs: number;
+  issues: StreamTimelineIssue[];
+  notice?: string;
+};
+
 export type StreamRuntimeAudioSubCue = {
   sceneId: SceneId;
   subCueId: SubCueId;
@@ -619,6 +655,9 @@ export type StreamRuntimeAudioSubCue = {
   muted?: boolean;
   solo?: boolean;
   playbackRate: number;
+  orphaned?: boolean;
+  fadeOutStartedWallTimeMs?: number;
+  fadeOutDurationMs?: number;
 };
 
 export type StreamRuntimeVisualSubCue = {
@@ -630,6 +669,9 @@ export type StreamRuntimeVisualSubCue = {
   localStartMs: number;
   localEndMs?: number;
   playbackRate: number;
+  orphaned?: boolean;
+  fadeOutStartedWallTimeMs?: number;
+  fadeOutDurationMs?: number;
 };
 
 export type StreamRuntimeState = {
@@ -638,6 +680,8 @@ export type StreamRuntimeState = {
   startedWallTimeMs?: number;
   offsetStreamMs?: number;
   pausedAtStreamMs?: number;
+  pausedCursorMs?: number;
+  selectedSceneIdAtPause?: SceneId;
   currentStreamMs?: number;
   cursorSceneId?: SceneId;
   sceneStates: Record<SceneId, SceneRuntimeState>;
@@ -648,16 +692,15 @@ export type StreamRuntimeState = {
 };
 
 export type StreamCommand =
-  | { type: 'go'; sceneId?: SceneId }
+  | { type: 'play'; sceneId?: SceneId; source?: 'global' | 'scene-row' | 'flow-card' }
   | { type: 'pause' }
-  | { type: 'resume' }
   | { type: 'stop' }
-  | { type: 'jump-next' }
+  | { type: 'jump-next'; referenceSceneId?: SceneId }
   | { type: 'back-to-first' }
   | { type: 'seek'; timeMs: number };
 
 export type StreamEditCommand =
-  | { type: 'update-stream'; label?: string }
+  | { type: 'update-stream'; label?: string; playbackSettings?: Partial<StreamPlaybackSettings> }
   | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger }
   | { type: 'update-scene'; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
   | { type: 'duplicate-scene'; sceneId: SceneId }
@@ -672,7 +715,10 @@ export type StreamEditCommand =
 
 export type StreamEnginePublicState = {
   stream: PersistedStreamConfig;
+  playbackStream: PersistedStreamConfig;
   runtime: StreamRuntimeState | null;
+  editTimeline: CalculatedStreamTimeline;
+  playbackTimeline: CalculatedStreamTimeline;
   validationMessages: string[];
 };
 

@@ -346,7 +346,7 @@ function createSceneRowWrap(
   const actions = document.createElement('div');
   actions.className = 'stream-scene-row-actions';
   const runHere = createButton('', 'icon-button stream-row-action', () => {
-    void window.xtream.stream.transport({ type: 'go', sceneId: scene.id });
+    void window.xtream.stream.transport({ type: 'play', sceneId: scene.id, source: 'scene-row' });
   });
   decorateIconButton(runHere, 'Play', 'Run from here');
   runHere.disabled = !!scene.disabled;
