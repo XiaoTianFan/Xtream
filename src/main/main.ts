@@ -21,6 +21,7 @@ import {
   SHOW_VISUAL_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
   readRecentShows,
+  hydratePersistedShowMediaPaths,
   readShowConfig,
   validateRuntimeState,
   validateShowConfigMedia,
@@ -264,7 +265,15 @@ function broadcastStreamState(state: StreamEnginePublicState): void {
 }
 
 function createPersistedShowForDisk(): ReturnType<Director['createShowConfig']> {
-  return director.createShowConfig(new Date().toISOString(), streamEngine.getPersistence());
+  const projectRoot =
+    currentShowConfigPath && path.basename(currentShowConfigPath) === SHOW_PROJECT_FILENAME
+      ? path.dirname(currentShowConfigPath)
+      : undefined;
+  return director.createShowConfig(
+    new Date().toISOString(),
+    streamEngine.getPersistence(),
+    projectRoot ? { projectRootForRelativeMedia: projectRoot } : undefined,
+  );
 }
 
 function sendDirectorState(window: BrowserWindow | undefined, state: DirectorState): void {
@@ -557,7 +566,7 @@ function restoreShowConfigFromDiskConfig(
   let seg = Date.now();
   log('main_restore_enter');
 
-  const issues = validateShowConfigMedia(config);
+  const issues = validateShowConfigMedia(config, configPath);
   log('main_validate_media_done', Date.now() - seg, { issueCount: issues.length });
   seg = Date.now();
 
@@ -610,7 +619,7 @@ async function openShowConfigPath(configPath: string): Promise<ShowConfigOperati
   const t0 = Date.now();
   forwardShowOpenProfileFromMain({ runId, checkpoint: 'main_open_path_enter', sinceRunStartMs: 0 });
   let seg = Date.now();
-  const config = await readShowConfig(configPath);
+  const config = hydratePersistedShowMediaPaths(await readShowConfig(configPath), configPath);
   forwardShowOpenProfileFromMain({
     runId,
     checkpoint: 'main_read_config_done',
@@ -1212,7 +1221,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('show:media-validation-issues', (): MediaValidationIssue[] => {
-    return validateShowConfigMedia(createPersistedShowForDisk());
+    return validateShowConfigMedia(createPersistedShowForDisk(), currentShowConfigPath ?? undefined);
   });
 
   ipcMain.handle('show:get-launch-data', async (): Promise<LaunchShowData> => {

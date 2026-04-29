@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import { toPersistedDiskMediaPath } from './showConfig';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
@@ -791,6 +792,7 @@ export class Director extends EventEmitter {
   createShowConfig(
     savedAt = new Date().toISOString(),
     streamPersistence: Pick<PersistedShowConfig, 'stream'> = getDefaultStreamPersistence(),
+    diskMedia?: { projectRootForRelativeMedia?: string },
   ): PersistedShowConfig {
     this.normalizeAllOutputSourceSelectionsInState();
     const displays: PersistedDisplayConfigV8[] = Object.values(this.state.displays).map((display) => {
@@ -842,7 +844,7 @@ export class Director extends EventEmitter {
                 label: visual.label,
                 kind: 'file',
                 type: visual.type,
-                path: visual.path,
+                path: toPersistedDiskMediaPath(diskMedia?.projectRootForRelativeMedia, visual.path),
                 opacity: visual.opacity ?? 1,
                 brightness: visual.brightness ?? 1,
                 contrast: visual.contrast ?? 1,
@@ -859,7 +861,7 @@ export class Director extends EventEmitter {
                 id: source.id,
                 label: source.label,
                 type: source.type,
-                path: source.path,
+                path: toPersistedDiskMediaPath(diskMedia?.projectRootForRelativeMedia, source.path),
                 playbackRate: source.playbackRate ?? 1,
                 levelDb: source.levelDb ?? 0,
                 channelCount: source.channelCount,
@@ -873,7 +875,7 @@ export class Director extends EventEmitter {
                 type: source.type,
                 visualId: source.visualId,
                 extractionMode: source.extractionMode,
-                extractedPath: source.extractedPath,
+                extractedPath: toPersistedDiskMediaPath(diskMedia?.projectRootForRelativeMedia, source.extractedPath),
                 extractedFormat: source.extractedFormat,
                 extractionStatus: source.extractionStatus,
                 playbackRate: source.playbackRate ?? 1,

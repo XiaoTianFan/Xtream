@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -12,6 +13,8 @@ import {
   SHOW_AUDIO_ASSET_DIRECTORY,
   SHOW_VISUAL_ASSET_DIRECTORY,
   SHOW_PROJECT_FILENAME,
+  hydratePersistedShowMediaPaths,
+  isStoredMediaPathAbsolute,
   migrateV3ToV4,
   migrateV4ToV5,
   migrateV5ToV6,
@@ -19,6 +22,8 @@ import {
   migrateV7ToV8,
   readRecentShows,
   readShowConfig,
+  resolvePersistedDiskMediaPath,
+  toPersistedDiskMediaPath,
   validateShowConfigMedia,
   validateRuntimeState,
   writeJsonFile,
@@ -288,6 +293,31 @@ describe('show config persistence helpers', () => {
     });
   });
 
+  it('detects absolute media paths across platforms (Windows paths are absolute even on POSIX)', () => {
+    expect(isStoredMediaPathAbsolute('/Volumes/Show/assets/a.mov')).toBe(true);
+    expect(isStoredMediaPathAbsolute('D:\\\\outside\\\\a.mov')).toBe(true);
+    expect(isStoredMediaPathAbsolute('D:/outside/a.mov')).toBe(true);
+    expect(isStoredMediaPathAbsolute('\\\\server\\\\share\\\\mix.wav')).toBe(true);
+    expect(isStoredMediaPathAbsolute('assets/visuals/copied.mp4')).toBe(false);
+    expect(isStoredMediaPathAbsolute('assets\\\\visuals\\\\copied.mp4')).toBe(false);
+  });
+
+  it('resolves project-relative paths with forward slashes on all hosts', () => {
+    const projectRoot = path.join(os.tmpdir(), `xtream-xplat-${Date.now()}`);
+    expect(resolvePersistedDiskMediaPath(projectRoot, 'assets/audio/a.m4a')).toBe(path.normalize(path.join(projectRoot, 'assets', 'audio', 'a.m4a')));
+    expect(resolvePersistedDiskMediaPath(projectRoot, 'assets\\\\audio\\\\a.m4a')).toBe(path.normalize(path.join(projectRoot, 'assets', 'audio', 'a.m4a')));
+  });
+
+  it('does not prefix project root to foreign absolute paths (e.g. linked Windows file opened on macOS)', () => {
+    const projectRoot = path.join('/Volumes', 'Xtream', 'my-show');
+    const foreign = resolvePersistedDiskMediaPath(projectRoot, 'Z:\\\\archive\\\\linked.mp4');
+    expect(foreign).toBe(path.normalize('Z:\\\\archive\\\\linked.mp4'));
+    expect(foreign ?? '').not.toMatch(/Volumes[\\/]Xtream[\\/]my-show[\\/]Z:/);
+
+    const unc = resolvePersistedDiskMediaPath(projectRoot, '\\\\nas\\\\media\\\\x.wav');
+    expect(unc).toBe(path.normalize('\\\\nas\\\\media\\\\x.wav'));
+  });
+
   it('builds renderer-safe file URLs from persisted media paths', () => {
     expect(buildMediaUrls(config)).toMatchObject({
       visuals: {
@@ -298,6 +328,48 @@ describe('show config persistence helpers', () => {
         'audio-source-main-left': 'file:///F:/media/mix.wav',
       },
     });
+  });
+
+  it('stores project assets as relative paths on disk and hydrates to absolute paths', () => {
+    const projectRoot = path.join(os.tmpdir(), `xtream-assets-rel-${Date.now()}`);
+    const inAssets = path.join(projectRoot, 'assets', 'visuals', 'clip.mp4');
+    fs.mkdirSync(path.dirname(inAssets), { recursive: true });
+    fs.writeFileSync(inAssets, 'x');
+    const extracted = path.join(projectRoot, 'assets', 'audio', 'visual-1.m4a');
+    fs.mkdirSync(path.dirname(extracted), { recursive: true });
+    fs.writeFileSync(extracted, 'x');
+
+    expect(toPersistedDiskMediaPath(projectRoot, inAssets)).toBe('assets/visuals/clip.mp4');
+    expect(toPersistedDiskMediaPath(projectRoot, extracted)).toBe('assets/audio/visual-1.m4a');
+    expect(toPersistedDiskMediaPath(projectRoot, 'F:\\outside\\linked.mp4')).toBe(path.normalize('F:\\outside\\linked.mp4'));
+
+    const showPath = path.join(projectRoot, SHOW_PROJECT_FILENAME);
+    const diskStyle: PersistedShowConfig = structuredClone(config);
+    diskStyle.visuals['visual-a'] = {
+      ...diskStyle.visuals['visual-a'],
+      path: 'assets/visuals/clip.mp4',
+    };
+    diskStyle.audioSources = {
+      'audio-source-embedded-visual-a': {
+        id: 'audio-source-embedded-visual-a',
+        label: 'Embedded Audio Visual A',
+        type: 'embedded-visual',
+        visualId: 'visual-a',
+        extractionMode: 'file',
+        extractedPath: 'assets/audio/visual-1.m4a',
+        extractedFormat: 'm4a',
+        extractionStatus: 'ready',
+      },
+    };
+
+    const hydrated = hydratePersistedShowMediaPaths(diskStyle, showPath);
+    expect(hydrated.visuals['visual-a'].path).toBe(path.normalize(inAssets));
+    expect(hydrated.audioSources['audio-source-embedded-visual-a'].extractedPath).toBe(path.normalize(extracted));
+    expect(buildMediaUrls(hydrated).visuals['visual-a']).toBe(toRendererFileUrl(path.normalize(inAssets)));
+
+    expect(resolvePersistedDiskMediaPath(projectRoot, 'assets/visuals/clip.mp4')).toBe(path.normalize(inAssets));
+
+    fs.rmSync(projectRoot, { recursive: true, force: true });
   });
 
   it('does not build file URLs or file-missing warnings for live visuals', () => {

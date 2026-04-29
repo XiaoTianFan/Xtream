@@ -42,6 +42,103 @@ export function getShowDisplayName(filePath: string): string {
   return path.basename(filePath) === SHOW_PROJECT_FILENAME ? path.basename(path.dirname(filePath)) : path.basename(filePath);
 }
 
+const WINDOWS_DRIVE_LETTER_PATH = /^[a-zA-Z]:[\\/]/;
+
+/**
+ * Whether `stored` is an absolute path on any common desktop OS. Uses this instead of only `path.isAbsolute`
+ * so a show file edited on Windows and opened on macOS/Linux does not treat `C:\...` or UNC paths as project-relative.
+ */
+export function isStoredMediaPathAbsolute(stored: string): boolean {
+  if (path.isAbsolute(stored)) {
+    return true;
+  }
+  if (WINDOWS_DRIVE_LETTER_PATH.test(stored)) {
+    return true;
+  }
+  if (stored.startsWith('\\\\')) {
+    return true;
+  }
+  return false;
+}
+
+/** True when `absoluteFile` resolves inside `{projectRootDir}/assets/` (copied / extracted media lives here). */
+function isUnderProjectAssetsTree(projectRootDir: string, absoluteFile: string): boolean {
+  const assetsRoot = path.join(projectRootDir, 'assets');
+  const rel = path.relative(path.resolve(assetsRoot), path.resolve(absoluteFile));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * When saving a canonical show project, paths under `assets/` are stored relative to the project folder
+ * (forward slashes). Linked media outside `assets/` stays absolute.
+ */
+export function toPersistedDiskMediaPath(projectRootDir: string | undefined, absolutePath: string | undefined): string | undefined {
+  if (absolutePath === undefined || absolutePath === '') {
+    return undefined;
+  }
+  const trimmed = absolutePath.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const resolved = path.resolve(trimmed);
+  if (!projectRootDir || !isUnderProjectAssetsTree(projectRootDir, resolved)) {
+    return resolved;
+  }
+  const rel = path.relative(path.resolve(projectRootDir), resolved);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    return resolved;
+  }
+  return rel.split(path.sep).join('/');
+}
+
+/** Resolves a path from disk into an absolute filesystem path for runtime / validation. */
+export function resolvePersistedDiskMediaPath(projectRootDir: string, stored: string | undefined): string | undefined {
+  if (stored === undefined || stored === '') {
+    return undefined;
+  }
+  const trimmed = stored.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (isStoredMediaPathAbsolute(trimmed)) {
+    return path.normalize(trimmed);
+  }
+  const rel = trimmed.replace(/\\/g, '/');
+  return path.normalize(path.resolve(projectRootDir, rel));
+}
+
+export function hydratePersistedShowMediaPaths(config: PersistedShowConfig, showConfigPath: string): PersistedShowConfig {
+  const projectRoot = path.dirname(showConfigPath);
+  return {
+    ...config,
+    visuals: Object.fromEntries(
+      Object.values(config.visuals).map((visual) => [
+        visual.id,
+        visual.kind === 'live'
+          ? visual
+          : {
+              ...visual,
+              path: resolvePersistedDiskMediaPath(projectRoot, visual.path),
+            },
+      ]),
+    ),
+    audioSources: Object.fromEntries(
+      Object.values(config.audioSources).map((source) => [
+        source.id,
+        source.type === 'external-file'
+          ? {
+              ...source,
+              path: resolvePersistedDiskMediaPath(projectRoot, source.path),
+            }
+          : {
+              ...source,
+              extractedPath: resolvePersistedDiskMediaPath(projectRoot, source.extractedPath),
+            },
+      ]),
+    ),
+  };
+}
+
 export async function writeShowConfig(filePath: string, config: PersistedShowConfig): Promise<void> {
   await writeJsonFile(filePath, config);
 }
@@ -421,10 +518,13 @@ export function buildMediaUrls(config: PersistedShowConfig): {
   };
 }
 
-export function validateShowConfigMedia(config: PersistedShowConfig): MediaValidationIssue[] {
+export function validateShowConfigMedia(config: PersistedShowConfig, showConfigPath?: string): MediaValidationIssue[] {
+  const projectRoot = showConfigPath ? path.dirname(showConfigPath) : undefined;
   const issues: MediaValidationIssue[] = [];
   for (const visual of Object.values(config.visuals)) {
-    if (visual.kind !== 'live' && visual.path && !fs.existsSync(visual.path)) {
+    const absoluteForCheck =
+      visual.kind !== 'live' && visual.path ? (projectRoot ? resolvePersistedDiskMediaPath(projectRoot, visual.path) : visual.path) : undefined;
+    if (visual.kind !== 'live' && visual.path && absoluteForCheck && !fs.existsSync(absoluteForCheck)) {
       issues.push({
         severity: 'warning',
         target: `visual:${visual.id}`,
@@ -433,14 +533,26 @@ export function validateShowConfigMedia(config: PersistedShowConfig): MediaValid
     }
   }
   for (const source of Object.values(config.audioSources)) {
-    if (source.type === 'external-file' && source.path && !fs.existsSync(source.path)) {
+    const absoluteAudio =
+      source.type === 'external-file' && source.path
+        ? projectRoot
+          ? resolvePersistedDiskMediaPath(projectRoot, source.path)
+          : source.path
+        : undefined;
+    if (source.type === 'external-file' && source.path && !fs.existsSync(absoluteAudio ?? source.path)) {
       issues.push({
         severity: 'warning',
         target: `audio-source:${source.id}`,
         message: `Audio file is missing: ${source.path}`,
       });
     }
-    if (source.type === 'embedded-visual' && source.extractedPath && !fs.existsSync(source.extractedPath)) {
+    const absoluteExtracted =
+      source.type === 'embedded-visual' && source.extractedPath
+        ? projectRoot
+          ? resolvePersistedDiskMediaPath(projectRoot, source.extractedPath)
+          : source.extractedPath
+        : undefined;
+    if (source.type === 'embedded-visual' && source.extractedPath && !fs.existsSync(absoluteExtracted ?? source.extractedPath)) {
       issues.push({
         severity: 'warning',
         target: `audio-source:${source.id}`,
