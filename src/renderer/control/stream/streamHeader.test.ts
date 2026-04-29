@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getDefaultStreamPersistence } from '../../../shared/streamWorkspace';
 import type { CalculatedStreamTimeline, StreamEnginePublicState } from '../../../shared/types';
-import { createGlobalStreamPlayCommand, deriveStreamTransportUiState } from './streamHeader';
+import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, deriveStreamWorkspaceLiveStateLabel } from './streamHeader';
 
 function timeline(
   status: CalculatedStreamTimeline['status'],
@@ -27,6 +27,95 @@ function addSecondScene(stream: ReturnType<typeof getDefaultStreamPersistence>['
 const playableTimeline = timeline('valid', {
   'scene-1': { sceneId: 'scene-1', startMs: 0, durationMs: 1000, endMs: 1000, triggerKnown: true },
   'scene-2': { sceneId: 'scene-2', startMs: 1000, durationMs: 1000, endMs: 2000, triggerKnown: true },
+});
+
+describe('deriveStreamWorkspaceLiveStateLabel', () => {
+  it('is STANDBY when idle', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: null,
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('STANDBY');
+  });
+
+  it('is LIVE while running', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'running', sceneStates: {} },
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('LIVE');
+  });
+
+  it('is LIVE while preloading', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'preloading', sceneStates: {} },
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('LIVE');
+  });
+
+  it('is STANDBY when paused', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'paused', sceneStates: {} },
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('STANDBY');
+  });
+
+  it('is BLOCKED when timeline is invalid', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'running', sceneStates: {} },
+        playbackTimeline: timeline('invalid'),
+      }),
+    ).toBe('BLOCKED');
+  });
+
+  it('is BLOCKED when runtime failed', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'failed', sceneStates: {} },
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('BLOCKED');
+  });
+
+  it('prefers BLOCKED over timeline warning issues', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'running', sceneStates: {} },
+        playbackTimeline: {
+          revision: 1,
+          status: 'valid',
+          entries: {},
+          calculatedAtWallTimeMs: 0,
+          issues: [
+            { severity: 'warning', message: 'w' },
+            { severity: 'error', message: 'e' },
+          ],
+        },
+      }),
+    ).toBe('BLOCKED');
+  });
+
+  it('is DEGRADED when only warning timeline issues', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'running', sceneStates: {} },
+        playbackTimeline: {
+          revision: 1,
+          status: 'valid',
+          entries: {},
+          calculatedAtWallTimeMs: 0,
+          issues: [{ severity: 'warning', message: 'w' }],
+        },
+      }),
+    ).toBe('DEGRADED');
+  });
 });
 
 describe('deriveStreamTransportUiState', () => {

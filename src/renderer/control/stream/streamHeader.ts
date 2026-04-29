@@ -80,6 +80,27 @@ export function createGlobalStreamPlayCommand(args: {
   return playableSelectedSceneId ? { type: 'play', sceneId: playableSelectedSceneId, source: 'global' } : { type: 'play', source: 'global' };
 }
 
+export function deriveStreamWorkspaceLiveStateLabel(args: {
+  runtime: StreamEnginePublicState['runtime'];
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'];
+}): 'LIVE' | 'STANDBY' | 'BLOCKED' | 'DEGRADED' {
+  const { runtime, playbackTimeline } = args;
+  if (playbackTimeline.status === 'invalid' || runtime?.status === 'failed') {
+    return 'BLOCKED';
+  }
+  if (playbackTimeline.issues.some((issue) => issue.severity === 'error')) {
+    return 'BLOCKED';
+  }
+  if (playbackTimeline.issues.some((issue) => issue.severity === 'warning')) {
+    return 'DEGRADED';
+  }
+  const status = runtime?.status;
+  if (status === 'running' || status === 'preloading') {
+    return 'LIVE';
+  }
+  return 'STANDBY';
+}
+
 function playableSceneId(
   playbackStream: PersistedStreamConfig,
   playbackTimeline: StreamEnginePublicState['playbackTimeline'],
@@ -254,6 +275,12 @@ export function syncStreamHeaderRuntime(
   const duration = headerEl.querySelector<HTMLElement>('[data-stream-duration="true"]');
   if (duration) {
     duration.textContent = formatStreamDuration(playbackTimeline);
+  }
+  const liveChip = headerEl.querySelector<HTMLElement>('[data-stream-live-state="true"]');
+  if (liveChip) {
+    const label = deriveStreamWorkspaceLiveStateLabel({ runtime, playbackTimeline });
+    liveChip.textContent = label;
+    liveChip.dataset.state = label.toLowerCase();
   }
   const slider = headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]');
   const durationMs = playbackTimeline.expectedDurationMs ?? runtime?.expectedDurationMs;
@@ -454,7 +481,14 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   decorateIconButton(open, 'FolderOpen', 'Open show');
   const create = createButton('New', '', () => void options.showActions.createShow());
   decorateIconButton(create, 'Plus', 'Create new show');
-  actions.append(save, saveAs, open, create);
+  const liveStateChip = document.createElement('span');
+  liveStateChip.className = 'status-chip';
+  liveStateChip.setAttribute('aria-live', 'polite');
+  liveStateChip.dataset.streamLiveState = 'true';
+  const streamLiveLabel = deriveStreamWorkspaceLiveStateLabel({ runtime, playbackTimeline: ctx.playbackTimeline });
+  liveStateChip.textContent = streamLiveLabel;
+  liveStateChip.dataset.state = streamLiveLabel.toLowerCase();
+  actions.append(save, saveAs, open, create, liveStateChip);
 
   const headerCenter = document.createElement('div');
   headerCenter.className = 'stream-header-center';

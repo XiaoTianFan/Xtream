@@ -12,6 +12,13 @@ import { createStreamDetailLine } from '../streamDom';
 import { createFadeFields } from './fadeFields';
 import { createLoopPolicyEditor } from './loopPolicyEditors';
 import { createOptionalNumberField, createRequiredNumberField } from './numericField';
+import {
+  createSubCueChip,
+  createSubCueChipGroup,
+  createSubCueEmptyNote,
+  createSubCueFieldGrid,
+  createSubCueSection,
+} from './subCueFormControls';
 
 export type VisualSubCueFormDeps = {
   sceneId: SceneId;
@@ -47,14 +54,17 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
     .sort()
     .map((id) => [id, currentState.visuals[id]?.label ?? id]);
   form.append(
-    createSelect(
+    createSubCueSection(
       'Visual',
-      visualOpts.length ? visualOpts : [['', '(no visuals)']],
-      sub.visualId,
-      (vid) =>
-        patchSubCue({
-          visualId: vid as VisualId,
-        }),
+      createSelect(
+        'Visual',
+        visualOpts.length ? visualOpts : [['', '(no visuals)']],
+        sub.visualId,
+        (vid) =>
+          patchSubCue({
+            visualId: vid as VisualId,
+          }),
+      ),
     ),
   );
 
@@ -62,10 +72,6 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
 
   const targetGrid = document.createElement('div');
   targetGrid.className = 'stream-visual-target-grid';
-  const tgLabel = document.createElement('div');
-  tgLabel.className = 'stream-subcue-multi-label';
-  tgLabel.textContent = 'Display routing';
-  targetGrid.append(tgLabel);
 
   const displays = Object.values(currentState.displays).sort((a, b) => a.id.localeCompare(b.id));
 
@@ -89,52 +95,62 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
   }
 
   for (const d of displays) {
+    const displayGroup = document.createElement('div');
+    displayGroup.className = 'stream-visual-target-display-group';
     const heading = document.createElement('div');
     heading.className = 'stream-visual-target-display';
     heading.textContent = d.label ?? d.id;
-    targetGrid.append(heading);
 
     if (d.layout.type === 'single') {
-      targetGrid.append(targetCheckbox('Full surface', selected.has(`${d.id}:single`), (on) => applyTargetPresence({ displayId: d.id }, on)));
+      displayGroup.append(
+        heading,
+        createSubCueChipGroup(
+          createSubCueChip('Full surface', selected.has(`${d.id}:single`), (on) => applyTargetPresence({ displayId: d.id }, on)),
+        ),
+      );
     } else {
-      targetGrid.append(
-        targetCheckbox('Left zone', selected.has(`${d.id}:L`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'L' }, on)),
-        targetCheckbox('Right zone', selected.has(`${d.id}:R`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'R' }, on)),
+      displayGroup.append(
+        heading,
+        createSubCueChipGroup(
+          createSubCueChip('Left zone', selected.has(`${d.id}:L`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'L' }, on)),
+          createSubCueChip('Right zone', selected.has(`${d.id}:R`), (on) => applyTargetPresence({ displayId: d.id, zoneId: 'R' }, on)),
+        ),
       );
     }
+    targetGrid.append(displayGroup);
   }
 
   if (displays.length === 0) {
-    targetGrid.append(document.createTextNode('No display windows — add one in Displays tab.'));
+    targetGrid.append(createSubCueEmptyNote('No display windows - add one in Displays tab.'));
   }
 
-  form.append(targetGrid);
+  form.append(createSubCueSection('Display Routing', targetGrid));
 
-  form.append(createOptionalNumberField('Freeze frame (ms)', sub.freezeFrameMs, (v) => patchSubCue({ freezeFrameMs: v }), { min: 0 }));
-
-  form.append(createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }));
-  form.append(createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), { min: 0 }));
-
-  form.append(createRequiredNumberField('Playback rate', sub.playbackRate ?? 1, (v) => patchSubCue({ playbackRate: v }), 0.01));
-
-  form.append(createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })));
-  form.append(createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })));
+  form.append(
+    createSubCueSection(
+      'Timing',
+      createSubCueFieldGrid(
+        createOptionalNumberField('Freeze frame (ms)', sub.freezeFrameMs, (v) => patchSubCue({ freezeFrameMs: v }), { min: 0 }),
+        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
+        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), { min: 0 }),
+        createRequiredNumberField('Playback rate', sub.playbackRate ?? 1, (v) => patchSubCue({ playbackRate: v }), 0.01),
+      ),
+    ),
+  );
 
   const loopPol: SceneLoopPolicy = sub.loop ?? { enabled: false };
-  form.append(createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })));
+  form.append(
+    createSubCueSection(
+      'Playback Shape',
+      createSubCueFieldGrid(
+        createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })),
+        createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })),
+      ),
+      createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })),
+    ),
+  );
 
   form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));
 
   return form;
-}
-
-function targetCheckbox(label: string, checked: boolean, onBox: (on: boolean) => void): HTMLElement {
-  const row = document.createElement('label');
-  row.className = 'stream-checkbox-field stream-visual-target-chip';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = checked;
-  row.append(box, document.createTextNode(` ${label}`));
-  box.addEventListener('change', () => onBox(box.checked));
-  return row;
 }

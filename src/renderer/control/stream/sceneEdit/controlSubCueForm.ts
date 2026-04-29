@@ -10,6 +10,13 @@ import type {
 import { createSelect } from '../../shared/dom';
 import { createStreamDetailLine } from '../streamDom';
 import { createOptionalNumberField, createRequiredNumberField } from './numericField';
+import {
+  createSubCueFieldGrid,
+  createSubCuePanField,
+  createSubCueSection,
+  createSubCueToggleButton,
+  createSubCueToggleRow,
+} from './subCueFormControls';
 
 export type ControlSubCueFormDeps = {
   stream: PersistedStreamConfig;
@@ -71,6 +78,8 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   const action = sub.action;
   const scenes = scenePickerChoices(stream);
   const audOpts = audioSubCueChoices(stream, currentState);
+  const targetFields: HTMLElement[] = [];
+  const automationFields: HTMLElement[] = [];
 
   function selfRefDanger(ref?: SubCueRef): void {
     if (ref?.sceneId === sceneId && ref.subCueId === subCueId) {
@@ -80,16 +89,18 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
     }
   }
 
-  form.append(warnEl);
-
   form.append(
-    createSelect('Action kind', ACTION_KINDS as Array<[string, string]>, action.type as string, (v) =>
-      patchSubCue(makeDefault(stream, scenes, audOpts, v as ActionDiscriminant)),
+    createSubCueSection(
+      'Action',
+      warnEl,
+      createSelect('Action kind', ACTION_KINDS as Array<[string, string]>, action.type as string, (v) =>
+        patchSubCue(makeDefault(stream, scenes, audOpts, v as ActionDiscriminant)),
+      ),
     ),
   );
 
   if (action.type === 'stop-scene' || action.type === 'pause-scene' || action.type === 'resume-scene') {
-    form.append(
+    targetFields.push(
       createSelect(
         'Target scene',
         scenes.length ? scenes : [['', '—']],
@@ -98,7 +109,7 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
       ),
     );
     if (action.type === 'stop-scene') {
-      form.append(
+      automationFields.push(
         createOptionalNumberField('Fade out (ms)', action.fadeOutMs, (ms) =>
           patchSubCue({ action: { type: 'stop-scene', sceneId: action.sceneId, fadeOutMs: ms } }),
         ),
@@ -108,14 +119,17 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
 
   if (action.type === 'set-audio-subcue-level') {
     const opts = audOpts.map((o) => [o.json, o.label] as [string, string]);
-    form.append(
+    targetFields.push(
       createSelect('Audio target', opts.length ? opts : [['', '—']], JSON.stringify(action.subCueRef), (raw) => {
+        if (!raw) {
+          return;
+        }
         patchSubCue({ action: { ...action, subCueRef: JSON.parse(raw) as SubCueRef } });
         selfRefDanger(JSON.parse(raw) as SubCueRef);
       }),
     );
     selfRefDanger(action.subCueRef);
-    form.append(
+    automationFields.push(
       createRequiredNumberField(
         'Target level (dB)',
         action.targetDb,
@@ -145,24 +159,25 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   }
 
   if (action.type === 'set-audio-subcue-pan') {
-    form.append(
+    const opts = audOpts.map((o): [string, string] => [o.json, o.label]);
+    targetFields.push(
       createSelect(
         'Audio target',
-        audOpts.map((o): [string, string] => [o.json, o.label]),
+        opts.length ? opts : [['', '—']],
         JSON.stringify(action.subCueRef),
         (raw) => {
+          if (!raw) {
+            return;
+          }
           patchSubCue({ action: { ...action, subCueRef: JSON.parse(raw) as SubCueRef } });
           selfRefDanger(JSON.parse(raw) as SubCueRef);
         },
       ),
     );
     selfRefDanger(action.subCueRef);
-    form.append(
-      createRequiredNumberField(
-        'Target pan',
-        action.targetPan,
-        (targetPan) => patchSubCue({ action: { ...action, targetPan } }),
-        undefined,
+    automationFields.push(
+      createSubCuePanField('Target pan', 'Control target audio sub-cue pan', action.targetPan, (targetPan) =>
+        patchSubCue({ action: { ...action, targetPan } }),
       ),
       createOptionalNumberField(
         'Duration (ms)',
@@ -174,16 +189,22 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   }
 
   if (action.type === 'stop-subcue') {
-    form.append(
+    const opts = audOpts.map((o): [string, string] => [o.json, o.label]);
+    targetFields.push(
       createSelect(
         'Audio sub-cue target',
-        audOpts.map((o): [string, string] => [o.json, o.label]),
+        opts.length ? opts : [['', '—']],
         JSON.stringify(action.subCueRef),
         (raw) => {
+          if (!raw) {
+            return;
+          }
           patchSubCue({ action: { ...action, subCueRef: JSON.parse(raw) as SubCueRef } });
           selfRefDanger(JSON.parse(raw) as SubCueRef);
         },
       ),
+    );
+    automationFields.push(
       createOptionalNumberField(
         'Fade out (ms)',
         action.fadeOutMs,
@@ -195,15 +216,21 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
   }
 
   if (action.type === 'set-global-audio-muted') {
-    form.append(
-      boolRow(action.muted, (muted) => patchSubCue({ action: { type: 'set-global-audio-muted', muted } }), 'Muted'),
+    automationFields.push(
+      createSubCueToggleRow(
+        createSubCueToggleButton('Muted', action.muted, (muted) => patchSubCue({ action: { type: 'set-global-audio-muted', muted } })),
+      ),
       createOptionalNumberField('Fade (ms)', action.fadeMs, (fadeMs) => patchSubCue({ action: { ...action, fadeMs } }), { min: 0 }),
     );
   }
 
   if (action.type === 'set-global-display-blackout') {
-    form.append(
-      boolRow(action.blackout, (blackout) => patchSubCue({ action: { type: 'set-global-display-blackout', blackout } }), 'Blackout'),
+    automationFields.push(
+      createSubCueToggleRow(
+        createSubCueToggleButton('Blackout', action.blackout, (blackout) =>
+          patchSubCue({ action: { type: 'set-global-display-blackout', blackout } }),
+        ),
+      ),
       createOptionalNumberField(
         'Fade (ms)',
         action.fadeMs,
@@ -213,19 +240,16 @@ export function createControlSubCueForm(deps: ControlSubCueFormDeps): HTMLElemen
     );
   }
 
-  form.append(createStreamDetailLine('Sub-cue ref', `${sceneId} · ${subCueId}`));
-  return form;
-}
+  if (targetFields.length > 0) {
+    form.append(createSubCueSection('Target', createSubCueFieldGrid(...targetFields)));
+  }
 
-function boolRow(val: boolean, commit: (b: boolean) => void, text: string): HTMLElement {
-  const row = document.createElement('label');
-  row.className = 'stream-checkbox-field';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = val;
-  box.addEventListener('change', () => commit(box.checked));
-  row.append(box, document.createTextNode(` ${text}`));
-  return row;
+  if (automationFields.length > 0) {
+    form.append(createSubCueSection('Automation', createSubCueFieldGrid(...automationFields)));
+  }
+
+  form.append(createSubCueSection('Metadata', createStreamDetailLine('Sub-cue ref', `${sceneId} · ${subCueId}`)));
+  return form;
 }
 
 function makeDefault(

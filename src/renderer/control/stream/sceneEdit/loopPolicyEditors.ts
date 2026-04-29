@@ -1,6 +1,7 @@
 import type { SceneLoopPolicy } from '../../../../shared/types';
 import { createSelect } from '../../shared/dom';
 import { createStreamDetailField } from '../streamDom';
+import { createSubCueToggleButton } from './subCueFormControls';
 
 /** Loop controls — parent re-mounts after each `emit` so `policy` stays fresh. */
 
@@ -8,25 +9,18 @@ export function createLoopPolicyEditor(policy: SceneLoopPolicy, labelText: strin
   const wrap = document.createElement('div');
   wrap.className = 'stream-subcue-loop-policy';
 
-  const loopLabel = document.createElement('label');
-  loopLabel.className = 'stream-checkbox-field';
-  const loopBox = document.createElement('input');
-  loopBox.type = 'checkbox';
-  loopBox.checked = policy.enabled;
-  loopLabel.append(loopBox, document.createTextNode(` ${labelText}`));
-  wrap.append(loopLabel);
-
-  const loopDetail = document.createElement('div');
-  loopDetail.className = 'stream-scene-form-row stream-scene-loop-detail';
-  loopDetail.hidden = !policy.enabled;
-
-  loopBox.addEventListener('change', () => {
-    if (loopBox.checked) {
+  const loopButton = createSubCueToggleButton(labelText, policy.enabled, (enabled) => {
+    if (enabled) {
       emit(policy.enabled ? policy : { enabled: true, iterations: { type: 'count', count: 1 } });
     } else {
       emit({ enabled: false });
     }
   });
+  wrap.append(loopButton);
+
+  const loopDetail = document.createElement('div');
+  loopDetail.className = 'stream-scene-form-row stream-scene-loop-detail';
+  loopDetail.hidden = !policy.enabled;
 
   if (policy.enabled) {
     const iterTypeSelect = createSelect(

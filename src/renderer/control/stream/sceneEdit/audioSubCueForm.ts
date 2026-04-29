@@ -12,6 +12,16 @@ import { createStreamDetailLine } from '../streamDom';
 import { createFadeFields } from './fadeFields';
 import { createLoopPolicyEditor } from './loopPolicyEditors';
 import { createOptionalNumberField, createRequiredNumberField } from './numericField';
+import {
+  createSubCueChip,
+  createSubCueChipGroup,
+  createSubCueEmptyNote,
+  createSubCueFieldGrid,
+  createSubCuePanField,
+  createSubCueSection,
+  createSubCueToggleButton,
+  createSubCueToggleRow,
+} from './subCueFormControls';
 
 export type AudioSubCueFormDeps = {
   sceneId: SceneId;
@@ -33,29 +43,29 @@ export function createAudioSubCueForm(deps: AudioSubCueFormDeps): HTMLElement {
   }
 
   form.append(
-    createSelect(
-      'Audio source',
-      audioOptions.length ? audioOptions : [['', '(no sources)']],
-      sub.audioSourceId ?? '',
-      (audioSourceId) =>
-        patchSubCue({
-          audioSourceId: audioSourceId as AudioSourceId,
-        }),
+    createSubCueSection(
+      'Source',
+      createSelect(
+        'Audio source',
+        audioOptions.length ? audioOptions : [['', '(no sources)']],
+        sub.audioSourceId ?? '',
+        (audioSourceId) =>
+          patchSubCue({
+            audioSourceId: audioSourceId as AudioSourceId,
+          }),
+      ),
     ),
   );
 
   const outWrap = document.createElement('div');
-  outWrap.className = 'stream-subcue-output-checkboxes';
-  const outLabel = document.createElement('div');
-  outLabel.className = 'stream-subcue-multi-label';
-  outLabel.textContent = 'Virtual outputs';
-  outWrap.append(outLabel);
+  outWrap.className = 'stream-subcue-output-routing';
 
   const outputIdsSorted = Object.keys(currentState.outputs).sort();
   const selected = new Set(sub.outputIds ?? []);
+  const outputChips: HTMLButtonElement[] = [];
   for (const oid of outputIdsSorted) {
     const ob = currentState.outputs[oid];
-    const row = flagCheckbox(ob?.label ?? oid, selected.has(oid), (checked) => {
+    const chip = createSubCueChip(ob?.label ?? oid, selected.has(oid), (checked) => {
       const next = new Set(sub.outputIds ?? []);
       if (checked) {
         next.add(oid);
@@ -64,61 +74,63 @@ export function createAudioSubCueForm(deps: AudioSubCueFormDeps): HTMLElement {
       }
       patchSubCue({ outputIds: [...next] as VirtualOutputId[] });
     });
-    outWrap.append(row);
+    outputChips.push(chip);
   }
   if (outputIdsSorted.length === 0) {
-    outWrap.append(document.createTextNode('No outputs — create one in the mixer tab.'));
+    outWrap.append(createSubCueEmptyNote('No outputs - create one in the mixer tab.'));
+  } else {
+    outWrap.append(createSubCueChipGroup(...outputChips));
   }
-  form.append(outWrap);
 
-  const routing = document.createElement('div');
-  routing.className = 'stream-subcue-routing-flags';
-  routing.append(flagCheckbox('Muted', !!sub.muted, (v) => patchSubCue({ muted: v })), flagCheckbox('Solo', !!sub.solo, (v) => patchSubCue({ solo: v })));
-  form.append(routing);
+  const routing = createSubCueToggleRow(
+    createSubCueToggleButton('Muted', !!sub.muted, (v) => patchSubCue({ muted: v })),
+    createSubCueToggleButton('Solo', !!sub.solo, (v) => patchSubCue({ solo: v })),
+  );
+  form.append(createSubCueSection('Routing', outWrap, routing));
 
   form.append(
-    createRequiredNumberField(
-      'Level (dB)',
-      sub.levelDb ?? 0,
-      (v) => patchSubCue({ levelDb: v }),
-      undefined,
+    createSubCueSection(
+      'Levels',
+      createSubCueFieldGrid(
+        createRequiredNumberField(
+          'Level (dB)',
+          sub.levelDb ?? 0,
+          (v) => patchSubCue({ levelDb: v }),
+          undefined,
+        ),
+        createSubCuePanField('Pan', 'Audio sub-cue pan', sub.pan ?? 0, (pan) => patchSubCue({ pan })),
+      ),
     ),
-    createRequiredNumberField(
-      'Pan',
-      sub.pan ?? 0,
-      (v) => patchSubCue({ pan: v }),
-      undefined,
+    createSubCueSection(
+      'Timing',
+      createSubCueFieldGrid(
+        createRequiredNumberField(
+          'Playback rate',
+          sub.playbackRate ?? 1,
+          (v) => patchSubCue({ playbackRate: Math.max(0.01, v) }),
+          0.01,
+        ),
+        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
+        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), {
+          min: 0,
+        }),
+      ),
     ),
-    createRequiredNumberField(
-      'Playback rate',
-      sub.playbackRate ?? 1,
-      (v) => patchSubCue({ playbackRate: Math.max(0.01, v) }),
-      0.01,
-    ),
-    createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
-    createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), {
-      min: 0,
-    }),
   );
 
-  form.append(createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })));
-  form.append(createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })));
-
   const loopPol: SceneLoopPolicy = sub.loop ?? { enabled: false };
-  form.append(createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })));
+  form.append(
+    createSubCueSection(
+      'Playback Shape',
+      createSubCueFieldGrid(
+        createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })),
+        createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })),
+      ),
+      createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })),
+    ),
+  );
 
   form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));
 
   return form;
-}
-
-function flagCheckbox(label: string, checked: boolean, onChange: (v: boolean) => void): HTMLElement {
-  const row = document.createElement('label');
-  row.className = 'stream-checkbox-field';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = checked;
-  box.addEventListener('change', () => onChange(box.checked));
-  row.append(box, document.createTextNode(` ${label}`));
-  return row;
 }
