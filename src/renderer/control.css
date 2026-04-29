@@ -982,7 +982,7 @@ body.extraction-blocked .nav-rail {
 }
 
 .surface-panel.stream-surface-panel {
-  overflow: hidden;
+  overflow: auto;
   padding: 0;
 }
 
@@ -3155,7 +3155,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   display: grid;
   /* Third track reserves space for list/flow so the media column cannot eat the whole row. */
   grid-template-columns: minmax(260px, var(--stream-media-width)) var(--splitter-hit) minmax(12.5rem, 1fr);
-  min-width: 0;
+  /* Never collapse below three side-by-side tracks; narrower viewports scroll (see .stream-surface-panel). */
+  min-width: calc(260px + var(--splitter-hit) + 12.5rem);
   min-height: 0;
   overflow: hidden;
 }
@@ -3833,6 +3834,131 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
   min-width: 0;
 }
 
+.stream-audio-subcue-source-select {
+  gap: 0.25rem;
+}
+
+.stream-audio-source-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.stream-audio-output-bus-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.stream-audio-output-bus-label {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.stream-audio-output-bus-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, max-content));
+  gap: var(--gutter);
+  align-items: stretch;
+}
+
+.stream-audio-output-bus {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  min-width: 7.5rem;
+  min-height: 4.4rem;
+  border-color: transparent;
+  background: transparent;
+  padding: 0.25rem 0.45rem 0.35rem;
+  color: var(--text-primary);
+}
+
+.stream-audio-output-bus:hover:not(:disabled),
+.stream-audio-output-bus:focus-visible {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-low) 42%, transparent);
+}
+
+.stream-audio-output-bus.active {
+  color: #fff;
+}
+
+.stream-audio-output-bus-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.stream-audio-output-bus-dot {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 3px solid color-mix(in srgb, var(--text-primary) 84%, transparent);
+  border-radius: 50% !important;
+  background: transparent;
+}
+
+.stream-audio-output-bus.active .stream-audio-output-bus-dot {
+  border-color: var(--accent-teal);
+  background: var(--accent-teal);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-teal) 28%, transparent);
+}
+
+.stream-audio-level-strip {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto auto auto;
+  gap: var(--gutter);
+  align-items: end;
+  min-width: 0;
+  border: 1px solid var(--outline-variant);
+  background: color-mix(in srgb, var(--surface-low) 72%, #000);
+  padding: var(--gutter);
+}
+
+.stream-audio-level-strip .db-control {
+  min-width: 0;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 6.75rem;
+}
+
+.stream-audio-level-strip .db-control input[type="number"] {
+  box-sizing: border-box;
+  height: var(--utility-button-height);
+  min-height: var(--utility-button-height);
+  padding: 0 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.stream-audio-level-pan {
+  align-self: end;
+  margin-bottom: 0.06rem;
+}
+
+.stream-audio-level-toggle.stream-subcue-toggle {
+  align-self: end;
+  width: var(--utility-button-height);
+  min-width: var(--utility-button-height);
+  height: var(--utility-button-height);
+  min-height: var(--utility-button-height);
+  padding: 0;
+  font-size: 0.76rem;
+}
+
 .stream-visual-target-display-group {
   display: grid;
   grid-template-columns: minmax(7rem, 0.35fr) minmax(0, 1fr);
@@ -4003,17 +4129,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 }
 
 @media (max-width: 980px) {
-  .stream-middle,
   .stream-scene-edit {
     grid-template-columns: 1fr;
-  }
-
-  .stream-middle {
-    grid-template-rows: minmax(12rem, 18rem) var(--splitter-hit) minmax(10rem, 1fr);
-  }
-
-  .stream-middle > .splitter.vertical {
-    cursor: row-resize;
   }
 
   .stream-scene-row {
