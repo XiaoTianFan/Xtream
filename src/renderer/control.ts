@@ -155,6 +155,7 @@ const patchSurface = createPatchSurfaceController({
   setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
   setShowStatus,
   showActions,
+  refreshMediaOperationIssues: scheduleRefreshStreamMediaIssues,
 });
 
 clearPatchSelection = patchSurface.clearSelection;

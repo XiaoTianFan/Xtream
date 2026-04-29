@@ -31,6 +31,9 @@ import type {
   LaunchShowData,
   MediaValidationIssue,
   MediaPoolImportFilesPayload,
+  MissingMediaListItem,
+  MissingMediaRelinkPayload,
+  BatchMissingMediaRelinkResult,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -170,6 +173,12 @@ const api = {
     exportDiagnostics: (attach?: DiagnosticsExportAttachPayload): Promise<string | undefined> =>
       ipcRenderer.invoke('show:export-diagnostics', attach),
     getMediaValidationIssues: (): Promise<MediaValidationIssue[]> => ipcRenderer.invoke('show:media-validation-issues'),
+    listMissingMedia: (): Promise<MissingMediaListItem[]> => ipcRenderer.invoke('show:list-missing-media'),
+    relinkMissingMedia: (payload: MissingMediaRelinkPayload): Promise<DirectorState> =>
+      ipcRenderer.invoke('show:relink-missing-media', payload),
+    chooseBatchRelinkDirectory: (): Promise<string | undefined> => ipcRenderer.invoke('show:choose-batch-relink-directory'),
+    batchRelinkFromDirectory: (directory: string, mode: 'link' | 'copy'): Promise<BatchMissingMediaRelinkResult> =>
+      ipcRenderer.invoke('show:batch-relink-from-directory', directory, mode),
   },
   controlUi: {
     getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),

@@ -587,6 +587,32 @@ export class Director extends EventEmitter {
     return structuredClone(this.state.audioSources[audioSourceId]);
   }
 
+  relinkEmbeddedExtractedFile(audioSourceId: string, extractedPath: string, extractedUrl: string): AudioSourceState {
+    const source = this.state.audioSources[audioSourceId];
+    if (!source || source.type !== 'embedded-visual') {
+      throw new Error(`Unknown embedded audio source: ${audioSourceId}`);
+    }
+    if (source.extractionMode !== 'file') {
+      throw new Error(`Audio source ${audioSourceId} is not using an extracted file.`);
+    }
+    const extractedFormat: AudioExtractionFormat = /\.wav$/i.test(extractedPath) ? 'wav' : 'm4a';
+    this.state.audioSources[audioSourceId] = {
+      ...source,
+      extractedPath,
+      extractedUrl,
+      extractedFormat,
+      extractionStatus: 'ready',
+      fileSizeBytes: this.getFileSizeBytes(extractedPath),
+      ready: false,
+      error: undefined,
+    };
+    this.syncDerivedEmbeddedAudioSources(this.state.audioSources[audioSourceId]);
+    this.updateOutputReadiness();
+    this.recalculateTimeline();
+    this.emitState();
+    return structuredClone(this.state.audioSources[audioSourceId]);
+  }
+
   clearAudioSource(audioSourceId: string): AudioSourceState | undefined {
     const source = this.state.audioSources[audioSourceId];
     if (!source) {

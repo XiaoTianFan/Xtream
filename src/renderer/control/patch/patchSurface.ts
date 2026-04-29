@@ -19,6 +19,7 @@ import {
 import { createMediaPoolController } from './mediaPool';
 import { createMixerPanelController } from './mixerPanel';
 import { createPatchHeaderController, type PatchHeaderController } from './patchHeader';
+import { openMissingMediaRelinkModal } from './missingMediaRelinkModal';
 
 type PatchSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
@@ -31,6 +32,7 @@ type PatchSurfaceOptions = {
   setActiveSurface: (surface: ControlSurface) => void;
   setShowStatus: (message: string, issues?: MediaValidationIssue[]) => void;
   showActions: ShowActions;
+  refreshMediaOperationIssues: () => void;
 };
 
 export type PatchSurfaceController = ReturnType<typeof createPatchSurfaceController>;
@@ -174,6 +176,13 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       const display = await window.xtream.displays.create({ layout: { type: 'single', visualId: Object.keys(currentState?.visuals ?? {})[0] } });
       selectedEntity = { type: 'display', id: display.id };
       options.renderState(await window.xtream.director.getState());
+    });
+    elements.missingMediaRelinkButton.addEventListener('click', () => {
+      void openMissingMediaRelinkModal({
+        onRelinked: () => {
+          options.refreshMediaOperationIssues();
+        },
+      });
     });
   }
 

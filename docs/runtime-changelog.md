@@ -1,5 +1,12 @@
 # Xtream Runtime Changelog
 
+## v0.1.2
+
+- **Show projects survive moves and renames** when you use **copied** visuals and audio or **extracted** embedded audio: those files are tracked with **paths relative to the project folder**, so you can relocate the whole project without breaking clips. **Linked** media (files you did not copy into the project) still remembers their exact locations on disk, as before.
+- **Opening shows across Windows and Mac** is more reliable: linked paths that look like another OS’s absolute locations are no longer mistaken for files inside your project.
+- **Stream playback** resumes from pause and steps through **manual** tail sequences more predictably, with clearer scene handoff when you take over from automation.
+- If files go missing, use **Relink media…** in Patch Summary: see every broken visual or audio line, **link** or **import a copy** one at a time, or choose a **folder** (for example from a backup or old machine) to **match by filename** and relink or copy **in bulk**.
+
 ## v0.1.1
 
 - **Stream triggers** use clearer **follow** and **delay** semantics (replacing the older “simultaneous start” and “time offset” labels). Opening a show migrates existing triggers automatically.

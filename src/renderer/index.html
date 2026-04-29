@@ -132,9 +132,12 @@
             <div id="footerSplitter" class="splitter vertical" role="separator" aria-orientation="vertical" aria-label="Resize mixer and details panes" aria-valuemin="260" aria-valuemax="1200" aria-valuenow="500" tabindex="0"></div>
 
             <section class="panel details-panel" aria-labelledby="detailsHeading">
-              <div class="panel-header">
+              <div class="panel-header details-panel-header">
                 <h2 id="detailsHeading">Patch Summary</h2>
-                <div id="showStatus" class="hint detail-status" aria-live="polite">No show config saved this session.</div>
+                <div class="details-panel-header-actions">
+                  <button id="missingMediaRelinkButton" type="button" class="secondary">Relink media…</button>
+                </div>
+                <div id="showStatus" class="hint detail-status details-panel-status" aria-live="polite">No show config saved this session.</div>
               </div>
               <div class="details-body">
                 <div id="issueList" class="issue-list"></div>

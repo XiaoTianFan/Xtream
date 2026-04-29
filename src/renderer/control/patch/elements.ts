@@ -48,6 +48,10 @@ export const patchElements = {
   refreshOutputsButton: assertElement(document.querySelector<HTMLButtonElement>('#refreshOutputsButton'), 'refreshOutputsButton'),
   expandMixerButton: assertElement(document.querySelector<HTMLButtonElement>('#expandMixerButton'), 'expandMixerButton'),
   createDisplayButton: assertElement(document.querySelector<HTMLButtonElement>('#createDisplayButton'), 'createDisplayButton'),
+  missingMediaRelinkButton: assertElement(
+    document.querySelector<HTMLButtonElement>('#missingMediaRelinkButton'),
+    'missingMediaRelinkButton',
+  ),
 };
 
 export type PatchElements = typeof patchElements;

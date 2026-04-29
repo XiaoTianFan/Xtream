@@ -744,6 +744,33 @@ export type MediaValidationIssue = {
   message: string;
 };
 
+/** Pool item kinds surfaced when media files are missing on disk. */
+export type MissingMediaKind = 'visual' | 'audio-external' | 'audio-embedded';
+
+export type MissingMediaListItem = {
+  kind: MissingMediaKind;
+  id: string;
+  label: string;
+  /** Path recorded in the project (often stale or on another machine). */
+  referencePath: string;
+  /** Basename used when matching files in a batch relink folder. */
+  filename: string;
+};
+
+export type MissingMediaRelinkPayload = {
+  kind: MissingMediaKind;
+  id: string;
+  /** Absolute path to an existing file chosen by the operator. */
+  sourcePath: string;
+  mode: 'link' | 'copy';
+};
+
+export type BatchMissingMediaRelinkResult = {
+  relinkedIds: string[];
+  /** Basenames that were not found in the chosen folder (one entry per missing item still without a match). */
+  notFoundFilenames: string[];
+};
+
 export type ShowConfigOperationResult = {
   state: DirectorState;
   filePath?: string;
@@ -1037,6 +1064,11 @@ export type IpcChannels = {
   'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
   'show:open': () => ShowConfigOperationResult | undefined;
   'show:export-diagnostics': (attach?: DiagnosticsExportAttachPayload) => string | undefined;
+  'show:media-validation-issues': () => MediaValidationIssue[];
+  'show:list-missing-media': () => MissingMediaListItem[];
+  'show:relink-missing-media': (payload: MissingMediaRelinkPayload) => DirectorState;
+  'show:choose-batch-relink-directory': () => string | undefined;
+  'show:batch-relink-from-directory': (directory: string, mode: MediaImportMode) => BatchMissingMediaRelinkResult;
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;
   'display:update': (id: DisplayWindowId, update: DisplayUpdate) => DisplayWindowState;
   'display:close': (id: DisplayWindowId) => boolean;

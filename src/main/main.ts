@@ -54,6 +54,9 @@ import type {
   LaunchShowData,
   MediaValidationIssue,
   MediaPoolImportFilesPayload,
+  MissingMediaListItem,
+  MissingMediaRelinkPayload,
+  BatchMissingMediaRelinkResult,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -274,6 +277,75 @@ function createPersistedShowForDisk(): ReturnType<Director['createShowConfig']> 
     streamEngine.getPersistence(),
     projectRoot ? { projectRootForRelativeMedia: projectRoot } : undefined,
   );
+}
+
+function listMissingMediaItems(): MissingMediaListItem[] {
+  const state = director.getState();
+  const items: MissingMediaListItem[] = [];
+  for (const v of Object.values(state.visuals)) {
+    if (v.kind !== 'file' || !v.path) {
+      continue;
+    }
+    if (!fs.existsSync(v.path)) {
+      items.push({
+        kind: 'visual',
+        id: v.id,
+        label: v.label,
+        referencePath: v.path,
+        filename: path.basename(v.path),
+      });
+    }
+  }
+  for (const s of Object.values(state.audioSources)) {
+    if (s.type === 'external-file' && s.path && !fs.existsSync(s.path)) {
+      items.push({
+        kind: 'audio-external',
+        id: s.id,
+        label: s.label,
+        referencePath: s.path,
+        filename: path.basename(s.path),
+      });
+    }
+    if (s.type === 'embedded-visual' && s.extractionMode === 'file' && s.extractedPath && !fs.existsSync(s.extractedPath)) {
+      items.push({
+        kind: 'audio-embedded',
+        id: s.id,
+        label: s.label,
+        referencePath: s.extractedPath,
+        filename: path.basename(s.extractedPath),
+      });
+    }
+  }
+  return items;
+}
+
+async function resolveRelinkPickerPath(pickedPath: string, mode: 'link' | 'copy', assetKind: 'visual' | 'audio'): Promise<string> {
+  const abs = path.resolve(pickedPath);
+  if (!fs.existsSync(abs)) {
+    throw new Error(`File not found: ${abs}`);
+  }
+  if (mode === 'link') {
+    return abs;
+  }
+  if (!currentShowConfigPath || path.basename(currentShowConfigPath) !== SHOW_PROJECT_FILENAME) {
+    throw new Error('Save the project as show.xtream-show.json before copying media.');
+  }
+  const copied = await copyFilesIntoProjectAssets(currentShowConfigPath, [abs], assetKind);
+  return copied[0];
+}
+
+function applyResolvedRelink(payload: MissingMediaRelinkPayload, finalPath: string): void {
+  switch (payload.kind) {
+    case 'visual':
+      director.replaceVisual(payload.id, createVisualImportItem(finalPath));
+      break;
+    case 'audio-external':
+      director.replaceAudioFileSource(payload.id, finalPath, toRendererFileUrl(finalPath));
+      break;
+    case 'audio-embedded':
+      director.relinkEmbeddedExtractedFile(payload.id, finalPath, toRendererFileUrl(finalPath));
+      break;
+  }
 }
 
 function sendDirectorState(window: BrowserWindow | undefined, state: DirectorState): void {
@@ -1223,6 +1295,65 @@ function registerIpcHandlers(): void {
   ipcMain.handle('show:media-validation-issues', (): MediaValidationIssue[] => {
     return validateShowConfigMedia(createPersistedShowForDisk(), currentShowConfigPath ?? undefined);
   });
+
+  ipcMain.handle('show:list-missing-media', (): MissingMediaListItem[] => {
+    return listMissingMediaItems();
+  });
+
+  ipcMain.handle('show:relink-missing-media', async (_event, payload: MissingMediaRelinkPayload): Promise<DirectorState> => {
+    const assetKind: 'visual' | 'audio' = payload.kind === 'visual' ? 'visual' : 'audio';
+    const finalPath = await resolveRelinkPickerPath(payload.sourcePath, payload.mode, assetKind);
+    applyResolvedRelink(payload, finalPath);
+    scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
+    return director.getState();
+  });
+
+  ipcMain.handle('show:choose-batch-relink-directory', async (): Promise<string | undefined> => {
+    const result = await showOpenDialog({
+      title: 'Choose folder containing missing media',
+      properties: ['openDirectory'],
+    });
+    return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
+  });
+
+  ipcMain.handle(
+    'show:batch-relink-from-directory',
+    async (_event, directory: string, mode: 'link' | 'copy'): Promise<BatchMissingMediaRelinkResult> => {
+      const dir = path.resolve(directory);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(dir);
+      } catch {
+        throw new Error(`Not a directory: ${dir}`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`Not a directory: ${dir}`);
+      }
+      const missing = listMissingMediaItems();
+      const relinkedIds: string[] = [];
+      const notFoundFilenames: string[] = [];
+      for (const item of missing) {
+        const candidate = path.join(dir, item.filename);
+        if (!fs.existsSync(candidate)) {
+          notFoundFilenames.push(item.filename);
+          continue;
+        }
+        const assetKind: 'visual' | 'audio' = item.kind === 'visual' ? 'visual' : 'audio';
+        const finalPath = await resolveRelinkPickerPath(candidate, mode, assetKind);
+        applyResolvedRelink(
+          { kind: item.kind, id: item.id, sourcePath: candidate, mode },
+          finalPath,
+        );
+        relinkedIds.push(item.id);
+      }
+      if (relinkedIds.length > 0) {
+        scheduleShowConfigAutoSave();
+        streamEngine.refreshMediaDurations();
+      }
+      return { relinkedIds, notFoundFilenames };
+    },
+  );
 
   ipcMain.handle('show:get-launch-data', async (): Promise<LaunchShowData> => {
     const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
