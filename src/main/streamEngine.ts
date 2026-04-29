@@ -327,10 +327,51 @@ export class StreamEngine extends EventEmitter {
         : undefined;
     if (this.runtime?.status === 'paused' && source === 'global') {
       const pauseSelection = this.runtime.selectedSceneIdAtPause ?? this.runtime.cursorSceneId;
-      if (stream.playbackSettings?.pausedPlayBehavior !== 'preserve-paused-cursor' && target && target !== pauseSelection) {
+      const pausedClock = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+      const pausedPlayBehavior = stream.playbackSettings?.pausedPlayBehavior ?? 'selection-aware';
+
+      if (pausedPlayBehavior === 'preserve-paused-cursor') {
+        this.resumeFromPausedCursor();
+        return;
+      }
+
+      if (target && target !== pauseSelection) {
         this.startFromStreamTime(this.sceneStartMs(target) ?? 0, target, false);
         return;
       }
+
+      /** User pause mid-play leaves rows in `paused`; manual-tail idle leaves only ready/complete. */
+      const hadPausedPlaybackRows = Object.values(this.runtime.sceneStates ?? {}).some((s) => s.status === 'paused');
+      if (!hadPausedPlaybackRows) {
+        const firstReadyPlaybackAnchorSceneId = (): SceneId | undefined => {
+          for (const id of stream.sceneOrder) {
+            const sc = stream.scenes[id];
+            if (!sc || sc.disabled) {
+              continue;
+            }
+            const row = this.runtime!.sceneStates[id];
+            if (row?.status === 'ready') {
+              return id;
+            }
+          }
+          return undefined;
+        };
+        const pauseRow = pauseSelection ? this.runtime.sceneStates[pauseSelection] : undefined;
+        const pauseSelectionStillReady =
+          pauseSelection !== undefined &&
+          !!stream.scenes[pauseSelection] &&
+          !stream.scenes[pauseSelection].disabled &&
+          pauseRow?.status === 'ready';
+
+        const ref =
+          target ?? (pauseSelectionStillReady ? pauseSelection : undefined) ?? firstReadyPlaybackAnchorSceneId();
+
+        if (ref && stream.scenes[ref] && !stream.scenes[ref].disabled) {
+          this.startFromStreamTime(pausedClock, ref, false);
+          return;
+        }
+      }
+
       this.resumeFromPausedCursor();
       return;
     }
@@ -428,7 +469,9 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime || this.runtime.status !== 'paused') {
       return;
     }
-    this.manualTailResumeIdleHold = true;
+    const hadPausedPlaybackRows = Object.values(this.runtime.sceneStates ?? {}).some((s) => s.status === 'paused');
+    /** Idle manual-tail resumes use `startFromStreamTime`; this path is for restoring mid-scene pauses without re-anchoring. */
+    this.manualTailResumeIdleHold = !hadPausedPlaybackRows;
     const current = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
     const now = Date.now();
     this.runtime.status = 'running';
@@ -1092,6 +1135,13 @@ export class StreamEngine extends EventEmitter {
         nextAuto === undefined &&
         !this.manualTailResumeIdleHold
       ) {
+        const firstAwaitingAnchor = stream.sceneOrder.find((id) => {
+          const sc = stream.scenes[id];
+          return sc && !sc.disabled && sceneStates[id]?.status === 'ready';
+        });
+        if (firstAwaitingAnchor) {
+          this.runtime.cursorSceneId = firstAwaitingAnchor;
+        }
         this.applyStreamAutoPauseAfterManualTail(currentMs);
       }
     }

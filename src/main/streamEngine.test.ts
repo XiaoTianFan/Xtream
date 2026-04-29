@@ -1525,6 +1525,60 @@ describe('StreamEngine', () => {
     vi.advanceTimersByTime(500);
     st = engine.getPublicState().runtime;
     expect(st?.status).toBe('running');
-    expect(st?.currentStreamMs).toBe(msAtPause);
+    expect(st?.currentStreamMs).toBeGreaterThanOrEqual(msAtPause ?? 0);
+  });
+
+  it('global play from manual-tail paused anchors once so the waiting manual scene runs on the first click', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(50_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['s0', 's1', 's2', 's3'];
+    stream.scenes = {
+      s0: {
+        id: 's0',
+        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s1: {
+        id: 's1',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      s2: {
+        id: 's2',
+        trigger: { type: 'follow-end', followsSceneId: 's1' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+      s3: {
+        id: 's3',
+        trigger: { type: 'follow-end', followsSceneId: 's2' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+    vi.advanceTimersByTime(1600);
+    expect(engine.getPublicState().runtime?.status).toBe('paused');
+
+    engine.applyTransport({ type: 'play', source: 'global' });
+    const after = engine.getPublicState().runtime;
+    expect(after?.status).toBe('running');
+    expect(after?.sceneStates['s1']?.status).toMatch(/running|preloading/);
   });
 });

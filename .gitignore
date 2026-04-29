@@ -50,3 +50,6 @@ Desktop.ini
 *.tmp
 *.temp
 .cache/
+
+# Test Show Project
+test-show/
