@@ -213,6 +213,27 @@
   align-content: start;
 }
 
+.media-list-region .visual-list:has(> .media-pool-empty:only-child),
+.media-list-region .audio-panel:has(> .media-pool-empty:only-child) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-pool-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gutter);
+  max-width: 22rem;
+  padding: var(--gutter) var(--compact);
+}
+
+.media-pool-empty__hint {
+  text-align: center;
+}
+
 .visual-pool-card {
   --visual-pool-grid-badge-w: 1.65rem;
   --visual-pool-grid-badge-h: 1.125rem;

@@ -150,10 +150,43 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     if (!first) {
       return false;
     }
-    if (first.classList.contains('hint')) {
+    if (first.classList.contains('hint') || first.classList.contains('media-pool-empty')) {
       return false;
     }
     return first.classList.contains('asset-row') || first.classList.contains('visual-pool-card');
+  }
+
+  function visualPoolEmptyMessage(state: DirectorState): string {
+    if (Object.keys(state.visuals).length === 0) {
+      return 'No visuals in the pool yet.';
+    }
+    return 'No visuals match this filter.';
+  }
+
+  function audioPoolEmptyMessage(state: DirectorState): string {
+    if (Object.keys(state.audioSources).length === 0) {
+      return 'No audio sources in the pool yet.';
+    }
+    return 'No audio sources match this filter.';
+  }
+
+  function createMediaPoolEmptyState(message: string, onImport: () => void | Promise<void>): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'media-pool-empty';
+    const hint = document.createElement('p');
+    hint.className = 'hint media-pool-empty__hint';
+    hint.textContent = message;
+    const cta = document.createElement('button');
+    cta.type = 'button';
+    cta.className = 'media-pool-empty__cta';
+    cta.textContent = 'Import sources';
+    cta.setAttribute('aria-label', 'Import media sources');
+    cta.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void onImport();
+    });
+    wrap.append(hint, cta);
+    return wrap;
   }
 
   function renderVisualPoolPanes(state: DirectorState): void {
@@ -163,7 +196,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     if (lastListVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListListPane)) {
       const listRows = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual));
       elements.visualListListPane.replaceChildren(
-        ...(listRows.length > 0 ? listRows : [createHint('No visuals match this filter.')]),
+        ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => showAddVisualsMenu())]),
       );
       lastListVisualsDomKey = cKey;
     }
@@ -172,7 +205,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       clearVisualPoolGridCleanups();
       const gridCards = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualGridCard(visual));
       elements.visualListGridPane.replaceChildren(
-        ...(gridCards.length > 0 ? gridCards : [createHint('No visuals match this filter.')]),
+        ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => showAddVisualsMenu())]),
       );
       lastGridVisualsDomKey = cKey;
     }
@@ -213,7 +246,9 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     const audioRows = getFilteredAudioSources(Object.values(state.audioSources), state).map((source) =>
       createAudioSourceRow(source, state),
     );
-    elements.audioPanel.replaceChildren(...(audioRows.length > 0 ? audioRows : [createHint('No audio sources match this filter.')]));
+    elements.audioPanel.replaceChildren(
+      ...(audioRows.length > 0 ? audioRows : [createMediaPoolEmptyState(audioPoolEmptyMessage(state), () => void runPoolHeaderAudioImport())]),
+    );
   }
 
   function createRenderSignature(state: DirectorState): string {
@@ -583,6 +618,25 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
             },
     });
     options.setSelectedEntity({ type: 'visual', id: visual.id });
+    options.renderState(await window.xtream.director.getState());
+  }
+
+  async function runPoolHeaderAudioImport(): Promise<void> {
+    const modeChoice = await chooseMediaImportMode('audio');
+    if (modeChoice.kind !== 'mode') {
+      return;
+    }
+    const picked = await window.xtream.audioSources.chooseFile();
+    if (!picked) {
+      return;
+    }
+    const result = await runMediaImportAfterPickerChoice('audio', [picked], modeChoice.mode);
+    if (result.kind !== 'audio') {
+      return;
+    }
+    if (result.sources[0]) {
+      options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
+    }
     options.renderState(await window.xtream.director.getState());
   }
 
@@ -1014,22 +1068,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.addVisualsButton.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (activePoolTab === 'audio') {
-        const modeChoice = await chooseMediaImportMode('audio');
-        if (modeChoice.kind !== 'mode') {
-          return;
-        }
-        const picked = await window.xtream.audioSources.chooseFile();
-        if (!picked) {
-          return;
-        }
-        const result = await runMediaImportAfterPickerChoice('audio', [picked], modeChoice.mode);
-        if (result.kind !== 'audio') {
-          return;
-        }
-        if (result.sources[0]) {
-          options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
-        }
-        options.renderState(await window.xtream.director.getState());
+        await runPoolHeaderAudioImport();
       } else {
         showAddVisualsMenu();
       }

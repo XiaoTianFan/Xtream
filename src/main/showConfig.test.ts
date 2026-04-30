@@ -8,6 +8,7 @@ import {
   addRecentShow,
   buildMediaUrls,
   createDiagnosticsReport,
+  DEFAULT_SHOW_PROJECT_FOLDER,
   getDefaultShowConfigPath,
   getRecentShowsPath,
   SHOW_AUDIO_ASSET_DIRECTORY,
@@ -341,7 +342,7 @@ describe('show config persistence helpers', () => {
 
     expect(toPersistedDiskMediaPath(projectRoot, inAssets)).toBe('assets/visuals/clip.mp4');
     expect(toPersistedDiskMediaPath(projectRoot, extracted)).toBe('assets/audio/visual-1.m4a');
-    expect(toPersistedDiskMediaPath(projectRoot, 'F:\\outside\\linked.mp4')).toBe(path.normalize('F:\\outside\\linked.mp4'));
+    expect(toPersistedDiskMediaPath(projectRoot, 'F:\\outside\\linked.mp4')).toBe(path.resolve('F:\\outside\\linked.mp4'));
 
     const showPath = path.join(projectRoot, SHOW_PROJECT_FILENAME);
     const diskStyle: PersistedShowConfig = structuredClone(config);
@@ -449,7 +450,9 @@ describe('show config persistence helpers', () => {
   });
 
   it('uses the userData path for the default show config', () => {
-    expect(getDefaultShowConfigPath('F:\\XtreamData')).toBe(`F:\\XtreamData\\default-show\\${SHOW_PROJECT_FILENAME}`);
+    expect(getDefaultShowConfigPath('F:\\XtreamData')).toBe(
+      path.join('F:\\XtreamData', DEFAULT_SHOW_PROJECT_FOLDER, SHOW_PROJECT_FILENAME),
+    );
     expect(SHOW_AUDIO_ASSET_DIRECTORY).toBe(path.join('assets', 'audio'));
     expect(SHOW_VISUAL_ASSET_DIRECTORY).toBe(path.join('assets', 'visuals'));
   });
