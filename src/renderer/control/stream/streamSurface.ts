@@ -825,17 +825,70 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function createBottomRenderSignature(): string {
     const presentation = options.getPresentationState() ?? currentState!;
-    return JSON.stringify({
+    const state = currentState!;
+    const base = {
       bottomTab,
       detailPane,
       selectedEntity,
       sceneEditSceneId,
       sceneEditSelection,
-      performanceMode: currentState!.performanceMode,
+      performanceMode: state.performanceMode,
       sceneEdit: bottomTab === 'scene' ? createSceneEditRenderModel() : undefined,
-      mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(options.getPresentationState() ?? currentState!) : undefined,
+      mixer: bottomTab === 'mixer' ? mixerPanel?.createRenderSignature(options.getPresentationState() ?? state) : undefined,
       displays: bottomTab === 'displays' ? displayWorkspace?.createRenderSignature(presentation) : undefined,
-    });
+    };
+    const dp = detailPane;
+    // Temp detail panes must include live director fields used by the form; otherwise the overlay
+    // never rebuilds after refreshDirector() and toggles look broken (stale button labels / state).
+    if (dp?.type === 'display') {
+      const d = state.displays[dp.id];
+      return JSON.stringify({
+        ...base,
+        detailDisplayLive: d
+          ? {
+              label: d.label,
+              displayId: d.displayId,
+              fullscreen: d.fullscreen,
+              alwaysOnTop: d.alwaysOnTop,
+              health: d.health,
+              degradationReason: d.degradationReason,
+              layout: d.layout,
+              visualMingle: state.displayVisualMingle?.[dp.id],
+            }
+          : null,
+      });
+    }
+    if (dp?.type === 'output') {
+      const o = state.outputs[dp.id];
+      return JSON.stringify({
+        ...base,
+        detailOutputLive: o
+          ? {
+              label: o.label,
+              sinkId: o.sinkId,
+              sinkLabel: o.sinkLabel,
+              ready: o.ready,
+              physicalRoutingAvailable: o.physicalRoutingAvailable,
+              fallbackAccepted: o.fallbackAccepted,
+              fallbackReason: o.fallbackReason,
+              error: o.error,
+              sources: o.sources.map((s) => ({
+                id: s.id,
+                audioSourceId: s.audioSourceId,
+                levelDb: s.levelDb,
+                pan: s.pan,
+                muted: s.muted,
+                solo: s.solo,
+              })),
+              busLevelDb: o.busLevelDb,
+              pan: o.pan,
+              muted: o.muted,
+              outputDelaySeconds: o.outputDelaySeconds,
+            }
+          : null,
+      });
+    }
+    return JSON.stringify(base);
   }
 
   function createSceneEditRenderModel(): unknown {

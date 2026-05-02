@@ -34,9 +34,13 @@ Now in the previous case we described where the user directly start to launch an
 
 As you may have noticed, all the cases we've described so far seem mostly fall into the case where the operational trigger is used interchangeably with the manual trigger, as it will make more sense, but effectively the add time code trigger, if it's triggered then, should also function in the same way, only that the problem left is which timeline and which time code should the at time code trigger rely on, and the obvious answer is the main default timeline we have. Despite that timeline may be reordered and recalculated during the playback. Although whenever the user attempted to assign a scene to be triggered at time code, we'd pop up a reminder for them to remind that the main timeline may be recalculated and reordered during a PRO playback due to their interaction with it, so that it may not be reliable if there is no external timeline or time code that is said to be referred to (and the project now is not yet to support external timecode).
 
-Last but not least, as an additional note, currently the timeline of the patch workspace and the stream workspace is already detached and decoupled, and we'd like to keep it as such and make sure the new mechanism only affect the stream workspace but not the patch workspace
+Last but not least, as an additional note, currently the timeline of the patch workspace and the stream workspace is already detached and decoupled, and we'd like to keep it as such and make sure the new mechanism only affects the stream workspace but not the patch workspace
 
-Final remark: When user clicks back to first scene, it should effectively reset all temporal additional timelines and restore the default timeline (order of threads, durations, etc.)
+Final remark: When the user clicks back to the first scene, it should effectively reset all temporal additional timelines and restore the default timeline (order of threads, durations, etc.) and reset all scenes' state
+
+Final final remark: The manual seeks using the main global time range rail in the header should always apply to the main default timeline's latest ordered version. Seeking a position should refresh displays and audio outputs to surely set to that moment of playback on the default timeline.
+
+
 
 ---
 

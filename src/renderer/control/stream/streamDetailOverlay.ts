@@ -1,13 +1,22 @@
-import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualMingleAlgorithm } from '../../../shared/types';
+import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualId, VisualMingleAlgorithm } from '../../../shared/types';
 import type { SelectedEntity } from '../shared/types';
 import { applyMediaDetailLivePreview } from '../patch/mediaDetailLivePreview';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
+import { playOutputTestTone } from '../media/audioRuntime';
 import { createButton, createHint, createSelect } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 import type { BottomTab, DetailPane, StreamSurfaceOptions } from './streamTypes';
 import { createStreamDetailField, createStreamDetailLine, createStreamTextInput } from './streamDom';
+
+type StreamTempDetailActions = {
+  returnTab: BottomTab;
+  setBottomTab: (tab: BottomTab) => void;
+  clearDetailPane: () => void;
+  requestRender: () => void;
+};
 
 export type StreamDetailOverlayDeps = {
   detailPane: DetailPane;
@@ -46,6 +55,12 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
     mediaDetailDeps,
     registerStreamDetailUnmount,
   } = deps;
+  const tempDetailActions: StreamTempDetailActions = {
+    returnTab: detailPane.returnTab,
+    setBottomTab,
+    clearDetailPane,
+    requestRender,
+  };
   const wrap = document.createElement('section');
   wrap.className = 'stream-detail-pane';
   const header = document.createElement('div');
@@ -65,13 +80,13 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
     const display = currentState.displays[detailPane.id];
     body.append(
       display
-        ? createStreamDisplayDetailCard(display, currentState, options, displayWorkspace, refreshDirector)
+        ? createStreamDisplayDetailCard(display, currentState, options, displayWorkspace, refreshDirector, tempDetailActions)
         : createHint('Display not found.'),
     );
   } else if (detailPane.type === 'output') {
     const output = currentState.outputs[detailPane.id];
     body.append(
-      output ? createStreamOutputDetailLayout(output, currentState, options, mixerPanel, refreshDirector) : createHint('Output not found.'),
+      output ? createStreamOutputDetailLayout(output, currentState, options, mixerPanel, refreshDirector, tempDetailActions) : createHint('Output not found.'),
     );
   } else if (detailPane.type === 'visual') {
     const visual = currentState.visuals[detailPane.id];
@@ -138,27 +153,71 @@ function createStreamDisplayDetailCard(
   options: StreamSurfaceOptions,
   displayWorkspace: DisplayWorkspaceController | undefined,
   refreshDirector: () => Promise<void>,
+  paneActions: StreamTempDetailActions,
 ): HTMLElement {
   const card = document.createElement('div');
   card.className = 'detail-card stream-display-detail-card';
   const label = createStreamTextInput(display.label ?? display.id, (value) => window.xtream.displays.update(display.id, { label: value }).then(refreshDirector));
+  const toolbar = document.createElement('div');
+  toolbar.className = 'detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'detail-toolbar-start';
+  toolbarStart.append(createStreamDetailField('Label', label));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'detail-toolbar-actions button-row';
+  const pinOnTop = createButton(display.alwaysOnTop ? 'Normal layer' : 'Always on top', 'secondary', async () => {
+    await window.xtream.displays.update(display.id, { alwaysOnTop: !display.alwaysOnTop });
+    await refreshDirector();
+  });
+  pinOnTop.title = 'Keep this display window above other application windows';
+  toolbarActions.append(
+    pinOnTop,
+    createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', async () => {
+      await window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen });
+      await refreshDirector();
+    }),
+  );
+  if (display.health === 'closed') {
+    toolbarActions.append(
+      createButton('Reopen', 'secondary', async () => {
+        await window.xtream.displays.reopen(display.id);
+        await refreshDirector();
+      }),
+    );
+  } else {
+    toolbarActions.append(
+      createButton('Close', 'secondary', async () => {
+        await window.xtream.displays.close(display.id);
+        await refreshDirector();
+      }),
+    );
+  }
+  toolbarActions.append(
+    createButton('Remove', 'secondary', async () => {
+      if (!(await shellShowConfirm('Remove display?', `Remove ${display.id}?`))) {
+        return;
+      }
+      await window.xtream.displays.remove(display.id);
+      paneActions.setBottomTab(paneActions.returnTab);
+      paneActions.clearDetailPane();
+      paneActions.requestRender();
+      await refreshDirector();
+    }),
+  );
+  toolbar.append(toolbarStart, toolbarActions);
+
   const monitor = createSelect(
     'Monitor',
     [['', 'Current/default'], ...options.getDisplayMonitors().map((m): [string, string] => [m.id, m.label])],
     display.displayId ?? '',
     (displayId) => void window.xtream.displays.update(display.id, { displayId: displayId || undefined }).then(refreshDirector),
   );
-  const toolbar = document.createElement('div');
-  toolbar.className = 'button-row';
-  toolbar.append(
-    createButton(display.fullscreen ? 'Leave Fullscreen' : 'Fullscreen', 'secondary', () =>
-      window.xtream.displays.update(display.id, { fullscreen: !display.fullscreen }).then(refreshDirector),
-    ),
-    createButton(display.alwaysOnTop ? 'Normal Layer' : 'Always On Top', 'secondary', () =>
-      window.xtream.displays.update(display.id, { alwaysOnTop: !display.alwaysOnTop }).then(refreshDirector),
-    ),
-  );
-  const visualIds = Object.keys(state.visuals).sort();
+  const visualIds = Object.keys(state.visuals).sort() as VisualId[];
+  const layoutControl =
+    displayWorkspace?.createLayoutControl(display, visualIds, display.health !== 'closed') ?? createHint('Layout control unavailable.');
+  const monitorLayoutRow = document.createElement('div');
+  monitorLayoutRow.className = 'stream-display-monitor-layout-row';
+  monitorLayoutRow.append(monitor, layoutControl);
 
   const minglePersist = state.displayVisualMingle?.[display.id];
   const mingleAlgo: VisualMingleAlgorithm[] = ['latest', 'alpha-over', 'additive', 'multiply', 'screen', 'lighten', 'darken', 'crossfade'];
@@ -205,15 +264,11 @@ function createStreamDisplayDetailCard(
   });
   transWrap.append(transLabel, transInput);
 
-  const routing = displayWorkspace?.createMappingControls(display, visualIds, true);
-
   card.append(
-    createStreamDetailField('Label', label),
-    monitor,
     toolbar,
+    monitorLayoutRow,
     mingleSelect,
     transWrap,
-    routing ?? createHint('Routing controls unavailable.'),
     createStreamDetailLine('Status', displayWorkspace?.getDisplayStatusLabel(display) ?? 'Display'),
     createStreamDetailLine('Telemetry', displayWorkspace?.getDisplayTelemetry(display) ?? display.id),
   );
@@ -226,6 +281,7 @@ function createStreamOutputDetailLayout(
   options: StreamSurfaceOptions,
   mixerPanel: MixerPanelController | undefined,
   refreshDirector: () => Promise<void>,
+  paneActions: StreamTempDetailActions,
 ): HTMLElement {
   const layout = document.createElement('div');
   layout.className = 'stream-output-detail-layout';
@@ -234,6 +290,28 @@ function createStreamOutputDetailLayout(
   const stripWrap = document.createElement('div');
   stripWrap.className = 'stream-output-detail-strip';
   const label = createStreamTextInput(output.label, (value) => window.xtream.outputs.update(output.id, { label: value }).then(refreshDirector));
+  const toolbar = document.createElement('div');
+  toolbar.className = 'output-detail-toolbar';
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'output-detail-toolbar-start';
+  toolbarStart.append(createStreamDetailField('Label', label));
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'output-detail-toolbar-actions button-row';
+  toolbarActions.append(
+    createButton('Test Tone', 'secondary', () => playOutputTestTone(output)),
+    createButton('Remove', 'secondary', async () => {
+      if (!(await shellShowConfirm('Remove output?', `Remove ${output.label}?`))) {
+        return;
+      }
+      await window.xtream.outputs.remove(output.id);
+      paneActions.setBottomTab(paneActions.returnTab);
+      paneActions.clearDetailPane();
+      paneActions.requestRender();
+      await refreshDirector();
+    }),
+  );
+  toolbar.append(toolbarStart, toolbarActions);
+
   const sink = createSelect(
     'Physical output',
     [['', 'System default output'], ...options.getAudioDevices().map((device, index): [string, string] => [device.deviceId, device.label || `Audio output ${index + 1}`])],
@@ -243,7 +321,7 @@ function createStreamOutputDetailLayout(
       void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel }).then(refreshDirector);
     },
   );
-  card.append(createStreamDetailField('Label', label), sink);
+  card.append(toolbar, sink);
   stripWrap.append(mixerPanel?.createOutputDetailMixerStrip(output, state) ?? createHint('Output strip unavailable.'));
   layout.append(card, stripWrap);
   return layout;

@@ -17,6 +17,8 @@ export type DisplayWorkspaceController = {
   syncCardSummaries: (displays: DisplayWindowState[]) => void;
   getDisplayStatusLabel: (display: DisplayWindowState) => string;
   getDisplayTelemetry: (display: DisplayWindowState) => string;
+  /** Single vs split layout only (no visual assignment pickers). */
+  createLayoutControl: (display: DisplayWindowState, visualIds: VisualId[], enabled?: boolean) => HTMLDivElement;
   createMappingControls: (display: DisplayWindowState, visualIds: VisualId[], enabled?: boolean) => HTMLDivElement;
 };
 
@@ -169,9 +171,7 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
     } | gap ${display.lastMaxVideoFrameGapMs?.toFixed(0) ?? '--'}ms | seeks ${display.lastMediaSeekCount ?? 0}`;
   }
 
-  function createMappingControls(display: DisplayWindowState, visualIds: VisualId[], enabled = true): HTMLDivElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'mapping-grid';
+  function createLayoutControl(display: DisplayWindowState, visualIds: VisualId[], enabled = true): HTMLDivElement {
     const layoutSelect = createSelect(
       'Layout',
       [
@@ -187,8 +187,14 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
         void updateDisplayLayout(display.id, nextLayout);
       },
     );
-    wrapper.append(layoutSelect);
     setSelectEnabled(layoutSelect, enabled);
+    return layoutSelect;
+  }
+
+  function createMappingControls(display: DisplayWindowState, visualIds: VisualId[], enabled = true): HTMLDivElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mapping-grid';
+    wrapper.append(createLayoutControl(display, visualIds, enabled));
     if (display.layout.type === 'single') {
       const visualSelect = createVisualPicker(
         'Visual',
@@ -283,6 +289,7 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
     syncCardSummaries,
     getDisplayStatusLabel,
     getDisplayTelemetry,
+    createLayoutControl,
     createMappingControls,
   };
 }

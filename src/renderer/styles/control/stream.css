@@ -1210,6 +1210,20 @@
   display: none;
 }
 
+.stream-display-monitor-layout-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--gutter);
+  margin-top: var(--gutter);
+}
+
+.stream-display-monitor-layout-row > .mapping-field,
+.stream-display-monitor-layout-row > .hint {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
 .stream-display-detail-card .mapping-grid {
   margin-top: var(--gutter);
 }
