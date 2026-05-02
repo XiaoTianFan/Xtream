@@ -1,4 +1,5 @@
-import type { DirectorState, PersistedStreamConfig, SceneId } from '../../../shared/types';
+import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicState } from '../../../shared/types';
+import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { formatSceneDuration, formatTriggerSummary } from './formatting';
 import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
 import type { BottomTab } from './streamTypes';
@@ -7,6 +8,7 @@ export type StreamFlowModeContext = {
   playbackFocusSceneId: SceneId | undefined;
   sceneEditSceneId: SceneId | undefined;
   currentState: DirectorState | undefined;
+  streamState: StreamEnginePublicState | undefined;
   setSceneEditFocus: (id: SceneId | undefined) => void;
   setPlaybackAndEditFocus: (id: SceneId | undefined) => void;
   setBottomTab: (tab: BottomTab) => void;
@@ -18,6 +20,11 @@ export type StreamFlowModeContext = {
 export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): HTMLElement {
   const flow = document.createElement('div');
   flow.className = 'stream-flow-canvas';
+  const highlights = getStreamAuthoringErrorHighlights(
+    stream,
+    validateStreamContextFromDirector(ctx.currentState),
+    ctx.streamState?.playbackTimeline,
+  );
   stream.sceneOrder.forEach((sceneId, index) => {
     const scene = stream.scenes[sceneId];
     if (!scene) {
@@ -26,9 +33,10 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(sceneId, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
     const pb = pbFlag ? ' stream-playback-focus' : '';
     const eb = ebFlag ? ' stream-edit-focus' : '';
+    const authoringErr = highlights.scenesWithErrors.has(sceneId);
     const card = document.createElement('button');
     card.type = 'button';
-    card.className = `stream-flow-card${pb}${eb}`;
+    card.className = `stream-flow-card${pb}${eb}${authoringErr ? ' stream-flow-card--authoring-error' : ''}`;
     card.dataset.sceneId = sceneId;
     card.style.left = `${scene.flow?.x ?? 32 + index * 220}px`;
     card.style.top = `${scene.flow?.y ?? 42 + (index % 2) * 110}px`;

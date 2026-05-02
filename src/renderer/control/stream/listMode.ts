@@ -1,5 +1,6 @@
 import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneId } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
+import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import type { BottomTab } from './streamTypes';
 import { createButton, createHint } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -212,7 +213,14 @@ export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamL
   );
   list.append(header);
   const scenes = stream.sceneOrder.map((id) => stream.scenes[id]).filter(Boolean) as PersistedSceneConfig[];
-  scenes.forEach((scene, index) => list.append(createSceneRowWrap(stream, scene, index + 1, ctx, dragUi)));
+  const highlights = getStreamAuthoringErrorHighlights(
+    stream,
+    validateStreamContextFromDirector(ctx.currentState),
+    ctx.streamState?.playbackTimeline,
+  );
+  scenes.forEach((scene, index) =>
+    list.append(createSceneRowWrap(stream, scene, index + 1, ctx, dragUi, highlights)),
+  );
 
   const endDropTarget = document.createElement('div');
   endDropTarget.className = 'stream-scene-list-end-target';
@@ -277,19 +285,24 @@ function createSceneRowWrap(
   number: number,
   ctx: StreamListModeContext,
   dragUi: SceneListDragUi,
+  highlights: ReturnType<typeof getStreamAuthoringErrorHighlights>,
 ): HTMLElement {
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
   const runtimeRowStatus = runtimeState?.status ?? 'ready';
   const statusClass = scene.disabled ? 'disabled' : runtimeRowStatus;
+  const sceneAuthoringError = highlights.scenesWithErrors.has(scene.id);
+  const badSubCues = highlights.subCuesWithErrors.get(scene.id);
   const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(scene.id, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
   const pb = pbFlag ? ' stream-playback-focus' : '';
   const eb = ebFlag ? ' stream-edit-focus' : '';
   const wrap = document.createElement('div');
-  wrap.className = `stream-scene-row-wrap status-${statusClass}${pb}${eb}`;
+  wrap.className = `stream-scene-row-wrap status-${statusClass}${pb}${eb}${sceneAuthoringError ? ' stream-scene-row-wrap--authoring-error' : ''}`;
   wrap.dataset.sceneId = scene.id;
 
   const row = document.createElement('div');
-  row.className = `stream-scene-row${pb}${eb} ${statusClass}${ctx.getListDragSceneId() === scene.id ? ' dragging' : ''}`;
+  row.className = `stream-scene-row${pb}${eb} ${statusClass}${sceneAuthoringError ? ' stream-scene-row--authoring-error' : ''}${
+    ctx.getListDragSceneId() === scene.id ? ' dragging' : ''
+  }`;
   row.draggable = true;
   row.addEventListener('click', (event) => {
     if ((event.target as HTMLElement).closest('button')) {
@@ -405,7 +418,7 @@ function createSceneRowWrap(
       for (const sid of scene.subCueOrder) {
         const cue = scene.subCues[sid];
         const line = document.createElement('div');
-        line.className = 'stream-scene-subcue-line';
+        line.className = `stream-scene-subcue-line${badSubCues?.has(sid) ? ' stream-scene-subcue-line--error' : ''}`;
         line.textContent = cue ? formatSubCueLabel(ctx.currentState, cue) : sid;
         sub.append(line);
       }

@@ -20,9 +20,13 @@ import {
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
 import { createGlobalOperatorFooterController } from './control/shell/globalOperatorFooter';
-import { renderGlobalSessionProblems, setGlobalSessionHint } from './control/shell/globalSessionShell';
+import { renderGlobalSessionProblems, setGlobalSessionHint, bumpGlobalSessionHintAfterShellRefresh } from './control/shell/globalSessionShell';
 import { buildSessionProblemStripItems } from './control/shell/sessionProblems';
-import { installSessionLogBridge, subscribeSessionLogBuffer } from './control/shell/sessionLogUi';
+import {
+  installSessionLogBridge,
+  onSessionLogBufferClear,
+  subscribeSessionLogBuffer,
+} from './control/shell/sessionLogUi';
 import { createLaunchDashboardController, setLaunchDashboardLoadingUi } from './control/shell/launchDashboard';
 import { setWorkspacePresentationLoadingUi } from './control/shell/presentationLoadingUi';
 import { waitForLaunchPresentationReady } from './control/shell/launchPresentationReady';
@@ -46,9 +50,17 @@ let clearPatchSelection = (): void => undefined;
 
 let lastReadinessReadyFlag: boolean | undefined;
 let lastStreamValidationFingerprint = '';
+/** Suppresses duplicate consecutive `operation_status` session rows (same text + issue count). */
+let lastOperationStatusLogKey: string | undefined;
+
+onSessionLogBufferClear(() => {
+  lastOperationStatusLogKey = undefined;
+});
 
 function emitSessionLogTransitionEdges(): void {
   if (!currentState) {
+    lastReadinessReadyFlag = undefined;
+    lastStreamValidationFingerprint = '';
     return;
   }
   const ready = currentState.readiness.ready;
@@ -64,6 +76,7 @@ function emitSessionLogTransitionEdges(): void {
 
   const stream = latestStreamState;
   if (!stream) {
+    lastStreamValidationFingerprint = '';
     return;
   }
   const fingerprint = JSON.stringify({
@@ -168,12 +181,20 @@ function setShowStatus(message: string, issues: MediaValidationIssue[] = current
   currentIssues = issues;
   const trimmed = message.trim();
   setGlobalSessionHint(elements.globalSessionHint, trimmed.length > 0 ? message : undefined);
-  logSessionEvent({
-    checkpoint: 'operation_status',
-    domain: 'global',
-    kind: 'operation',
-    extra: { message, issueCount: issues.length },
-  });
+  if (trimmed.length > 0) {
+    const logKey = `${trimmed}\0${issues.length}`;
+    if (logKey !== lastOperationStatusLogKey) {
+      logSessionEvent({
+        checkpoint: 'operation_status',
+        domain: 'global',
+        kind: 'operation',
+        extra: { message, issueCount: issues.length },
+      });
+      lastOperationStatusLogKey = logKey;
+    }
+  } else {
+    lastOperationStatusLogKey = undefined;
+  }
   flushGlobalSessionShell();
 }
 
@@ -311,6 +332,7 @@ flushGlobalSessionShell = (): void => {
     stream: latestStreamState,
   });
   renderGlobalSessionProblems(elements.globalSessionProblems, items, surfaceRouter.getActiveSurface());
+  bumpGlobalSessionHintAfterShellRefresh(elements.globalSessionHint);
 };
 
 subscribeSessionLogBuffer(() => {

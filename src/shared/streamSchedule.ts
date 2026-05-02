@@ -1,5 +1,7 @@
 import type {
   AudioSourceId,
+  CalculatedStreamTimeline,
+  DirectorState,
   DisplayZoneId,
   PersistedAudioSubCueConfig,
   PersistedSceneConfig,
@@ -23,9 +25,108 @@ export type ValidateStreamContentContext = {
   visualLabels?: ReadonlyMap<VisualId, string>;
 };
 
-function sceneContentLabel(scene: PersistedSceneConfig, sceneId: SceneId): string {
-  const t = scene.title?.trim();
-  return t ? `"${t}"` : sceneId;
+/** Structured authoring validation (disk + live context); used for messages, UI highlights, and scene runtime `error`. */
+export type StreamScheduleIssue = {
+  severity: 'error' | 'warning';
+  sceneId?: SceneId;
+  subCueId?: SubCueId;
+  message: string;
+};
+
+/** Operator-facing scene label: titled scenes use quotes; otherwise cue number in stream order. */
+export function scenePrimaryLabel(stream: PersistedStreamConfig, sceneId: SceneId): string {
+  const scene = stream.scenes[sceneId];
+  const t = scene?.title?.trim();
+  if (t) {
+    return `Scene "${t}"`;
+  }
+  const n = stream.sceneOrder.indexOf(sceneId);
+  if (n >= 0) {
+    return `Scene ${n + 1}`;
+  }
+  return `Scene ${sceneId}`;
+}
+
+function subCueOrdinalKind(stream: PersistedStreamConfig, sceneId: SceneId, subCueId: SubCueId, kind: 'audio' | 'visual' | 'control'): string {
+  const scene = stream.scenes[sceneId];
+  const idx = scene?.subCueOrder.indexOf(subCueId) ?? -1;
+  const ord = idx >= 0 ? idx + 1 : 0;
+  const kindWord = kind === 'audio' ? 'audio' : kind === 'visual' ? 'visual' : 'control';
+  return ord > 0 ? `${kindWord} sub-cue no.${ord}` : `${kindWord} sub-cue`;
+}
+
+function pushLoopIssues(out: StreamScheduleIssue[], messages: string[], sceneId: SceneId, subCueId?: SubCueId): void {
+  for (const message of messages) {
+    out.push({ severity: 'error', sceneId, subCueId, message });
+  }
+}
+
+export function validateStreamContextFromDirector(state: DirectorState | undefined): ValidateStreamContentContext {
+  if (!state) {
+    return {};
+  }
+  return {
+    visuals: new Set(Object.keys(state.visuals ?? {})),
+    audioSources: new Set(Object.keys(state.audioSources ?? {})),
+    outputs: new Set(Object.keys(state.outputs ?? {})),
+    displayZones: new Map(
+      Object.values(state.displays ?? {}).map((display) => [
+        display.id,
+        new Set(display.layout.type === 'split' ? (['L', 'R'] as const) : (['single'] as const)),
+      ]),
+    ),
+    audioSourceLabels: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, s.label])),
+    visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
+  };
+}
+
+/** Authoring issues for Stream UI (structure, triggers, content, optional playback timeline projection). */
+export function getAuthoringIssuesForStreamUi(
+  stream: PersistedStreamConfig,
+  context: ValidateStreamContentContext,
+  playbackTimeline?: Pick<CalculatedStreamTimeline, 'issues'>,
+): StreamScheduleIssue[] {
+  const out = [...validateStreamStructureIssues(stream), ...validateTriggerReferencesIssues(stream), ...validateStreamContentIssues(stream, context)];
+  if (playbackTimeline?.issues?.length) {
+    for (const issue of playbackTimeline.issues) {
+      out.push({
+        severity: issue.severity,
+        sceneId: issue.sceneId,
+        subCueId: issue.subCueId,
+        message: `Stream timeline: ${issue.message}`,
+      });
+    }
+  }
+  return out;
+}
+
+/** Scene / sub-cue keys with severity `error` for list + edit-pane highlighting. */
+export function getStreamAuthoringErrorHighlights(
+  stream: PersistedStreamConfig,
+  context: ValidateStreamContentContext,
+  playbackTimeline?: Pick<CalculatedStreamTimeline, 'issues'>,
+): {
+  scenesWithErrors: ReadonlySet<SceneId>;
+  subCuesWithErrors: ReadonlyMap<SceneId, ReadonlySet<SubCueId>>;
+} {
+  const issues = getAuthoringIssuesForStreamUi(stream, context, playbackTimeline);
+  const scenesWithErrors = new Set<SceneId>();
+  const subCueMap = new Map<SceneId, Set<SubCueId>>();
+  for (const i of issues) {
+    if (i.severity !== 'error' || !i.sceneId) {
+      continue;
+    }
+    scenesWithErrors.add(i.sceneId);
+    if (i.subCueId) {
+      let bucket = subCueMap.get(i.sceneId);
+      if (!bucket) {
+        bucket = new Set();
+        subCueMap.set(i.sceneId, bucket);
+      }
+      bucket.add(i.subCueId);
+    }
+  }
+  return { scenesWithErrors, subCuesWithErrors: subCueMap };
 }
 
 function audioSubCueValidationLabel(
@@ -67,27 +168,36 @@ export function resolveFollowsSceneId(stream: PersistedStreamConfig, sceneId: Sc
   return stream.sceneOrder[idx - 1];
 }
 
-export function validateStreamStructure(stream: PersistedStreamConfig): string[] {
-  const messages: string[] = [];
+export function validateStreamStructureIssues(stream: PersistedStreamConfig): StreamScheduleIssue[] {
+  const out: StreamScheduleIssue[] = [];
   const seen = new Set<SceneId>();
   for (const id of stream.sceneOrder) {
     if (seen.has(id)) {
-      messages.push(`Duplicate scene id in sceneOrder: ${id}`);
+      out.push({ severity: 'error', sceneId: id, message: `Duplicate scene id in sceneOrder: ${id}` });
     }
     seen.add(id);
     if (!stream.scenes[id]) {
-      messages.push(`sceneOrder references missing scene: ${id}`);
+      out.push({ severity: 'error', sceneId: id, message: `sceneOrder references missing scene: ${id}` });
     }
   }
   for (const id of Object.keys(stream.scenes)) {
-    if (!seen.has(id)) {
-      messages.push(`Scene ${id} is not listed in sceneOrder`);
+    const sid = id as SceneId;
+    if (!seen.has(sid)) {
+      out.push({
+        severity: 'error',
+        sceneId: sid,
+        message: `${scenePrimaryLabel(stream, sid)} is not listed in sceneOrder`,
+      });
     }
-    if (stream.scenes[id].id !== id) {
-      messages.push(`Scene record id mismatch for ${id}`);
+    if (stream.scenes[sid].id !== sid) {
+      out.push({ severity: 'error', sceneId: sid, message: `Scene record id mismatch for ${sid}` });
     }
   }
-  return messages;
+  return out;
+}
+
+export function validateStreamStructure(stream: PersistedStreamConfig): string[] {
+  return validateStreamStructureIssues(stream).map((i) => i.message);
 }
 
 /** Directed edges: follower -> predecessor (follower waits on predecessor). */
@@ -143,8 +253,8 @@ export function hasTriggerCycle(stream: PersistedStreamConfig): boolean {
   return false;
 }
 
-export function validateTriggerReferences(stream: PersistedStreamConfig): string[] {
-  const messages: string[] = [];
+export function validateTriggerReferencesIssues(stream: PersistedStreamConfig): StreamScheduleIssue[] {
+  const out: StreamScheduleIssue[] = [];
   const ids = new Set(stream.sceneOrder);
   for (const sceneId of stream.sceneOrder) {
     const scene = stream.scenes[sceneId];
@@ -153,26 +263,34 @@ export function validateTriggerReferences(stream: PersistedStreamConfig): string
     }
     const pred = resolveFollowsSceneId(stream, sceneId, scene.trigger);
     if (pred && !ids.has(pred)) {
-      messages.push(`Scene ${sceneId} references missing predecessor ${pred}`);
+      out.push({
+        severity: 'error',
+        sceneId,
+        message: `${scenePrimaryLabel(stream, sceneId)} references missing predecessor ${pred}`,
+      });
     }
     const tr = scene.trigger;
     if ((tr.type === 'follow-start' || tr.type === 'follow-end') && tr.delayMs !== undefined && tr.delayMs < 0) {
-      messages.push(`Scene ${sceneId} has negative trigger delay`);
+      out.push({ severity: 'error', sceneId, message: `${scenePrimaryLabel(stream, sceneId)} has negative trigger delay` });
     }
     if (scene.trigger.type === 'at-timecode' && scene.trigger.timecodeMs < 0) {
-      messages.push(`Scene ${sceneId} has negative timecode`);
+      out.push({ severity: 'error', sceneId, message: `${scenePrimaryLabel(stream, sceneId)} has negative timecode` });
     }
   }
   if (hasTriggerCycle(stream)) {
-    messages.push('Trigger dependency graph contains a cycle');
+    out.push({ severity: 'error', message: 'Trigger dependency graph contains a cycle' });
   }
-  return messages;
+  return out;
 }
 
-export function validateStreamContent(stream: PersistedStreamConfig, context: ValidateStreamContentContext = {}): string[] {
-  const messages: string[] = [];
+export function validateTriggerReferences(stream: PersistedStreamConfig): string[] {
+  return validateTriggerReferencesIssues(stream).map((i) => i.message);
+}
+
+export function validateStreamContentIssues(stream: PersistedStreamConfig, context: ValidateStreamContentContext = {}): StreamScheduleIssue[] {
+  const out: StreamScheduleIssue[] = [];
   if (stream.sceneOrder.length === 0) {
-    messages.push('Stream must contain at least one scene');
+    out.push({ severity: 'error', message: 'Stream must contain at least one scene' });
   }
 
   for (const sceneId of stream.sceneOrder) {
@@ -180,91 +298,197 @@ export function validateStreamContent(stream: PersistedStreamConfig, context: Va
     if (!scene) {
       continue;
     }
-    messages.push(...createLoopValidationMessages({ policy: scene.loop, label: `Scene ${sceneId}` }));
+    const sceneLabel = scenePrimaryLabel(stream, sceneId);
+    pushLoopIssues(
+      out,
+      createLoopValidationMessages({ policy: scene.loop, label: `${sceneLabel} · scene loop` }),
+      sceneId,
+    );
     if (scene.preload.leadTimeMs !== undefined && scene.preload.leadTimeMs < 0) {
-      messages.push(`Scene ${sceneId} has negative preload lead time`);
+      out.push({ severity: 'error', sceneId, message: `${sceneLabel} has negative preload lead time` });
     }
 
     const seenSubCues = new Set<string>();
     for (const subCueId of scene.subCueOrder) {
       if (seenSubCues.has(subCueId)) {
-        messages.push(`Scene ${sceneId} has duplicate sub-cue id in order: ${subCueId}`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} lists the same sub-cue more than once in sub-cue order`,
+        });
       }
       seenSubCues.add(subCueId);
       const subCue = scene.subCues[subCueId];
       if (!subCue) {
-        messages.push(`Scene ${sceneId} references missing sub-cue: ${subCueId}`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} references missing sub-cue slot in order`,
+        });
         continue;
       }
       if (subCue.id !== subCueId) {
-        messages.push(`Scene ${sceneId} sub-cue record id mismatch for ${subCueId}`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} — record id mismatch`,
+        });
       }
       if ('startOffsetMs' in subCue && subCue.startOffsetMs !== undefined && subCue.startOffsetMs < 0) {
-        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has negative start offset`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has negative start offset`,
+        });
       }
       if ('durationOverrideMs' in subCue && subCue.durationOverrideMs !== undefined && subCue.durationOverrideMs < 0) {
-        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has negative duration override`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has negative duration override`,
+        });
       }
       if ('playbackRate' in subCue && subCue.playbackRate !== undefined && subCue.playbackRate <= 0) {
-        messages.push(`Scene ${sceneId} sub-cue ${subCueId} has non-positive playback rate`);
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has non-positive playback rate`,
+        });
       }
       if (subCue.kind === 'audio') {
-        messages.push(...createLoopValidationMessages({ policy: subCue.loop, label: `Scene ${sceneId} audio sub-cue ${subCueId}` }));
+        const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'audio');
+        pushLoopIssues(
+          out,
+          createLoopValidationMessages({ policy: subCue.loop, label: `${sceneLabel} · ${ordLabel}` }),
+          sceneId,
+          subCueId,
+        );
         if (context.audioSources && !context.audioSources.has(subCue.audioSourceId)) {
-          messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing audio source ${subCue.audioSourceId}`);
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} references missing audio source ${subCue.audioSourceId}`,
+          });
         }
         if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.outputIds.length === 0) {
-          messages.push(
-            `Scene ${sceneContentLabel(scene, sceneId)}: audio sub-cue "${audioSubCueValidationLabel(subCue, context)}" has no output targets`,
-          );
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel}: ${ordLabel} "${audioSubCueValidationLabel(subCue, context)}" has no output targets`,
+          });
         }
         for (const outputId of subCue.outputIds) {
           if (context.outputs && !context.outputs.has(outputId)) {
-            messages.push(`Scene ${sceneId} audio sub-cue ${subCueId} references missing output ${outputId}`);
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} references missing output ${outputId}`,
+            });
           }
         }
       } else if (subCue.kind === 'visual') {
-        messages.push(...createLoopValidationMessages({ policy: subCue.loop, label: `Scene ${sceneId} visual sub-cue ${subCueId}` }));
+        const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'visual');
+        pushLoopIssues(
+          out,
+          createLoopValidationMessages({ policy: subCue.loop, label: `${sceneLabel} · ${ordLabel}` }),
+          sceneId,
+          subCueId,
+        );
         if (context.visuals && !context.visuals.has(subCue.visualId)) {
-          messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing visual ${subCue.visualId}`);
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} references missing visual ${subCue.visualId}`,
+          });
         }
         if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.targets.length === 0) {
-          messages.push(
-            `Scene ${sceneContentLabel(scene, sceneId)}: visual sub-cue "${visualSubCueValidationLabel(subCue, context)}" has no display targets`,
-          );
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel}: ${ordLabel} "${visualSubCueValidationLabel(subCue, context)}" has no display targets`,
+          });
         }
         for (const target of subCue.targets) {
           const zone = target.zoneId ?? 'single';
           const available = context.displayZones?.get(target.displayId);
+          const ordLabelV = subCueOrdinalKind(stream, sceneId, subCueId, 'visual');
           if (context.displayZones && !available) {
-            messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing display ${target.displayId}`);
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabelV} references missing display ${target.displayId}`,
+            });
           } else if (available && !available.has(zone)) {
-            messages.push(`Scene ${sceneId} visual sub-cue ${subCueId} references missing display zone ${target.displayId}:${zone}`);
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabelV} references missing display zone ${target.displayId}:${zone}`,
+            });
           }
         }
       } else if (subCue.kind === 'control') {
+        const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'control');
         const action = subCue.action;
         if ('sceneId' in action && !stream.scenes[action.sceneId]) {
-          messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing scene ${action.sceneId}`);
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} references missing scene ${action.sceneId}`,
+          });
         }
         if ('subCueRef' in action) {
           const refScene = stream.scenes[action.subCueRef.sceneId];
           if (!refScene) {
-            messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing scene ${action.subCueRef.sceneId}`);
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} references missing scene ${action.subCueRef.sceneId}`,
+            });
           } else if (!refScene.subCues[action.subCueRef.subCueId]) {
-            messages.push(`Scene ${sceneId} control sub-cue ${subCueId} references missing sub-cue ${action.subCueRef.subCueId}`);
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} references missing sub-cue in another scene`,
+            });
           }
         }
       }
     }
     for (const subCueId of Object.keys(scene.subCues)) {
       if (!seenSubCues.has(subCueId)) {
-        messages.push(`Scene ${sceneId} sub-cue ${subCueId} is not listed in subCueOrder`);
+        const sc = scene.subCues[subCueId];
+        const kind = sc?.kind ?? 'audio';
+        out.push({
+          severity: 'error',
+          sceneId,
+          subCueId: subCueId as SubCueId,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId as SubCueId, kind === 'visual' ? 'visual' : kind === 'control' ? 'control' : 'audio')} is not listed in subCueOrder`,
+        });
       }
     }
   }
 
-  return messages;
+  return out;
+}
+
+export function validateStreamContent(stream: PersistedStreamConfig, context: ValidateStreamContentContext = {}): string[] {
+  return validateStreamContentIssues(stream, context).map((i) => i.message);
 }
 
 export type StreamScheduleEntry = {
@@ -273,13 +497,6 @@ export type StreamScheduleEntry = {
   durationMs?: number;
   endMs?: number;
   triggerKnown: boolean;
-};
-
-export type StreamScheduleIssue = {
-  severity: 'error' | 'warning';
-  sceneId?: SceneId;
-  subCueId?: SubCueId;
-  message: string;
 };
 
 export type StreamSchedule = {

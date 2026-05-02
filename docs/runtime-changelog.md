@@ -1,5 +1,15 @@
 # Xtream Runtime Changelog
 
+## v0.1.3
+
+- **Problems in one place:** The footer now has a **global issues strip** (right after the runtime version) that lists Patch, Stream, and **shared** blockers together—so stream configuration trouble is not hidden inside Patch-only summaries. Stream no longer shows a separate “static” problem line under transport; the same issues appear in the strip (and the scene edit banner for stream checks is gone).
+- **Session activity log:** The Config log is framed as a **session / activity log** with clearer naming and plumbing for future event types; **diagnostics export** still bundles the buffer when you need support details.
+- **Media pool import:** Bringing files in uses a **single, consistent import flow** (link or copy into the project) for both audio and visuals; **empty pools** show clearer guidance when there is nothing to work with yet.
+- **Missing media:** When clips go missing, the console is better at **nudging you toward Relink media** (including after open) so you can fix paths or bulk-match from a folder.
+- **Modals:** Confirmations and prompts are routed through a **unified shell modal** path so behavior and styling stay aligned across Patch and Stream.
+- **Stream validation reads clearly:** Error and warning text names **scenes by title** (or cue number in order) and **sub-cues by kind and position** (for example *audio sub-cue no.1*) instead of opaque internal ids—whether you see it in the footer strip or elsewhere.
+- **See broken cues in the workspace:** Scenes with authoring problems can show **error** in the stream list **State** column; the **list row**, **flow card**, **scene pill**, and **sub-cue row** pick up a **red tint** so you can spot what still needs fixing without re-reading logs.
+
 ## v0.1.2
 
 - **Show projects survive moves and renames** when you use **copied** visuals and audio or **extracted** embedded audio: those files are tracked with **paths relative to the project folder**, so you can relocate the whole project without breaking clips. **Linked** media (files you did not copy into the project) still remembers their exact locations on disk, as before.

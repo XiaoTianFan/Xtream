@@ -11,6 +11,7 @@ Current implementation context:
 - The core transport/runtime refactor is considered complete for roadmap purposes.
 - The remaining roadmap work is the product/workspace work formerly tracked as workspace phases 8, 9, and 10: Flow mode, advanced scene editing, and production hardening.
 - Patch playback behavior must remain intact. Patch and Stream are mutually exclusive for active playback, while harmless Stream navigation may still be allowed when Patch owns active playback.
+- Operator-visible validation (persisted stream checks, live engine `validationMessages`, timeline notices) is aggregated in the **global session problems strip** in the control footer and in the Config **Session log**, not in a separate Stream transport status row. See `docs/in-app-config-log-roadmap.md` (Stage 1).
 
 ## Canonical Decisions
 

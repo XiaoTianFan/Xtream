@@ -74,12 +74,13 @@
 }
 
 .shell-modal-host__detail {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
+  padding: 0;
   font-size: 0.82rem;
   line-height: 1.45;
   color: var(--text-secondary);
   white-space: pre-wrap;
-  font-family: var(--font-data, monospace);
+  font-family: var(--font-body);
 }
 
 .shell-modal-host__footer {

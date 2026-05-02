@@ -7,6 +7,15 @@ export type SessionProblemStripItem = {
   text: string;
 };
 
+/** Heuristic: engine messages are plain strings; treat obvious soft copy as warning. */
+export function severityForStreamEngineMessage(message: string): 'error' | 'warning' {
+  const lower = message.toLowerCase();
+  if (/\bwarning\b/.test(lower) || /\bdegraded\b/.test(lower)) {
+    return 'warning';
+  }
+  return 'error';
+}
+
 export function partitionMediaValidationIssues(issues: MediaValidationIssue[]): {
   patchMedia: MediaValidationIssue[];
   streamMedia: MediaValidationIssue[];
@@ -63,10 +72,11 @@ export function buildSessionProblemStripItems(args: {
 
   if (stream) {
     for (const msg of stream.validationMessages) {
+      const severity = severityForStreamEngineMessage(msg);
       push({
-        key: `stream-engine:${msg}`,
+        key: `stream-engine:${severity}:${msg}`,
         domain: 'stream',
-        severity: 'error',
+        severity,
         text: msg,
       });
     }
@@ -87,6 +97,17 @@ export function buildSessionProblemStripItems(args: {
       domain: 'stream',
       severity: issue.severity,
       text: issue.message,
+    });
+  }
+
+  const hasPatchError = out.some((i) => i.domain === 'patch' && i.severity === 'error');
+  const hasStreamError = out.some((i) => i.domain === 'stream' && i.severity === 'error');
+  if (hasPatchError && hasStreamError) {
+    push({
+      key: 'global:dual-workspace-errors',
+      domain: 'global',
+      severity: 'error',
+      text: 'Patch and Stream both report blocking issues.',
     });
   }
 

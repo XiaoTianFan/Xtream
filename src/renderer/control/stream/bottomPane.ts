@@ -1,4 +1,5 @@
-import type { DirectorState, SceneId, StreamEnginePublicState } from '../../../shared/types';
+import type { DirectorState, SceneId, StreamEnginePublicState, SubCueId } from '../../../shared/types';
+import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import type { SceneEditSelection } from './streamTypes';
 import type { DisplayWorkspaceController } from '../patch/displayWorkspace';
 import type { MixerPanelController } from '../patch/mixerPanel';
@@ -127,6 +128,14 @@ export function renderStreamBottomPane(
     const stream = ctx.streamState.stream;
     const sid = ctx.selectedSceneId;
     const scene = sid ? stream.scenes[sid] : undefined;
+    const highlights = getStreamAuthoringErrorHighlights(
+      stream,
+      validateStreamContextFromDirector(ctx.currentState),
+      ctx.streamState.playbackTimeline,
+    );
+    const authoringSceneHasError = sid ? highlights.scenesWithErrors.has(sid) : false;
+    const authoringSubCueIdsWithError: ReadonlySet<SubCueId> | undefined =
+      sid ? highlights.subCuesWithErrors.get(sid) : undefined;
     content.append(
       scene
         ? createSceneEditPane({
@@ -142,6 +151,8 @@ export function renderStreamBottomPane(
             requestRender: ctx.requestRender,
             duplicateScene: ctx.duplicateSelectedScene,
             removeScene: ctx.removeSelectedScene,
+            authoringSceneHasError,
+            authoringSubCueIdsWithError,
           })
         : createHint('No scene selected.'),
     );

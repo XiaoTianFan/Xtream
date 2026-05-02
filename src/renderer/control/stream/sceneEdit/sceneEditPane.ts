@@ -1,4 +1,10 @@
-import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicState } from '../../../../shared/types';
+import type {
+  DirectorState,
+  PersistedStreamConfig,
+  SceneId,
+  StreamEnginePublicState,
+  SubCueId,
+} from '../../../../shared/types';
 import { createHint } from '../../shared/dom';
 import type { SceneEditSelection } from '../streamTypes';
 import { createAudioSubCueForm } from './audioSubCueForm';
@@ -12,6 +18,8 @@ export type SceneEditPaneDeps = SubCueRailDeps & {
   isSceneRunning: boolean;
   duplicateScene: (sceneId: SceneId) => void;
   removeScene: (sceneId: SceneId) => void;
+  authoringSceneHasError?: boolean;
+  authoringSubCueIdsWithError?: ReadonlySet<SubCueId>;
 };
 
 export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
@@ -28,12 +36,15 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     getDirectorState,
     renderDirectorState,
     requestRender,
+    authoringSceneHasError = false,
+    authoringSubCueIdsWithError,
   } = deps;
   void streamPublic;
 
   const wrap = document.createElement('section');
   wrap.className = 'stream-scene-edit';
   wrap.classList.toggle('is-locked', isSceneRunning);
+  wrap.classList.toggle('stream-scene-edit--authoring-error', authoringSceneHasError);
 
   const rail = createSubCueRail({
     stream,
@@ -45,6 +56,8 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     getDirectorState,
     renderDirectorState,
     requestRender,
+    authoringSceneHasError,
+    authoringSubCueIdsWithError,
   });
 
   const detail = document.createElement('div');

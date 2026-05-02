@@ -621,7 +621,7 @@ export type PersistedShowConfig = PersistedShowConfigV9;
 
 export type SceneRuntimeState = {
   sceneId: SceneId;
-  status: 'disabled' | 'ready' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
+  status: 'disabled' | 'ready' | 'error' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
   scheduledStartMs?: number;
   startedAtStreamMs?: number;
   endedAtStreamMs?: number;

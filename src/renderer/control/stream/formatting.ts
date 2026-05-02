@@ -67,6 +67,9 @@ export function formatSceneStateLabel(runtimeState: SceneRuntimeState | undefine
     return 'disabled';
   }
   if (runtimeState?.status) {
+    if (runtimeState.status === 'error') {
+      return 'error';
+    }
     return runtimeState.status;
   }
   return 'ready';

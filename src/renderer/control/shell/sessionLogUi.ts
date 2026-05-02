@@ -5,6 +5,13 @@ const MAX_ENTRIES = 400;
 const buffer: ShowOpenProfileLogEntry[] = [];
 let revision = 0;
 const surfaceListeners = new Set<() => void>();
+let afterClearHooks = new Set<() => void>();
+let sessionLogBridgeInstalled = false;
+
+export function onSessionLogBufferClear(hook: () => void): () => void {
+  afterClearHooks.add(hook);
+  return () => afterClearHooks.delete(hook);
+}
 
 export function getSessionLogRevision(): number {
   return revision;
@@ -51,6 +58,13 @@ export function pushShowOpenProfileEntry(entry: ShowOpenProfileLogEntry): void {
 export function clearSessionLogBuffer(): void {
   buffer.length = 0;
   bump();
+  for (const hook of afterClearHooks) {
+    try {
+      hook();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** @deprecated Use {@link clearSessionLogBuffer}. */
@@ -69,6 +83,10 @@ export function subscribeShowOpenProfileLogBuffer(callback: () => void): () => v
 }
 
 export function installSessionLogBridge(): void {
+  if (sessionLogBridgeInstalled) {
+    return;
+  }
+  sessionLogBridgeInstalled = true;
   subscribeSessionLogUi((entry) => pushSessionLogEntry(entry));
   window.xtream.sessionLog.onEntry((entry) => pushSessionLogEntry(entry));
 }

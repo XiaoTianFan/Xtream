@@ -43,6 +43,7 @@ export type { StreamSurfaceController } from './streamTypes';
 const LIST_ROW_RUNTIME_STATUSES = new Set<SceneRuntimeState['status'] | 'disabled'>([
   'disabled',
   'failed',
+  'error',
   'paused',
   'preloading',
   'ready',

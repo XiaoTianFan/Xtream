@@ -25,9 +25,10 @@ import {
   buildStreamSchedule,
   resolveFollowsSceneId,
   type StreamSchedule,
-  validateStreamContent,
-  validateStreamStructure,
-  validateTriggerReferences,
+  type StreamScheduleIssue,
+  validateStreamContentIssues,
+  validateStreamStructureIssues,
+  validateTriggerReferencesIssues,
 } from '../shared/streamSchedule';
 
 function newId(prefix: string): string {
@@ -50,6 +51,7 @@ export class StreamEngine extends EventEmitter {
   private playbackTimeline: CalculatedStreamTimeline = this.createEmptyTimeline('valid');
   private runtime: StreamRuntimeState | null = null;
   private validationMessages: string[] = [];
+  private authoringErrorSceneIds = new Set<SceneId>();
   private tickTimer: NodeJS.Timeout | undefined;
   private dispatchedControlSubCues = new Set<string>();
   private manuallyCompletedSceneIds = new Set<SceneId>();
@@ -684,7 +686,20 @@ export class StreamEngine extends EventEmitter {
         scheduledStartMs: entry?.startMs,
       };
     }
+    this.applyAuthoringErrorOverlay(sceneStates);
     return sceneStates;
+  }
+
+  private applyAuthoringErrorOverlay(sceneStates: Record<SceneId, SceneRuntimeState>): void {
+    for (const id of this.playbackStream.sceneOrder) {
+      const row = sceneStates[id];
+      if (!row || row.status === 'disabled') {
+        continue;
+      }
+      if (this.authoringErrorSceneIds.has(id) && row.status === 'ready') {
+        sceneStates[id] = { ...row, status: 'error' };
+      }
+    }
   }
 
   private refreshScheduleConsumedIdsAfterSeek(streamMs: number): void {
@@ -887,7 +902,7 @@ export class StreamEngine extends EventEmitter {
           !this.manualSceneSchedulePlaybackActive(pred, schedule, stream)
         ) {
           const pst = pred ? sceneStates[pred] : undefined;
-          if (pst?.status === 'ready') {
+          if (pst?.status === 'ready' || pst?.status === 'error') {
             // Planned schedule start exists, but the manual row has not run — wall clock must not chase it.
             continue;
           }
@@ -1102,7 +1117,7 @@ export class StreamEngine extends EventEmitter {
         this.runtime.cursorSceneId = this.firstEnabledSceneAfter(stream, prevCursor!) ?? candidateSceneId;
       } else if (
         prevCursor &&
-        prevSt?.status === 'ready' &&
+        (prevSt?.status === 'ready' || prevSt?.status === 'error') &&
         prevStart !== undefined &&
         candStart !== undefined &&
         candStart < prevStart
@@ -1146,6 +1161,7 @@ export class StreamEngine extends EventEmitter {
       }
     }
     this.pruneExpiredOrphans(currentMs);
+    this.applyAuthoringErrorOverlay(sceneStates);
     this.runtime.sceneStates = sceneStates;
     this.runtime.activeAudioSubCues = [...activeAudio, ...this.orphanedAudioSubCues];
     this.runtime.activeVisualSubCues = [...activeVisual, ...this.orphanedVisualSubCues];
@@ -1577,12 +1593,21 @@ export class StreamEngine extends EventEmitter {
   }
 
   private revalidate(): void {
-    const messages: string[] = [];
-    messages.push(...validateStreamStructure(this.stream));
-    messages.push(...validateTriggerReferences(this.stream));
-    messages.push(...validateStreamContent(this.stream, this.getValidationContext()));
-    messages.push(...this.editTimeline.issues.map((issue) => `Stream timeline: ${issue.message}`));
-    this.validationMessages = messages;
+    const issues: StreamScheduleIssue[] = [
+      ...validateStreamStructureIssues(this.stream),
+      ...validateTriggerReferencesIssues(this.stream),
+      ...validateStreamContentIssues(this.stream, this.getValidationContext()),
+      ...this.editTimeline.issues.map((issue) => ({
+        severity: issue.severity,
+        sceneId: issue.sceneId,
+        subCueId: issue.subCueId,
+        message: `Stream timeline: ${issue.message}`,
+      })),
+    ];
+    this.validationMessages = issues.map((i) => i.message);
+    this.authoringErrorSceneIds = new Set(
+      issues.filter((i) => i.severity === 'error' && i.sceneId).map((i) => i.sceneId as SceneId),
+    );
   }
 
   private getDurationMaps(): [Record<string, number>, Record<string, number>] {
@@ -1599,7 +1624,7 @@ export class StreamEngine extends EventEmitter {
     ];
   }
 
-  private getValidationContext(): Parameters<typeof validateStreamContent>[1] {
+  private getValidationContext(): Parameters<typeof validateStreamContentIssues>[1] {
     const getState = (this.director as unknown as { getState?: Director['getState'] }).getState;
     if (!getState) {
       return {};

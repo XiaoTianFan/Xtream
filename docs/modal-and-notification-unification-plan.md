@@ -116,7 +116,7 @@ Electron main cannot render HTML; the modal must paint in the **control** `Brows
 2. Renderer: `installShellModalPresenter()` subscribes via preload, mounts the dialog in `#shellModalHost`, then `invoke('control-ui:shell-modal-response', correlationId, index)`.
 3. Main: `ipcMain.handle('control-ui:shell-modal-response', …)` resolves the pending promise; correlation entries are cleared on timeout (120s → cancel index) or when control webContents is destroyed.
 
-**Optional later (Option A):** Renderer-led flows could call a single unsaved path and pass `{ discardUnsaved?: boolean }` into `show:*` handlers to avoid duplicate prompts—see Implementation status for Phase 3.
+**Optional later (Option A):** Renderer-led flows could call a single unsaved path and pass `{ discardUnsaved?: boolean }` into `show:`* handlers to avoid duplicate prompts—see Implementation status for Phase 3.
 
 **Historical note:** Phase 1 shipped renderer-only confirms first; the bridge was added for main-originated choice dialogs.
 

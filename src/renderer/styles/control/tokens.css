@@ -58,7 +58,7 @@
   --header-text-stack-width: 16rem;
   --status-chip-width: 8rem;
   --operator-footer-height: 220px;
-  --status-footer-height: 28px;
+  --status-footer-height: 40px;
   --media-pool-width: 30vw;
   --mixer-width: 42vw;
   /* Fixed width per output strip (mixer columns do not grow with the pane) */

@@ -77,7 +77,7 @@ Today, **two different validation channels** are merged in the Patch **Patch Sum
 - `**state.readiness.issues`** from the **Director** (live graph: displays, mapped media readiness, routing, loop, previews, etc.).
 - `**show:media-validation-issues`** → `**validateShowConfigMedia**`, which includes **missing files on disk** and **stream graph checks on the persisted snapshot** (`target: stream:…`).
 
-Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (strings) in the **stream header** transport status row and in the **scene edit** banner.
+Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (human-readable strings, derived from structured schedule validation in `src/shared/streamSchedule.ts`) via the **global session problems strip** (Stage 1). The stream workspace also reflects authoring health in the **scene list** (State column, including runtime status **`error`** for misconfigured non-disabled scenes), **flow cards**, and **scene edit / sub-cue rail** (red-tinted rows for scenes and sub-cues with severity-`error` authoring issues). Legacy: the stream header static problem line and scene-edit validation banner were removed per Stage 1.
 
 **Why “Show readiness: ready” can disagree with an `ERROR stream:…` line in the issue list**
 
@@ -130,7 +130,7 @@ Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (strings) 
 | Domain              | Source (conceptual)                                                                                                                                                                                                   | Operator expectation                                                                                |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | **Patch**           | Director `readiness` errors/warnings that concern **patch timeline / displays / pool / routing**; optional **patch-relevant** media-on-disk warnings if they block patch operation (semantics TBD in implementation). | Never show **stream engine graph string** messages here.                                            |
-| **Stream**          | `StreamEnginePublicState.validationMessages`, timeline `notice` / invalid timeline state, and **stream-class** persisted validation if not already represented in engine state.                                       | Never show **patch-only readiness** copy here unless it is a **shared** global blocker (see below). |
+| **Stream**          | `StreamEnginePublicState.validationMessages` (messages use **scene titles** / **cue numbers** and **sub-cue kind + ordinal**, e.g. `audio sub-cue no.1`, not raw ids), timeline `notice` / invalid timeline state, and **stream-class** persisted validation if not already represented in engine state. | Never show **patch-only readiness** copy here unless it is a **shared** global blocker (see below). |
 | **Shared / global** | Conditions that block **both** worlds (e.g. project load failure, catastrophic missing show file)—tag `**global`**.                                                                                                   | Shown with clear label.                                                                             |
 
 
@@ -162,7 +162,17 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 - Rename and extend profile log → **session log** (buffer, Config pane title, preload/API naming where user-facing).
 - Update diagnostics export and `docs/stream-workspace-and-runtime-plan.md` cross-links if they reference old locations.
 
-**Status:** Not started (this stage supersedes the former “Stage 1 — lifecycle-only” priority order; lifecycle UI/backend beats are **Stage 2** below).
+**Status:** **Implemented** (Stage 1 deliverables above). Lifecycle UI/backend beats are **Stage 2** below.
+
+### Post–Stage 1 stream validation (implemented)
+
+These items tighten **operator-facing copy and affordances** while keeping one global strip for problems; they do **not** replace Stage 5 (session **logging** of scene transitions).
+
+| Item | Notes |
+| ---- | ----- |
+| **Readable validation strings** | `validateStreamContentIssues` / engine `revalidate` produce messages via `scenePrimaryLabel` and per-kind sub-cue ordinals (`audio` / `visual` / `control` sub-cue no.*). |
+| **Highlight map for Stream UI** | `getStreamAuthoringErrorHighlights` + `getAuthoringIssuesForStreamUi` drive red styling for errored **scene rows**, **sub-cue lines** (expanded list), **flow cards**, and **scene edit / sub-cue rail**. |
+| **Runtime scene status `error`** | `SceneRuntimeState.status` includes `error`; stream engine overlays authoring errors on otherwise `ready` rows so the list **State** column matches misconfiguration. |
 
 ---
 
@@ -223,13 +233,17 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 
 ## Stage 5 — Stream workspace: scene state machine
 
-**Goal:** Log **every scene state transition** relevant to operators (disabled, ready, preloading, running, paused, complete, failed, skipped, …).
+**Goal:** Log **every scene state transition** relevant to operators (disabled, ready, **error**, preloading, running, paused, complete, failed, skipped, …).
+
+### Product / UI (ahead of logging)
+
+- The **scene state set** in the app already includes **`error`** (authoring / misconfiguration overlay). Operators see it in the stream **list** State column; **session log rows** for transitions are still **Stage 5** scope.
 
 ### Timestamps
 
 - Wall clock + **stream timeline timecode** at the event where applicable.
 
-**Status:** Not implemented.
+**Status:** **Not implemented** (logging only; UI/runtime state machine extended as above).
 
 ---
 
@@ -238,12 +252,12 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 
 | Stage | Scope                                                                                                                                 | Implementation status                                           |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **0** | Show open + hydrate + presentation readiness; main open path; legacy problem UI in Patch header/detail and Stream header/scene        | **Implemented** (log); problem UI **to be replaced by Stage 1** |
-| **1** | **Session log foundation + domain separation + global problem strip** (footer after runtime label); unify stream validation surfacing | **Not started**                                                 |
+| **0** | Show open + hydrate + presentation readiness; main open path; legacy problem UI in Patch header/detail and Stream header/scene        | **Implemented** (session log); legacy problem UI **replaced by Stage 1** |
+| **1** | **Session log foundation + domain separation + global problem strip** (footer after runtime label); unify stream validation surfacing; stream messages readable; list/flow/edit authoring highlights; scene runtime **`error`** | **Implemented**                                                 |
 | **2** | Open / create / save / save as — UI first beat + backend completion                                                                   | Not started                                                     |
 | **3** | Patch & Stream transport — UI + engine checkpoints                                                                                    | Not started                                                     |
 | **4** | Patch seek — manual vs drift correction                                                                                               | Not started                                                     |
-| **5** | Stream scene — all state changes; wall + timeline timecode                                                                            | Not started                                                     |
+| **5** | Stream scene — **log** all state changes (wall + timeline timecode); UI/runtime already includes **`error`** status | **Not started** (logging only)                                                     |
 
 
 ---
@@ -252,11 +266,12 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 
 - **Throttle:** Repeated `renderer_wait_ready_blocked` should remain interval-based; same for high-frequency validation churn—emit on **edges** only.
 - **Performance surface:** When built, optionally mirror **subset** of global strip problems for context.
+- **Strip vs structured issues:** Today the strip consumes **string** `validationMessages`; structured `StreamScheduleIssue` exists for authoring—optional future: dedupe or enrich strip items from the same model.
 
 ---
 
 ## Related Documents
 
-- `docs/stream-workspace-and-runtime-plan.md` — Stream timeline, scene states, transport semantics.
-- `src/shared/showOpenProfile.ts` — Current checkpoint documentation in source (to be generalized per Stage 1).
+- `docs/stream-workspace-and-runtime-plan.md` — Stream timeline, scene states, transport semantics; footer strip / session log cross-link under “Current implementation context”.
+- `src/shared/streamSchedule.ts` — `StreamScheduleIssue`, `getAuthoringIssuesForStreamUi`, `getStreamAuthoringErrorHighlights`, human-readable validation messages for stream authoring.
 

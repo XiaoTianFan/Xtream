@@ -67,7 +67,7 @@ export async function runUnifiedMediaPoolImport(
     title: 'Import media',
     message: `Import ${summary}.`,
     detail:
-      'Link references files in their current location. If you move or rename linked files later, the project may lose track of them.\n\nCopy stores files under this project’s assets/visuals and assets/audio folders.',
+      'Link references files in their current location. If you move or rename linked files later, the project may lose track of them.\nCopy stores files under this project’s assets/visuals and assets/audio folders.',
     buttons: [
       { label: 'Cancel', variant: 'secondary' },
       { label: 'Link originals', variant: 'secondary' },

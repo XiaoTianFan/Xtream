@@ -1432,7 +1432,8 @@ input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
 
 .status-actions {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   gap: var(--compact);
   align-items: center;
   margin-left: auto;

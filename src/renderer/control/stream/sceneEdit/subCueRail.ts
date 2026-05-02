@@ -27,10 +27,24 @@ export type SubCueRailDeps = {
   getDirectorState: () => DirectorState | undefined;
   renderDirectorState: (state: DirectorState) => void;
   requestRender: () => void;
+  authoringSceneHasError?: boolean;
+  authoringSubCueIdsWithError?: ReadonlySet<SubCueId>;
 };
 
 export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
-  const { stream, scene, currentState, sceneEditSelection, setSceneEditSelection, editsDisabled = false, getDirectorState, renderDirectorState, requestRender } = deps;
+  const {
+    stream,
+    scene,
+    currentState,
+    sceneEditSelection,
+    setSceneEditSelection,
+    editsDisabled = false,
+    getDirectorState,
+    renderDirectorState,
+    requestRender,
+    authoringSceneHasError = false,
+    authoringSubCueIdsWithError,
+  } = deps;
 
   const rail = document.createElement('div');
   rail.className = 'stream-subcue-rail';
@@ -108,7 +122,9 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
 
   const sceneBtn = document.createElement('button');
   sceneBtn.type = 'button';
-  sceneBtn.className = `stream-section-pill ${sceneEditSelection.kind === 'scene' ? 'active' : ''}`;
+  sceneBtn.className = `stream-section-pill ${sceneEditSelection.kind === 'scene' ? 'active' : ''}${
+    authoringSceneHasError ? ' stream-section-pill--authoring-error' : ''
+  }`;
   sceneBtn.textContent = scene.title ?? scene.id;
   sceneBtn.addEventListener('click', () => {
     setSceneEditSelection({ kind: 'scene' });
@@ -135,8 +151,11 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     row.draggable = !editsDisabled;
 
     const selected = sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === subCueId;
+    const subAuthoringError = authoringSubCueIdsWithError?.has(subCueId) ?? false;
     const titleWrap = document.createElement('div');
-    titleWrap.className = `stream-subcue-rail-title-wrap${selected ? ' active' : ''}`;
+    titleWrap.className = `stream-subcue-rail-title-wrap${selected ? ' active' : ''}${
+      subAuthoringError ? ' stream-subcue-rail-title-wrap--authoring-error' : ''
+    }`;
 
     const labelBtn = document.createElement('button');
     labelBtn.type = 'button';
