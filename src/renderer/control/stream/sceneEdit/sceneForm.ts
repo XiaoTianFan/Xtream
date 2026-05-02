@@ -7,7 +7,6 @@ import type {
   SceneTrigger,
 } from '../../../../shared/types';
 import { createButton, createSelect } from '../../shared/dom';
-import { formatTriggerSummary } from '../formatting';
 import { createStreamDetailField, createStreamDetailLine } from '../streamDom';
 import {
   createSubCueFieldGrid,
@@ -40,8 +39,8 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
   const titleField = createStreamDetailField('Title', titleInput);
 
   const noteInput = document.createElement('textarea');
-  noteInput.className = 'label-input stream-scene-note-input';
-  noteInput.rows = 3;
+  noteInput.className = 'label-input';
+  noteInput.rows = 1;
   noteInput.value = scene.note ?? '';
   noteInput.placeholder = 'Scene note';
   noteInput.addEventListener('change', () => {
@@ -49,23 +48,51 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { note: v || undefined } });
   });
   const noteField = createStreamDetailField('Note', noteInput);
-  noteField.classList.add('stream-scene-note-field');
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'detail-toolbar';
+  
+  const toolbarStart = document.createElement('div');
+  toolbarStart.className = 'detail-toolbar-start';
+
+  const inputsWrap = document.createElement('div');
+  inputsWrap.style.display = 'flex';
+  inputsWrap.style.gap = 'var(--gutter)';
+  inputsWrap.style.width = '100%';
+  
+  titleField.style.flex = '0 0 12rem';
+  noteField.style.flex = '1 1 0';
+  noteField.style.minWidth = '0';
+  
+  inputsWrap.append(titleField, noteField);
+  toolbarStart.append(inputsWrap);
+  
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'detail-toolbar-actions button-row';
+  
+  const removeDisabled = stream.sceneOrder.length <= 1;
+  const removeBtn = createButton('Remove', 'secondary', () => removeScene(scene.id));
+  removeBtn.disabled = removeDisabled;
+
+  toolbarActions.append(
+    createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary', () =>
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } }),
+    ),
+    createButton('Duplicate', 'secondary', () => duplicateScene(scene.id)),
+    removeBtn,
+  );
+  toolbar.append(toolbarStart, toolbarActions);
 
   form.append(
     createSubCueSection(
       'Details',
-      createSubCueFieldGrid(titleField, noteField),
-      createSubCueToggleRow(
-        createSubCueToggleButton('Scene disabled', !!scene.disabled, (disabled) =>
-          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled } }),
-        ),
-      ),
+      toolbar
     ),
   );
 
   const triggerType = scene.trigger.type;
   const triggerSelect = createSelect(
-    'Trigger mode',
+    'Mode',
     [
       ['manual', 'Manual'],
       ['follow-start', 'Follow start'],
@@ -196,7 +223,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     createSubCueSection(
       'Trigger',
       createSubCueFieldGrid(triggerSelect, followSelect, delayWrap, tcWrap),
-      createStreamDetailLine('Trigger summary', formatTriggerSummary(stream, scene)),
     ),
   );
 
@@ -333,18 +359,6 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     ),
   );
 
-  const actions = document.createElement('div');
-  actions.className = 'button-row';
-  const removeDisabled = stream.sceneOrder.length <= 1;
-  actions.append(
-    createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary', () =>
-      void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { disabled: !scene.disabled } }),
-    ),
-    createButton('Duplicate', 'secondary', () => duplicateScene(scene.id)),
-    createButton('Remove', 'secondary', () => removeScene(scene.id)),
-  );
-  const removeBtn = actions.querySelectorAll('button')[2] as HTMLButtonElement;
-  removeBtn.disabled = removeDisabled;
-  form.append(createSubCueSection('Metadata', createStreamDetailLine('Sub-cues', String(scene.subCueOrder.length)), actions));
+  form.append(createSubCueSection('Metadata', createStreamDetailLine('Sub-cues', String(scene.subCueOrder.length))));
   return form;
 }

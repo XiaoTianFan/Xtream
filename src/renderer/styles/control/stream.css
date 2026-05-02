@@ -1,4 +1,4 @@
-﻿/** Stream surface: header, timeline, scenes, scene edit / subcues, stream `@media`. */
+/** Stream surface: header, timeline, scenes, scene edit / subcues, stream `@media`. */
 
 .stream-surface {
   --stream-media-width: 21rem;
@@ -929,7 +929,8 @@
 .stream-subcue-form .db-control label,
 .stream-subcue-form .stream-subcue-fade-group-title,
 .stream-subcue-form .stream-subcue-pan-label,
-.stream-subcue-form .stream-audio-output-bus-label {
+.stream-subcue-form .stream-audio-output-bus-label,
+.stream-scene-form .detail-field {
   color: var(--text-secondary);
   font-size: 0.68rem;
   font-weight: 500;
