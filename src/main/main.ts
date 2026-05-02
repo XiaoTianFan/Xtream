@@ -914,6 +914,7 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
       fs.existsSync(outputPath) ? fs.statSync(outputPath).size : undefined,
     );
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return source;
   } catch (error: unknown) {
     if (fs.existsSync(outputPath)) {
@@ -922,6 +923,7 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
     const message = error instanceof Error ? error.message : 'Audio extraction failed.';
     const source = director.markEmbeddedAudioExtractionFailed(visualId, message);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     throw Object.assign(new Error(message), { source });
   }
 }
@@ -1113,12 +1115,14 @@ function registerIpcHandlers(): void {
     }
     const visuals = director.addVisuals(toAdd);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visuals;
   });
 
   ipcMain.handle('visual:update', (_event, visualId: string, update: VisualUpdate) => {
     const visual = director.updateVisual(visualId, update);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visual;
   });
 
@@ -1129,18 +1133,21 @@ function registerIpcHandlers(): void {
     }
     const visual = director.replaceVisual(visualId, items[0]);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visual;
   });
 
   ipcMain.handle('visual:clear', (_event, visualId: string) => {
     const visual = director.clearVisual(visualId);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visual;
   });
 
   ipcMain.handle('visual:remove', (_event, visualId: string) => {
     director.removeVisual(visualId);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return true;
   });
 
@@ -1155,12 +1162,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle('live-capture:create', (_event, request: LiveCaptureCreate) => {
     const visual = director.addLiveVisual(request.label, request.capture);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visual;
   });
 
   ipcMain.handle('live-capture:update', (_event, visualId: string, capture: LiveVisualCaptureConfig) => {
     const visual = director.updateLiveVisualCapture(visualId, capture);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return visual;
   });
 
@@ -1211,6 +1220,7 @@ function registerIpcHandlers(): void {
       sources.push(director.addAudioFileSource(filePath, toRendererFileUrl(filePath)));
     }
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return sources;
   });
 
@@ -1230,12 +1240,14 @@ function registerIpcHandlers(): void {
     const audioPath = result.filePaths[0];
     const source = director.replaceAudioFileSource(audioSourceId, audioPath, toRendererFileUrl(audioPath));
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return source;
   });
 
   ipcMain.handle('audio-source:add-embedded', (_event, visualId: string, mode?: EmbeddedAudioExtractionMode) => {
     const source = director.addEmbeddedAudioSource(visualId, mode ?? 'representation');
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return source;
   });
 
@@ -1247,24 +1259,28 @@ function registerIpcHandlers(): void {
   ipcMain.handle('audio-source:update', (_event, audioSourceId: string, update: AudioSourceUpdate) => {
     const source = director.updateAudioSource(audioSourceId, update);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return source;
   });
 
   ipcMain.handle('audio-source:clear', (_event, audioSourceId: string) => {
     const source = director.clearAudioSource(audioSourceId);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return source;
   });
 
   ipcMain.handle('audio-source:remove', (_event, audioSourceId: string) => {
     director.removeAudioSource(audioSourceId);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return true;
   });
 
   ipcMain.handle('audio-source:split-stereo', (_event, audioSourceId: string) => {
     const sources = director.splitStereoAudioSource(audioSourceId);
     scheduleShowConfigAutoSave();
+    streamEngine.refreshMediaDurations();
     return sources;
   });
 

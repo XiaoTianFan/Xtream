@@ -537,17 +537,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mediaPool = createMediaPoolController(mediaPoolElements, {
       getState: () => currentState,
       setSelectedEntity: (entity) => {
-        selectedEntity = entity;
         if (!entity) {
+          selectedEntity = undefined;
+          renderCurrent();
           return;
         }
-        if (entity.type === 'visual') {
-          detailPane = { type: 'visual', id: entity.id, returnTab: bottomTab };
-          bottomRenderSignature = '';
-        } else if (entity.type === 'audio-source') {
-          detailPane = { type: 'audio-source', id: entity.id, returnTab: bottomTab };
-          bottomRenderSignature = '';
-        }
+        selectEntity(entity);
       },
       isSelected,
       clearSelectionIf,

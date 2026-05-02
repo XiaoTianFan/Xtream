@@ -36,6 +36,8 @@ As you may have noticed, all the cases we've described so far seem mostly fall i
 
 Last but not least, as an additional note, currently the timeline of the patch workspace and the stream workspace is already detached and decoupled, and we'd like to keep it as such and make sure the new mechanism only affect the stream workspace but not the patch workspace
 
+Final remark: When user clicks back to first scene, it should effectively reset all temporal additional timelines and restore the default timeline (order of threads, durations, etc.)
+
 ---
 
 That's so much for the mechanism and behavioral description of the new system. I know it's very complicated and consists of a lot of use cases and attach cases. So what I want you to do is to first clearly track all the state, all the cases I've described, Use clear clearer language and sequential and conditional structure to track those cases as a benchmark for testing and development, and then you can start to generalize and abstractify the principles for the system beyond the specific use cases, but in principle is could be compatily supporting simultaneously what I described the all the cases I described
