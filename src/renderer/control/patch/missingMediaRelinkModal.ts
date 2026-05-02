@@ -1,11 +1,19 @@
 import type { BatchMissingMediaRelinkResult, MissingMediaListItem } from '../../../shared/types';
 import { createButton, createHint } from '../shared/dom';
-import { shellShowAlert } from '../shell/shellModalPresenter';
+import { shellShowAlert, shellShowConfirm } from '../shell/shellModalPresenter';
 
 export type MissingMediaRelinkModalOptions = {
-  /** After a successful relink or batch; refresh validation issues in the shell. */
+  /** After a successful relink, remove, or batch; refresh validation issues in the shell. */
   onRelinked: () => void;
+  /** Invoked when the dialog fully closes (Cancel, Escape, backdrop). */
+  onClose?: (stillMissing: MissingMediaListItem[]) => void;
 };
+
+let activeMissingRelinkPromise: Promise<void> | undefined;
+
+export function isMissingMediaRelinkModalOpen(): boolean {
+  return activeMissingRelinkPromise !== undefined;
+}
 
 function kindLabel(kind: MissingMediaListItem['kind']): string {
   switch (kind) {
@@ -18,7 +26,7 @@ function kindLabel(kind: MissingMediaListItem['kind']): string {
   }
 }
 
-async function pickReplacementPath(item: MissingMediaListItem): Promise<string | undefined> {
+async function pickReplacementFile(item: MissingMediaListItem): Promise<string | undefined> {
   if (item.kind === 'visual') {
     const paths = await window.xtream.visuals.chooseFiles();
     return paths[0];
@@ -30,9 +38,14 @@ async function pickReplacementPath(item: MissingMediaListItem): Promise<string |
  * Full-screen relink workflow for pool media that is missing on disk.
  */
 export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOptions): Promise<void> {
-  return new Promise((resolve) => {
+  if (activeMissingRelinkPromise) {
+    return activeMissingRelinkPromise;
+  }
+
+  activeMissingRelinkPromise = new Promise((resolve) => {
     let concluded = false;
-    let batchDir: string | undefined;
+    const selectedIds = new Set<string>();
+    let latestItems: MissingMediaListItem[] = [];
 
     function teardown(): void {
       document.removeEventListener('keydown', closeOnEscape);
@@ -45,7 +58,11 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
       }
       concluded = true;
       teardown();
-      resolve();
+      void window.xtream.show.listMissingMedia().then((still) => {
+        options.onClose?.(still);
+        activeMissingRelinkPromise = undefined;
+        resolve();
+      });
     }
 
     const overlay = document.createElement('section');
@@ -79,78 +96,27 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
 
     const listMount = document.createElement('div');
     listMount.className = 'missing-media-relink-list';
+    listMount.setAttribute('role', 'listbox');
+    listMount.setAttribute('aria-multiselectable', 'true');
 
-    const batchStatus = document.createElement('div');
-    batchStatus.className = 'missing-media-relink-batch-status';
-    batchStatus.setAttribute('aria-live', 'polite');
+    const resultStatus = document.createElement('div');
+    resultStatus.className = 'missing-media-relink-result-status';
+    resultStatus.setAttribute('aria-live', 'polite');
 
-    function setBatchStatus(text: string): void {
-      batchStatus.textContent = text;
-    }
-
-    async function refreshList(): Promise<void> {
-      const items = await window.xtream.show.listMissingMedia();
-      listMount.replaceChildren();
-      if (items.length === 0) {
-        listMount.append(createHint('All listed media files are now on disk. You can close this dialog.'));
-        setBatchStatus('');
-        return;
-      }
-      for (const item of items) {
-        listMount.append(renderRow(item));
-      }
-      setBatchStatus(
-        batchDir
-          ? `Batch folder: ${batchDir}`
-          : 'Pick a folder that contains the missing files (same filenames) to relink everything at once.',
-      );
-    }
-
-    async function runSingle(item: MissingMediaListItem, mode: 'link' | 'copy'): Promise<void> {
-      const picked = await pickReplacementPath(item);
-      if (!picked) {
-        return;
-      }
-      try {
-        await window.xtream.show.relinkMissingMedia({
-          kind: item.kind,
-          id: item.id,
-          sourcePath: picked,
-          mode,
-        });
-        options.onRelinked();
-        await refreshList();
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        await shellShowAlert('Relink media error', message);
-      }
-    }
-
-    async function runBatch(mode: 'link' | 'copy'): Promise<void> {
-      if (!batchDir) {
-        await shellShowAlert('Relink media', 'Choose a folder first.');
-        return;
-      }
-      try {
-        const result: BatchMissingMediaRelinkResult = await window.xtream.show.batchRelinkFromDirectory(batchDir, mode);
-        options.onRelinked();
-        const n = result.relinkedIds.length;
-        const miss = result.notFoundFilenames.length;
-        setBatchStatus(
-          miss === 0
-            ? `Batch ${mode === 'copy' ? 'import' : 'link'}: recovered ${n} file(s).`
-            : `Batch: recovered ${n} file(s). Not found in folder (${miss}): ${result.notFoundFilenames.join(', ')}`,
-        );
-        await refreshList();
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        await shellShowAlert('Relink media error', message);
-      }
+    function setResultStatus(text: string): void {
+      resultStatus.textContent = text;
     }
 
     function renderRow(item: MissingMediaListItem): HTMLElement {
       const row = document.createElement('div');
       row.className = 'missing-media-relink-row';
+      row.setAttribute('role', 'option');
+      row.tabIndex = 0;
+      row.dataset.itemId = item.id;
+      row.setAttribute('aria-selected', selectedIds.has(item.id) ? 'true' : 'false');
+      if (selectedIds.has(item.id)) {
+        row.classList.add('missing-media-relink-row--selected');
+      }
 
       const head = document.createElement('div');
       head.className = 'missing-media-relink-row__head';
@@ -170,15 +136,155 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
       fileLine.className = 'missing-media-relink-row__file';
       fileLine.textContent = `Expected filename: ${item.filename}`;
 
-      const actions = document.createElement('div');
-      actions.className = 'missing-media-relink-row__actions';
-      actions.append(
-        createButton('Link file…', 'secondary', () => void runSingle(item, 'link')),
-        createButton('Import copy…', '', () => void runSingle(item, 'copy')),
-      );
+      row.append(head, pathLine, fileLine);
 
-      row.append(head, pathLine, fileLine, actions);
+      const toggle = (): void => {
+        if (selectedIds.has(item.id)) {
+          selectedIds.delete(item.id);
+        } else {
+          selectedIds.add(item.id);
+        }
+        renderList();
+      };
+
+      row.addEventListener('click', (event) => {
+        event.preventDefault();
+        toggle();
+      });
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          toggle();
+        }
+      });
+
       return row;
+    }
+
+    function renderList(): void {
+      listMount.replaceChildren();
+      if (latestItems.length === 0) {
+        listMount.append(createHint('All listed media files are now on disk. You can close this dialog.'));
+        return;
+      }
+      for (const item of latestItems) {
+        listMount.append(renderRow(item));
+      }
+    }
+
+    async function reloadListFromServer(): Promise<void> {
+      latestItems = await window.xtream.show.listMissingMedia();
+      for (const id of [...selectedIds]) {
+        if (!latestItems.some((i) => i.id === id)) {
+          selectedIds.delete(id);
+        }
+      }
+      renderList();
+    }
+
+    async function runRelink(): Promise<void> {
+      if (latestItems.length === 0) {
+        return;
+      }
+
+      if (selectedIds.size === 1) {
+        const id = [...selectedIds][0]!;
+        const item = latestItems.find((i) => i.id === id);
+        if (!item) {
+          return;
+        }
+        const picked = await pickReplacementFile(item);
+        if (!picked) {
+          return;
+        }
+        try {
+          await window.xtream.show.relinkMissingMedia({
+            kind: item.kind,
+            id: item.id,
+            sourcePath: picked,
+            mode: 'link',
+          });
+          options.onRelinked();
+          setResultStatus('Relinked 1 file successfully.');
+          selectedIds.delete(id);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          setResultStatus(`Relink failed: ${message}`);
+        }
+        await reloadListFromServer();
+        return;
+      }
+
+      const dir = await window.xtream.show.chooseBatchRelinkDirectory();
+      if (!dir) {
+        return;
+      }
+
+      const onlyIds = selectedIds.size > 1 ? [...selectedIds] : undefined;
+      try {
+        const result: BatchMissingMediaRelinkResult = await window.xtream.show.batchRelinkFromDirectory({
+          directory: dir,
+          mode: 'link',
+          onlyIds,
+        });
+        options.onRelinked();
+        const ok = result.relinkedIds.length;
+        const miss = result.notFoundFilenames.length;
+        if (miss === 0) {
+          setResultStatus(`Relinked ${ok} file(s) successfully.`);
+        } else {
+          setResultStatus(
+            `Relinked ${ok} file(s) successfully. Could not find ${miss} file(s) in the folder (by exact filename).`,
+          );
+        }
+        for (const id of result.relinkedIds) {
+          selectedIds.delete(id);
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        setResultStatus(`Batch relink failed: ${message}`);
+      }
+      await reloadListFromServer();
+    }
+
+    async function runRemove(): Promise<void> {
+      if (selectedIds.size === 0) {
+        await shellShowAlert('Remove', 'Select one or more items in the list, then click Remove.');
+        return;
+      }
+      const ids = [...selectedIds];
+      const confirmed = await shellShowConfirm(
+        'Remove missing media',
+        `Remove ${ids.length} asset(s) from the project? References to them may break in cues and the timeline.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      let ok = 0;
+      let failed = 0;
+      for (const id of ids) {
+        const item = latestItems.find((i) => i.id === id);
+        if (!item) {
+          continue;
+        }
+        try {
+          if (item.kind === 'visual') {
+            await window.xtream.visuals.remove(id);
+          } else {
+            await window.xtream.audioSources.remove(id);
+          }
+          ok += 1;
+          selectedIds.delete(id);
+        } catch {
+          failed += 1;
+        }
+      }
+      options.onRelinked();
+      setResultStatus(
+        failed === 0 ? `Removed ${ok} asset(s) from the project.` : `Removed ${ok} asset(s). ${failed} could not be removed.`,
+      );
+      await reloadListFromServer();
     }
 
     const headerRow = document.createElement('header');
@@ -189,43 +295,30 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
     heading.textContent = 'Relink missing media';
     const subtitle = document.createElement('p');
     subtitle.textContent =
-      'Each item points at a file that is not on disk. Link keeps the path you pick; import copy duplicates into the project assets folder.';
+      'Click rows to select or deselect. Relink with one row selected picks a replacement file; with none or several selected, choose a folder—we match by exact filename. This dialog stays open until you click Cancel.';
     titleWrap.append(heading, subtitle);
     headerRow.append(titleWrap);
 
     const body = document.createElement('div');
     body.className = 'live-capture-content missing-media-relink-body';
 
-    const batchCard = document.createElement('div');
-    batchCard.className = 'missing-media-relink-batch';
-    batchCard.append(
-      createHint(
-        'Batch: choose a folder from a previous machine or backup. Files are matched by exact filename (e.g. clip.m4a).',
-      ),
-    );
-    const batchRow = document.createElement('div');
-    batchRow.className = 'missing-media-relink-batch-actions';
-    batchRow.append(
-      createButton('Choose folder…', 'secondary', async () => {
-        batchDir = await window.xtream.show.chooseBatchRelinkDirectory();
-        await refreshList();
-      }),
-      createButton('Link all found', 'secondary', () => void runBatch('link')),
-      createButton('Import copies', '', () => void runBatch('copy')),
-    );
-    batchCard.append(batchRow, batchStatus);
-
-    body.append(batchCard, listMount);
+    body.append(listMount, resultStatus);
 
     const footer = document.createElement('div');
-    footer.className = 'media-import-modal__actions';
-    footer.append(createButton('Close', 'secondary', conclude));
+    footer.className = 'media-import-modal__actions missing-media-relink-footer';
+    footer.append(
+      createButton('Relink', '', () => void runRelink()),
+      createButton('Remove', 'secondary', () => void runRemove()),
+      createButton('Cancel', 'secondary', conclude),
+    );
 
     const modalInner = document.createElement('div');
     modalInner.className = 'live-capture-modal media-import-modal missing-media-relink-modal';
     modalInner.append(headerRow, body, footer);
     panel.append(modalInner);
 
-    void refreshList();
+    void reloadListFromServer();
   });
+
+  return activeMissingRelinkPromise;
 }

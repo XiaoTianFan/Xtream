@@ -29,6 +29,8 @@ function mountControlShellFixture(): void {
     <div id="extractionOverlayActions"></div>
     <section id="shellModalHost" hidden></section>
     <span id="runtimeVersionLabel"></span>
+    <div id="globalSessionProblems" hidden></div>
+    <div id="globalSessionHint" hidden></div>
     <button type="button" id="globalAudioMuteButton"></button>
     <button type="button" id="displayBlackoutButton"></button>
     <button type="button" id="clearSoloButton"></button>

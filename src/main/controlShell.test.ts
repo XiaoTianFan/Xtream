@@ -17,6 +17,8 @@ describe('control shell markup', () => {
 
   it('keeps phase 8 global controls in the persistent status footer', () => {
     expect(controlHtml).toContain('id="runtimeVersionLabel"');
+    expect(controlHtml).toContain('id="globalSessionProblems"');
+    expect(controlHtml).toContain('id="globalSessionHint"');
     expect(controlHtml).toContain('id="globalAudioMuteButton"');
     expect(controlHtml).toContain('id="displayBlackoutButton"');
     expect(controlHtml).toContain('id="displayIdentifyFlashButton"');

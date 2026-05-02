@@ -13,7 +13,11 @@ import { createButton, createHint, createSelect, createSlider, syncSliderProgres
 import { createDetailLine, createDetailTitle, createSurfaceCard, wrapSurfaceGrid } from '../shared/surfaceCards';
 import { elements } from '../shell/elements';
 import type { ShowOpenProfileLogEntry } from '../../../shared/showOpenProfile';
-import { clearShowOpenProfileLogBuffer, getShowOpenProfileLogBuffer, getShowOpenProfileLogRevision } from './showOpenProfileUi';
+import {
+  clearSessionLogBuffer,
+  getSessionLogBuffer,
+  getSessionLogRevision,
+} from '../shell/sessionLogUi';
 import {
   applyConfigLayoutPrefs,
   createConfigLayoutController,
@@ -21,6 +25,7 @@ import {
   type ConfigLayoutRefs,
 } from './configLayoutPrefs';
 import { createStreamTabBar } from '../stream/streamDom';
+import { partitionMediaValidationIssues } from '../shell/sessionProblems';
 
 const CONFIG_TAB_SESSION_KEY = 'xtream.control.config.tab.v1';
 
@@ -89,13 +94,13 @@ export function createConfigSurfaceController(options: ConfigSurfaceOptions): Su
     splitter.className = 'splitter horizontal';
     splitter.setAttribute('role', 'separator');
     splitter.setAttribute('aria-orientation', 'horizontal');
-    splitter.setAttribute('aria-label', 'Resize settings and profile log panes');
+    splitter.setAttribute('aria-label', 'Resize settings and session log panes');
     splitter.tabIndex = 0;
     layoutRefs.configBottomSplitter = splitter;
 
     const logPane = document.createElement('aside');
     logPane.className = 'config-surface-log';
-    logPane.setAttribute('aria-label', 'Show open profile log');
+    logPane.setAttribute('aria-label', 'Session log');
     layoutRefs.logPane = logPane;
 
     root.append(upper, splitter, logPane);
@@ -145,7 +150,7 @@ export function createConfigSurfaceController(options: ConfigSurfaceOptions): Su
     mount: mountShell,
     unmount: unmountShell,
     createRenderSignature: (state) =>
-      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}:${getShowOpenProfileLogRevision()}:${configActiveTab}`,
+      `${createSurfaceStateSignature('config', state)}:${JSON.stringify(options.getOperationIssues())}:${getSessionLogRevision()}:${configActiveTab}`,
     render: (state) => {
       mountShell();
       renderIntoShell(state, options, setActiveTab);
@@ -154,25 +159,25 @@ export function createConfigSurfaceController(options: ConfigSurfaceOptions): Su
   };
 }
 
-function formatProfileLogLine(entry: ShowOpenProfileLogEntry): string {
+function formatSessionLogLine(entry: ShowOpenProfileLogEntry): string {
   const iso = new Date(entry.loggedAt).toISOString();
   const t = iso.slice(11, 23);
   const seg = entry.segmentMs !== undefined ? ` seg=${Math.round(entry.segmentMs)}ms` : '';
   const extra = entry.extra !== undefined && Object.keys(entry.extra).length > 0 ? ` ${JSON.stringify(entry.extra)}` : '';
   const rid = entry.runId.length > 12 ? `…${entry.runId.slice(-10)}` : entry.runId;
-  return `${t} [${entry.source}] ${rid} ${entry.checkpoint} +${Math.round(entry.sinceRunStartMs)}ms${seg}${extra}`;
+  return `${t} [${entry.source}][${entry.domain}](${entry.kind}) ${rid} ${entry.checkpoint} +${Math.round(entry.sinceRunStartMs)}ms${seg}${extra}`;
 }
 
-function renderShowOpenProfileLogCard(): HTMLElement {
+function renderSessionLogCard(): HTMLElement {
   const root = document.createElement('div');
   root.className = 'config-log-pane';
 
   const header = document.createElement('div');
   header.className = 'config-log-pane-header';
-  const title = createDetailTitle('Show open profile log');
+  const title = createDetailTitle('Session log');
   title.className = 'config-log-pane-title';
   const clearBtn = createButton('Clear log', 'secondary config-log-clear', () => {
-    clearShowOpenProfileLogBuffer();
+    clearSessionLogBuffer();
   });
   header.append(title, clearBtn);
 
@@ -180,8 +185,8 @@ function renderShowOpenProfileLogCard(): HTMLElement {
   scroll.className = 'config-log-scroll';
   const pre = document.createElement('pre');
   pre.className = 'config-log-pre';
-  const lines = [...getShowOpenProfileLogBuffer()].map(formatProfileLogLine);
-  pre.textContent = lines.length > 0 ? lines.join('\n') : 'No entries yet. Open a show to record checkpoints.';
+  const lines = [...getSessionLogBuffer()].map(formatSessionLogLine);
+  pre.textContent = lines.length > 0 ? lines.join('\n') : 'No entries yet. Opening a show records checkpoints; operations and validation changes are logged here too.';
   scroll.append(pre);
 
   root.append(header, scroll);
@@ -198,7 +203,8 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
   exportRow.append(
     createButton('Export Diagnostics', 'secondary', async () => {
       const filePath = await window.xtream.show.exportDiagnostics({
-        showOpenProfileLog: [...getShowOpenProfileLogBuffer()],
+        showOpenProfileLog: [...getSessionLogBuffer()],
+        sessionLog: [...getSessionLogBuffer()],
       });
       if (filePath) {
         options.setShowStatus(`Exported diagnostics: ${filePath}`);
@@ -207,20 +213,37 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
   );
   exportCard.append(exportRow);
 
-  const issues = [...state.readiness.issues, ...options.getOperationIssues()];
-  const issueCard = createSurfaceCard('Readiness Issues');
-  if (issues.length === 0) {
-    issueCard.append(createHint('No readiness issues reported.'));
+  const combinedMedia = options.getOperationIssues();
+  const { patchMedia, streamMedia } = partitionMediaValidationIssues(combinedMedia);
+  const patchIssueItems = [...state.readiness.issues, ...patchMedia];
+  const patchIssueCard = createSurfaceCard('Patch readiness & media (on disk)');
+  if (patchIssueItems.length === 0) {
+    patchIssueCard.append(createHint('No patch readiness issues or non-stream media problems from the saved project.'));
   } else {
     const list = document.createElement('ul');
     list.className = 'log-list';
-    for (const issue of issues) {
+    for (const issue of patchIssueItems) {
       const item = document.createElement('li');
       item.className = issue.severity === 'error' ? 'warning' : 'hint';
       item.textContent = `${issue.severity.toUpperCase()} ${issue.target}: ${issue.message}`;
       list.append(item);
     }
-    issueCard.append(list);
+    patchIssueCard.append(list);
+  }
+
+  const streamPersistCard = createSurfaceCard('Stream validation (saved project file)');
+  if (streamMedia.length === 0) {
+    streamPersistCard.append(createHint('No stream graph issues from validate-on-disk. Live schedule/timeline messages also appear in the footer.'));
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'log-list';
+    for (const issue of streamMedia) {
+      const item = document.createElement('li');
+      item.className = issue.severity === 'error' ? 'warning' : 'hint';
+      item.textContent = `${issue.severity.toUpperCase()} ${issue.target}: ${issue.message}`;
+      list.append(item);
+    }
+    streamPersistCard.append(list);
   }
 
   const displayCard = createSurfaceCard('Display Telemetry');
@@ -247,7 +270,7 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
     );
   }
 
-  return wrapSurfaceGrid(exportCard, issueCard, displayCard, outputCard);
+  return wrapSurfaceGrid(exportCard, patchIssueCard, streamPersistCard, displayCard, outputCard);
 }
 
 function wrapConfigOverviewPanels(
@@ -419,7 +442,7 @@ function renderIntoShell(state: DirectorState, options: ConfigSurfaceOptions, se
   }
 
   upperMount.replaceChildren(tabRow, panels);
-  layoutRefs.logPane!.replaceChildren(renderShowOpenProfileLogCard());
+  layoutRefs.logPane!.replaceChildren(renderSessionLogCard());
 }
 
 async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSurfaceOptions): Promise<void> {

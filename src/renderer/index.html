@@ -137,10 +137,8 @@
                 <div class="details-panel-header-actions">
                   <button id="missingMediaRelinkButton" type="button" class="secondary">Relink media…</button>
                 </div>
-                <div id="showStatus" class="hint detail-status details-panel-status" aria-live="polite">No show config saved this session.</div>
               </div>
               <div class="details-body">
-                <div id="issueList" class="issue-list"></div>
                 <div id="detailsContent" class="details-content"></div>
               </div>
             </section>
@@ -150,7 +148,11 @@
           <section id="surfacePanel" class="surface-panel" aria-live="polite" hidden></section>
 
           <footer class="status-footer" aria-label="Global operator controls">
-            <span id="runtimeVersionLabel">Xtream runtime</span>
+            <div class="status-footer-meta">
+              <span id="runtimeVersionLabel">Xtream runtime</span>
+            </div>
+            <div id="globalSessionProblems" class="global-session-problems" aria-live="polite" hidden></div>
+            <div id="globalSessionHint" class="global-session-hint hint" aria-live="polite" hidden></div>
             <span class="status-actions">
               <button id="clearSoloButton" class="secondary" type="button">Clear Solo</button>
               <button id="globalAudioMuteButton" class="secondary" type="button">Audio Mute</button>

@@ -472,11 +472,6 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   next.disabled = transportState.nextDisabled;
   transport.append(back, play, pause, next, createRateButton(ctx));
 
-  const transportStatus = document.createElement('div');
-  transportStatus.className = 'stream-transport-status';
-  transportStatus.hidden = !playDisabledDetail && !timelineIssue;
-  transportStatus.textContent = playDisabledDetail ?? timelineIssue ?? '';
-
   const titleStack = document.createElement('div');
   titleStack.className = 'stream-scene-title-stack';
   titleStack.append(
@@ -523,7 +518,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   headerCenter.className = 'stream-header-center';
   const transportStack = document.createElement('div');
   transportStack.className = 'stream-transport-stack';
-  transportStack.append(transport, transportStatus);
+  transportStack.append(transport);
   headerCenter.append(transportStack, titleStack);
   const headerMain = document.createElement('div');
   headerMain.className = 'stream-header-main';

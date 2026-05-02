@@ -180,6 +180,95 @@ function presentShellModal(payload: PresentChoicePayload, onComplete: (index: nu
   });
 }
 
+/** Non-dismissible busy state on the shell modal host (e.g. copy-import). Caller must invoke the returned function when work completes. */
+export function shellMountBlockingBusy(title: string, message: string): () => void {
+  teardownShellModalIfAny();
+
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  const host = elements.shellModalHost;
+  host.removeAttribute('hidden');
+  host.hidden = false;
+  host.dataset.open = 'true';
+  host.tabIndex = -1;
+  host.setAttribute('aria-hidden', 'false');
+  host.setAttribute('role', 'dialog');
+  host.setAttribute('aria-modal', 'true');
+  host.setAttribute('aria-busy', 'true');
+
+  elements.appFrame.classList.add('shell-modal-blocking');
+
+  const scrim = document.createElement('div');
+  scrim.className = 'shell-modal-host__scrim';
+  scrim.setAttribute('aria-hidden', 'true');
+
+  const panel = document.createElement('div');
+  panel.className = 'shell-modal-host__panel';
+
+  const heading = document.createElement('h2');
+  heading.className = 'shell-modal-host__title';
+  heading.id = 'shellModalHeading';
+  heading.textContent = title;
+
+  const bodyWrap = document.createElement('div');
+  bodyWrap.className = 'shell-modal-host__body';
+
+  const busy = document.createElement('div');
+  busy.className = 'media-import-modal media-import-modal--busy';
+  const spinner = document.createElement('div');
+  spinner.className = 'media-import-modal__spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  const status = document.createElement('div');
+  status.className = 'media-import-modal__status';
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = message;
+  busy.append(spinner, status);
+  bodyWrap.append(busy);
+
+  host.setAttribute('aria-labelledby', 'shellModalHeading');
+
+  let concluded = false;
+  const conclude = () => {
+    if (concluded) {
+      return;
+    }
+    concluded = true;
+    host.removeEventListener('keydown', onModalKeyDown, true);
+    shellModalUnmount = () => undefined;
+    host.replaceChildren();
+    host.hidden = true;
+    host.setAttribute('hidden', '');
+    delete host.dataset.open;
+    host.removeAttribute('aria-busy');
+    host.setAttribute('aria-hidden', 'true');
+    host.removeAttribute('role');
+    host.removeAttribute('aria-modal');
+    host.removeAttribute('aria-labelledby');
+    elements.appFrame.classList.remove('shell-modal-blocking');
+    queueMicrotask(() => {
+      if (previousFocus?.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    });
+  };
+
+  const onModalKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  host.addEventListener('keydown', onModalKeyDown, true);
+
+  panel.append(heading, bodyWrap);
+  host.replaceChildren(scrim, panel);
+
+  shellModalUnmount = conclude;
+
+  return conclude;
+}
+
 /** Main-process modal (IPC). Completes via `respond` IPC. */
 function presentMainModal(payload: ShellModalOpenPayload): void {
   presentShellModal(payload, (idx) => {

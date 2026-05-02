@@ -4,8 +4,6 @@ export const patchElements = {
   workspace: assertElement(document.querySelector<HTMLElement>('.workspace'), 'workspace'),
   operatorFooter: assertElement(document.querySelector<HTMLElement>('.operator-footer'), 'operatorFooter'),
   timecode: assertElement(document.querySelector<HTMLDivElement>('#timecode'), 'timecode'),
-  showStatus: assertElement(document.querySelector<HTMLDivElement>('#showStatus'), 'showStatus'),
-  issueList: assertElement(document.querySelector<HTMLDivElement>('#issueList'), 'issueList'),
   mediaPoolPanel: assertElement(document.querySelector<HTMLElement>('#mediaPoolPanel'), 'mediaPoolPanel'),
   visualList: assertElement(document.querySelector<HTMLDivElement>('#visualList'), 'visualList'),
   visualListListPane: assertElement(document.querySelector<HTMLDivElement>('#visualListList'), 'visualListListPane'),

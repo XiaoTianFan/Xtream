@@ -67,9 +67,6 @@ export function createTransportController({ getState, getIsStreamPlaybackActive,
     if (!isTransportDraftActive(elements.loopEndInput)) {
       elements.loopEndInput.value = state.loop.endSeconds === undefined ? '' : formatTimecode(state.loop.endSeconds);
     }
-    elements.showStatus.textContent = state.readiness.ready
-      ? 'Show readiness: ready'
-      : `Show readiness: blocked by ${state.readiness.issues.filter((issue) => issue.severity === 'error').length} issue(s)`;
   };
 
   const syncTimelineScrubber = (state: DirectorState): void => {

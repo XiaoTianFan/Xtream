@@ -2,7 +2,6 @@ import './control.css';
 import type { ControlProjectUiStateV1, DirectorState, DisplayMonitorInfo, MediaValidationIssue, ShowConfigOperationResult, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
 import { deriveDirectorStateForStream } from './streamProjection';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
-import { combineVisibleIssues } from './control/app/appStatus';
 import { installInteractionLock, isPanelInteractionActive } from './control/app/interactionLocks';
 import { createShowActions } from './control/app/showActions';
 import { createSurfaceRouter } from './control/app/surfaceRouter';
@@ -12,17 +11,24 @@ import { createStreamSurfaceController } from './control/stream/streamSurface';
 import { patchElements } from './control/patch/elements';
 import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
+import { openMissingMediaRelinkModal, isMissingMediaRelinkModalOpen } from './control/patch/missingMediaRelinkModal';
+import {
+  shouldAutoOpenMissingRelinkPrompt,
+  markDismissedMissingSignatureIfStillMissing,
+  resetMissingRelinkDismissState,
+} from './control/patch/missingMediaRelinkAutoOpen';
 import { createPerformanceSurfaceController } from './control/performance/performanceSurface';
 import { elements } from './control/shell/elements';
 import { createGlobalOperatorFooterController } from './control/shell/globalOperatorFooter';
+import { renderGlobalSessionProblems, setGlobalSessionHint } from './control/shell/globalSessionShell';
+import { buildSessionProblemStripItems } from './control/shell/sessionProblems';
+import { installSessionLogBridge, subscribeSessionLogBuffer } from './control/shell/sessionLogUi';
 import { createLaunchDashboardController, setLaunchDashboardLoadingUi } from './control/shell/launchDashboard';
 import { setWorkspacePresentationLoadingUi } from './control/shell/presentationLoadingUi';
 import { waitForLaunchPresentationReady } from './control/shell/launchPresentationReady';
 import { installRailNavigation } from './control/shell/rail';
 import { installShellIcons } from './control/shell/shellIcons';
-import { renderIssues as renderIssueList } from './control/shared/issues';
-import { installShowOpenProfileLogBridge, subscribeShowOpenProfileLogBuffer } from './control/config/showOpenProfileUi';
-import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../shared/showOpenProfile';
+import { logSessionEvent, logShowOpenProfile, type ShowOpenProfileFlowContext } from '../shared/showOpenProfile';
 import { getShownProjectPath, setShownProjectPath } from './control/app/showProjectPath';
 import type { ControlSurface } from './control/shared/types';
 import { installShellModalPresenter } from './control/shell/shellModalPresenter';
@@ -38,10 +44,93 @@ let displayMonitors: DisplayMonitorInfo[] = [];
 let currentIssues: MediaValidationIssue[] = [];
 let clearPatchSelection = (): void => undefined;
 
+let lastReadinessReadyFlag: boolean | undefined;
+let lastStreamValidationFingerprint = '';
+
+function emitSessionLogTransitionEdges(): void {
+  if (!currentState) {
+    return;
+  }
+  const ready = currentState.readiness.ready;
+  if (lastReadinessReadyFlag !== undefined && lastReadinessReadyFlag !== ready) {
+    logSessionEvent({
+      checkpoint: ready ? 'patch_readiness_cleared' : 'patch_readiness_blocked',
+      domain: 'patch',
+      kind: 'validation',
+      extra: { issueCount: currentState.readiness.issues.length },
+    });
+  }
+  lastReadinessReadyFlag = ready;
+
+  const stream = latestStreamState;
+  if (!stream) {
+    return;
+  }
+  const fingerprint = JSON.stringify({
+    v: stream.validationMessages,
+    st: stream.playbackTimeline.status,
+    n: stream.playbackTimeline.notice,
+  });
+  if (lastStreamValidationFingerprint !== '' && fingerprint !== lastStreamValidationFingerprint) {
+    logSessionEvent({
+      checkpoint: 'stream_validation_changed',
+      domain: 'stream',
+      kind: 'validation',
+      extra: {
+        messageCount: stream.validationMessages.length,
+        timelineStatus: stream.playbackTimeline.status,
+      },
+    });
+  }
+  lastStreamValidationFingerprint = fingerprint;
+}
+
+let flushGlobalSessionShell: () => void = () => undefined;
+
 const DISPLAY_PREVIEW_SYNC_INTERVAL_MS = 125;
 const STREAM_MEDIA_ISSUES_DEBOUNCE_MS = 200;
+const MISSING_RELINK_AUTO_DEBOUNCE_MS = 500;
 let streamMediaIssuesTimer: number | undefined;
+let missingRelinkAutoTimer: number | undefined;
 let engineSoloOutputIds: VirtualOutputId[] = [];
+
+function scheduleMaybeAutoOpenMissingRelink(): void {
+  if (missingRelinkAutoTimer !== undefined) {
+    window.clearTimeout(missingRelinkAutoTimer);
+  }
+  missingRelinkAutoTimer = window.setTimeout(() => {
+    missingRelinkAutoTimer = undefined;
+    void maybeAutoOpenMissingRelink();
+  }, MISSING_RELINK_AUTO_DEBOUNCE_MS);
+}
+
+async function maybeAutoOpenMissingRelink(): Promise<void> {
+  try {
+    if (launchShellRef.controller?.isVisible()) {
+      return;
+    }
+    if (!getShownProjectPath()) {
+      return;
+    }
+    if (isMissingMediaRelinkModalOpen()) {
+      return;
+    }
+    const items = await window.xtream.show.listMissingMedia();
+    if (!shouldAutoOpenMissingRelinkPrompt(items)) {
+      return;
+    }
+    void openMissingMediaRelinkModal({
+      onRelinked: () => {
+        scheduleRefreshStreamMediaIssues();
+      },
+      onClose: (still) => {
+        markDismissedMissingSignatureIfStillMissing(still);
+      },
+    });
+  } catch {
+    /* ignore */
+  }
+}
 
 function scheduleRefreshStreamMediaIssues(): void {
   if (streamMediaIssuesTimer !== undefined) {
@@ -51,9 +140,7 @@ function scheduleRefreshStreamMediaIssues(): void {
     streamMediaIssuesTimer = undefined;
     void window.xtream.show.getMediaValidationIssues().then((issues) => {
       currentIssues = issues;
-      if (currentState) {
-        renderIssueList(patchElements.issueList, combineVisibleIssues(currentState.readiness.issues, currentIssues));
-      }
+      flushGlobalSessionShell();
     });
   }, STREAM_MEDIA_ISSUES_DEBOUNCE_MS);
 }
@@ -73,13 +160,21 @@ function isStreamPlaybackActive(): boolean {
 function renderState(state: DirectorState): void {
   currentState = state;
   surfaceRouter.render(state);
-  renderIssueList(patchElements.issueList, combineVisibleIssues(state.readiness.issues, currentIssues));
+  flushGlobalSessionShell();
+  scheduleMaybeAutoOpenMissingRelink();
 }
 
 function setShowStatus(message: string, issues: MediaValidationIssue[] = currentIssues): void {
-  patchElements.showStatus.textContent = message;
   currentIssues = issues;
-  renderIssueList(patchElements.issueList, combineVisibleIssues(currentState?.readiness.issues ?? [], currentIssues));
+  const trimmed = message.trim();
+  setGlobalSessionHint(elements.globalSessionHint, trimmed.length > 0 ? message : undefined);
+  logSessionEvent({
+    checkpoint: 'operation_status',
+    domain: 'global',
+    kind: 'operation',
+    extra: { message, issueCount: issues.length },
+  });
+  flushGlobalSessionShell();
 }
 
 async function loadAudioDevices(): Promise<void> {
@@ -208,7 +303,17 @@ const surfaceRouter = createSurfaceRouter({
   ],
 });
 
-subscribeShowOpenProfileLogBuffer(() => {
+flushGlobalSessionShell = (): void => {
+  emitSessionLogTransitionEdges();
+  const items = buildSessionProblemStripItems({
+    director: currentState,
+    mediaIssues: currentIssues,
+    stream: latestStreamState,
+  });
+  renderGlobalSessionProblems(elements.globalSessionProblems, items, surfaceRouter.getActiveSurface());
+};
+
+subscribeSessionLogBuffer(() => {
   const s = currentState;
   if (s && surfaceRouter.getActiveSurface() === 'config') {
     surfaceRouter.render(s);
@@ -226,15 +331,20 @@ window.xtream.stream.onState((state) => {
   latestStreamState = state;
   patchSurface.syncTransportInputs();
   scheduleRefreshStreamMediaIssues();
+  flushGlobalSessionShell();
 });
 void window.xtream.stream.getState().then((s) => {
   latestStreamState = s;
   patchSurface.syncTransportInputs();
+  flushGlobalSessionShell();
 });
 
 hydrateControlShellAfterShow = async (result, ctx) => {
   const filePath = result.filePath;
   setShownProjectPath(filePath);
+  if (filePath) {
+    resetMissingRelinkDismissState();
+  }
   if (!filePath) {
     return;
   }
@@ -266,6 +376,7 @@ hydrateControlShellAfterShow = async (result, ctx) => {
         extra: { hasSnapshot: Boolean(snapshot), v: snapshot?.v },
       });
     }
+    scheduleMaybeAutoOpenMissingRelink();
     return;
   }
   if (snapshot.patch && Object.keys(snapshot.patch).length > 0) {
@@ -302,6 +413,7 @@ hydrateControlShellAfterShow = async (result, ctx) => {
       sinceRunStartMs: performance.now() - ctx.flowStartMs,
     });
   }
+  scheduleMaybeAutoOpenMissingRelink();
 };
 
 window.__xtreamGetControlUiSnapshot = (): ControlProjectUiStateV1 | null => {
@@ -430,7 +542,7 @@ window.xtream.audioRuntime.onMeterLanes((report) => {
   streamSurface.applyOutputMeterReport(report);
 });
 void window.xtream.renderer.ready({ kind: 'control' });
-installShowOpenProfileLogBridge();
+installSessionLogBridge();
 void launchDashboard.load();
 void loadAudioDevices();
 void loadDisplayMonitors();

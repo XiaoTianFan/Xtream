@@ -31,7 +31,7 @@ export function createStreamMediaPoolElements(panel: HTMLElement, refs: StreamSu
   const heading = document.createElement('h2');
   heading.textContent = 'Media Pool';
   const addVisualsButton = createButton('Add Media', '', () => undefined);
-  decorateIconButton(addVisualsButton, 'Plus', 'Add visuals');
+  decorateIconButton(addVisualsButton, 'Plus', 'Add media');
   const visualPoolLayoutToggleButton = createButton('', 'icon-button', () => undefined);
   decorateIconButton(visualPoolLayoutToggleButton, 'LayoutGrid', 'Show grid view');
   visualPoolLayoutToggleButton.id = 'streamVisualPoolLayoutToggleButton';

@@ -32,9 +32,11 @@ import type {
   LaunchShowData,
   MediaValidationIssue,
   MediaPoolImportFilesPayload,
+  MediaPoolClassifiedPaths,
   MissingMediaListItem,
   MissingMediaRelinkPayload,
   BatchMissingMediaRelinkResult,
+  BatchMissingMediaRelinkPayload,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -54,6 +56,12 @@ import type {
   VirtualOutputState,
   VirtualOutputUpdate,
 } from '../shared/types';
+
+function registerSessionLogListener(callback: (entry: ShowOpenProfileLogEntry) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, entry: ShowOpenProfileLogEntry) => callback(entry);
+  ipcRenderer.on('session-log:entry', listener);
+  return () => ipcRenderer.removeListener('session-log:entry', listener);
+}
 
 const DIRECTOR_EVENTS = new Set<DirectorEventName>(['director:state']);
 const STREAM_EVENTS = new Set<StreamEventName>(['stream:state']);
@@ -83,6 +91,11 @@ const api = {
       ipcRenderer.on('display:identify-flash', listener);
       return () => ipcRenderer.removeListener('display:identify-flash', listener);
     },
+  },
+  mediaPool: {
+    chooseImportFiles: (): Promise<string[]> => ipcRenderer.invoke('media-pool:choose-import-files'),
+    classifyImportPaths: (filePaths: string[]): Promise<MediaPoolClassifiedPaths> =>
+      ipcRenderer.invoke('media-pool:classify-import-paths', filePaths),
   },
   visuals: {
     chooseFiles: (): Promise<string[]> => ipcRenderer.invoke('visual:choose-files'),
@@ -186,8 +199,8 @@ const api = {
     relinkMissingMedia: (payload: MissingMediaRelinkPayload): Promise<DirectorState> =>
       ipcRenderer.invoke('show:relink-missing-media', payload),
     chooseBatchRelinkDirectory: (): Promise<string | undefined> => ipcRenderer.invoke('show:choose-batch-relink-directory'),
-    batchRelinkFromDirectory: (directory: string, mode: 'link' | 'copy'): Promise<BatchMissingMediaRelinkResult> =>
-      ipcRenderer.invoke('show:batch-relink-from-directory', directory, mode),
+    batchRelinkFromDirectory: (payload: BatchMissingMediaRelinkPayload): Promise<BatchMissingMediaRelinkResult> =>
+      ipcRenderer.invoke('show:batch-relink-from-directory', payload),
   },
   controlUi: {
     getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),
@@ -208,12 +221,11 @@ const api = {
       return () => ipcRenderer.removeListener('control-ui:shell-modal-dismiss-all', listener);
     },
   },
+  sessionLog: {
+    onEntry: (callback: (entry: ShowOpenProfileLogEntry) => void): (() => void) => registerSessionLogListener(callback),
+  },
   showOpenProfile: {
-    onLog: (callback: (entry: ShowOpenProfileLogEntry) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, entry: ShowOpenProfileLogEntry) => callback(entry);
-      ipcRenderer.on('show-open-profile:log', listener);
-      return () => ipcRenderer.removeListener('show-open-profile:log', listener);
-    },
+    onLog: (callback: (entry: ShowOpenProfileLogEntry) => void): (() => void) => registerSessionLogListener(callback),
   },
   renderer: {
     ready: (report: RendererReadyReport): Promise<void> => ipcRenderer.invoke('renderer:ready', report),

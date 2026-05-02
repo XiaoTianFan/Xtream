@@ -27,6 +27,8 @@ export const elements = {
   extractionOverlayActions: assertElement(document.querySelector<HTMLDivElement>('#extractionOverlayActions'), 'extractionOverlayActions'),
   shellModalHost: assertElement(document.querySelector<HTMLElement>('#shellModalHost'), 'shellModalHost'),
   runtimeVersionLabel: assertElement(document.querySelector<HTMLSpanElement>('#runtimeVersionLabel'), 'runtimeVersionLabel'),
+  globalSessionProblems: assertElement(document.querySelector<HTMLDivElement>('#globalSessionProblems'), 'globalSessionProblems'),
+  globalSessionHint: assertElement(document.querySelector<HTMLDivElement>('#globalSessionHint'), 'globalSessionHint'),
   globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
   displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
   clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),

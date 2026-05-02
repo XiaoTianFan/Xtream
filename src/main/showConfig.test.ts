@@ -466,6 +466,7 @@ describe('show config persistence helpers', () => {
     expect(report.state).toEqual(state);
     expect(report.issues).toContainEqual(expect.objectContaining({ target: 'display' }));
     expect(report.logs.showOpenProfile).toEqual([]);
+    expect(report.logs.session).toEqual([]);
 
     const entry = {
       runId: 'run-1',
@@ -473,10 +474,13 @@ describe('show config persistence helpers', () => {
       sinceRunStartMs: 12,
       loggedAt: 1700000000000,
       source: 'main' as const,
+      domain: 'main' as const,
+      kind: 'checkpoint' as const,
     };
     const buffer = [entry];
-    const withLogs = createDiagnosticsReport(state, '1.0.0', XTREAM_RUNTIME_VERSION, { showOpenProfileLog: buffer });
+    const withLogs = createDiagnosticsReport(state, '1.0.0', XTREAM_RUNTIME_VERSION, { sessionLog: buffer });
     expect(withLogs.logs.showOpenProfile).toEqual([entry]);
+    expect(withLogs.logs.session).toEqual([entry]);
     expect(withLogs.logs.showOpenProfile).not.toBe(buffer);
   });
 

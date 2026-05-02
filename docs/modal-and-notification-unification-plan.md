@@ -149,7 +149,7 @@ Electron main cannot render HTML; the modal must paint in the **control** `Brows
 
 1. Implement `**shellShowConfirm` / `shellShowAlert`** (and `shellShowChoiceModal`) in the renderer backed by the new host (blocking `Promise` API).
 2. Replace each `**window.confirm`** call site with `**await shellShowConfirm`** (callers may need `async` propagation—keep UI handlers `void` wrappers where needed).
-3. Replace `**window.alert`** in `missingMediaRelinkModal.ts` with `**shellShowAlert**` (or inline error state inside the modal for batch errors—preferred UX: no second modal stacking).
+3. Replace `**window.alert`** in `missingMediaRelinkModal.ts` with `**shellShowAlert`** (or inline error state inside the modal for batch errors—preferred UX: no second modal stacking).
 
 **Exit criteria:** Grep finds no `confirm(` / `alert(` in `src/renderer` except inside the modal subsystem itself.
 

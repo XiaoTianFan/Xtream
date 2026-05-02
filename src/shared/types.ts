@@ -771,6 +771,13 @@ export type BatchMissingMediaRelinkResult = {
   notFoundFilenames: string[];
 };
 
+export type BatchMissingMediaRelinkPayload = {
+  directory: string;
+  mode: MediaImportMode;
+  /** When set, only try to relink these missing item ids; when omitted, all currently missing pool media. */
+  onlyIds?: string[];
+};
+
 export type ShowConfigOperationResult = {
   state: DirectorState;
   filePath?: string;
@@ -788,13 +795,16 @@ export type ShowDiskActionIpcOpts = {
 };
 
 export type DiagnosticsReportLogs = {
-  /** Show-open checkpoints (main + renderer), same source as Config → profile log. */
+  /** @deprecated Prefer {@link DiagnosticsReportLogs.session} — checkpoints + session rows (backward compatible alias). */
   showOpenProfile: ShowOpenProfileLogEntry[];
+  session: ShowOpenProfileLogEntry[];
 };
 
 /** Optional structured data attached from the control renderer when exporting diagnostics. */
 export type DiagnosticsExportAttachPayload = {
+  /** @deprecated Prefer `sessionLog` — same payload as unified session buffer. */
   showOpenProfileLog?: ShowOpenProfileLogEntry[];
+  sessionLog?: ShowOpenProfileLogEntry[];
 };
 
 export type DiagnosticsReport = {
@@ -1023,12 +1033,21 @@ export type MediaPoolImportFilesPayload = {
   mode: MediaImportMode;
 };
 
+export type MediaPoolClassifiedPaths = {
+  visualPaths: string[];
+  audioPaths: string[];
+  /** Missing, unreadable, or unsupported extensions. */
+  unsupportedPaths: string[];
+};
+
 export type IpcChannels = {
   'director:get-state': () => DirectorState;
   'director:apply-preset': (preset: PresetId) => PresetResult;
   'director:transport': (command: TransportCommand) => DirectorState;
   'director:update-global-state': (update: GlobalStateUpdate) => DirectorState;
   'visual:choose-files': () => string[];
+  'media-pool:choose-import-files': () => string[];
+  'media-pool:classify-import-paths': (filePaths: string[]) => MediaPoolClassifiedPaths;
   'visual:import-files': (payload: MediaPoolImportFilesPayload) => VisualState[];
   'visual:update': (visualId: VisualId, update: VisualUpdate) => VisualState;
   'visual:replace': (visualId: VisualId) => VisualState | undefined;
@@ -1077,7 +1096,7 @@ export type IpcChannels = {
   'show:list-missing-media': () => MissingMediaListItem[];
   'show:relink-missing-media': (payload: MissingMediaRelinkPayload) => DirectorState;
   'show:choose-batch-relink-directory': () => string | undefined;
-  'show:batch-relink-from-directory': (directory: string, mode: MediaImportMode) => BatchMissingMediaRelinkResult;
+  'show:batch-relink-from-directory': (payload: BatchMissingMediaRelinkPayload) => BatchMissingMediaRelinkResult;
   'display:create': (options?: DisplayCreateOptions) => DisplayWindowState;
   'display:update': (id: DisplayWindowId, update: DisplayUpdate) => DisplayWindowState;
   'display:close': (id: DisplayWindowId) => boolean;

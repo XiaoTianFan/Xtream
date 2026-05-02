@@ -10,9 +10,9 @@ import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
 import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from '../../../shared/embeddedAudioImportPrompt';
-import { chooseMediaImportMode, openMediaImportModal, runMediaImportAfterPickerChoice } from './mediaImportModal';
 import { mountVisualPoolGridPreview } from './visualPoolGridPreview';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
+import { runUnifiedManualMediaImport, runUnifiedMediaPoolImport } from './unifiedMediaPoolImport';
 
 type PoolTab = 'visuals' | 'audio';
 type PoolSort = 'label' | 'duration' | 'status';
@@ -200,7 +200,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     if (lastListVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListListPane)) {
       const listRows = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual));
       elements.visualListListPane.replaceChildren(
-        ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), (cta) => showAddVisualsMenu(cta))]),
+        ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => void runUnifiedManualMediaImport(buildUnifiedImportDeps()))]),
       );
       lastListVisualsDomKey = cKey;
     }
@@ -209,7 +209,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       clearVisualPoolGridCleanups();
       const gridCards = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualGridCard(visual));
       elements.visualListGridPane.replaceChildren(
-        ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), (cta) => showAddVisualsMenu(cta))]),
+        ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => void runUnifiedManualMediaImport(buildUnifiedImportDeps()))]),
       );
       lastGridVisualsDomKey = cKey;
     }
@@ -251,7 +251,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       createAudioSourceRow(source, state),
     );
     elements.audioPanel.replaceChildren(
-      ...(audioRows.length > 0 ? audioRows : [createMediaPoolEmptyState(audioPoolEmptyMessage(state), (_trigger) => void runPoolHeaderAudioImport())]),
+      ...(audioRows.length > 0 ? audioRows : [createMediaPoolEmptyState(audioPoolEmptyMessage(state), () => void runUnifiedManualMediaImport(buildUnifiedImportDeps()))]),
     );
   }
 
@@ -627,25 +627,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     options.renderState(await window.xtream.director.getState());
   }
 
-  async function runPoolHeaderAudioImport(): Promise<void> {
-    const modeChoice = await chooseMediaImportMode('audio');
-    if (modeChoice.kind !== 'mode') {
-      return;
-    }
-    const picked = await window.xtream.audioSources.chooseFile();
-    if (!picked) {
-      return;
-    }
-    const result = await runMediaImportAfterPickerChoice('audio', [picked], modeChoice.mode);
-    if (result.kind !== 'audio') {
-      return;
-    }
-    if (result.sources[0]) {
-      options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
-    }
-    options.renderState(await window.xtream.director.getState());
-  }
-
   function showAddVisualsMenu(anchor: HTMLElement = elements.addVisualsButton): void {
     dismissAudioSourceContextMenu();
     const menu = document.createElement('div');
@@ -654,24 +635,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     menu.addEventListener('click', (event) => event.stopPropagation());
     const localFiles = createButton('Local static files', 'secondary context-menu-item', async () => {
       dismissAudioSourceContextMenu();
-      const modeChoice = await chooseMediaImportMode('visual');
-      if (modeChoice.kind !== 'mode') {
-        return;
-      }
-      const paths = await window.xtream.visuals.chooseFiles();
-      if (paths.length === 0) {
-        return;
-      }
-      const result = await runMediaImportAfterPickerChoice('visual', paths, modeChoice.mode);
-      if (result.kind !== 'visual') {
-        return;
-      }
-      options.queueEmbeddedAudioImportPrompt(result.visuals);
-      result.visuals.forEach(options.probeVisualMetadata);
-      if (result.visuals[0]) {
-        options.setSelectedEntity({ type: 'visual', id: result.visuals[0].id });
-      }
-      options.renderState(await window.xtream.director.getState());
+      await runUnifiedManualMediaImport(buildUnifiedImportDeps());
     });
     localFiles.setAttribute('role', 'menuitem');
     const liveStream = createButton('Add Live Stream', 'secondary context-menu-item', () => showLiveSourceMenu(menu));
@@ -945,9 +909,20 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.visualTabButton.setAttribute('aria-selected', String(visualActive));
     elements.audioTabButton.classList.toggle('active', !visualActive);
     elements.audioTabButton.setAttribute('aria-selected', String(!visualActive));
-    elements.addVisualsButton.title = visualActive ? 'Add visuals' : 'Add external audio';
-    elements.addVisualsButton.setAttribute('aria-label', visualActive ? 'Add visuals' : 'Add external audio');
+    elements.addVisualsButton.title = 'Add media';
+    elements.addVisualsButton.setAttribute('aria-label', 'Add media');
     syncVisualPoolLayoutToggle();
+  }
+
+  function buildUnifiedImportDeps() {
+    return {
+      setShowStatus: options.setShowStatus,
+      queueEmbeddedAudioImportPrompt: options.queueEmbeddedAudioImportPrompt,
+      probeVisualMetadata: options.probeVisualMetadata,
+      setSelectedEntity: options.setSelectedEntity,
+      renderState: options.renderState,
+      selectPoolTab: setPoolTab,
+    };
   }
 
   function setPoolTab(tab: PoolTab): void {
@@ -1049,21 +1024,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
         options.setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
         return;
       }
-      const kind = activePoolTab === 'visuals' ? ('visual' as const) : ('audio' as const);
-      const result = await openMediaImportModal(kind, paths);
-      if (result.kind === 'canceled') {
-        return;
-      }
-      if (kind === 'visual' && result.kind === 'visual') {
-        options.queueEmbeddedAudioImportPrompt(result.visuals);
-        result.visuals.forEach(options.probeVisualMetadata);
-        if (result.visuals[0]) {
-          options.setSelectedEntity({ type: 'visual', id: result.visuals[0].id });
-        }
-      } else if (kind === 'audio' && result.kind === 'audio' && result.sources[0]) {
-        options.setSelectedEntity({ type: 'audio-source', id: result.sources[0].id });
-      }
-      options.renderState(await window.xtream.director.getState());
+      await runUnifiedMediaPoolImport(paths, buildUnifiedImportDeps());
     });
     elements.visualPoolLayoutToggleButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1074,7 +1035,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.addVisualsButton.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (activePoolTab === 'audio') {
-        await runPoolHeaderAudioImport();
+        await runUnifiedManualMediaImport(buildUnifiedImportDeps());
       } else {
         showAddVisualsMenu();
       }

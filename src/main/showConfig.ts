@@ -637,7 +637,7 @@ export function createDiagnosticsReport(
   runtimeVersion: string,
   attach?: DiagnosticsExportAttachPayload,
 ): DiagnosticsReport {
-  const showOpenProfile = attach?.showOpenProfileLog ?? [];
+  const attached = [...(attach?.sessionLog ?? attach?.showOpenProfileLog ?? [])];
   return {
     generatedAt: new Date().toISOString(),
     appVersion,
@@ -648,7 +648,8 @@ export function createDiagnosticsReport(
     issues: validateRuntimeState(state),
     readiness: state.readiness,
     logs: {
-      showOpenProfile: [...showOpenProfile],
+      showOpenProfile: [...attached],
+      session: [...attached],
     },
   };
 }

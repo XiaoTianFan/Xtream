@@ -30,15 +30,94 @@
   grid-row: 2;
   grid-column: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gutter);
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px var(--gutter);
+  row-gap: 8px;
   background: #0e0e0f;
   padding: 0 var(--pane-padding);
   color: var(--text-secondary);
   font-size: 0.7rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.status-footer-meta {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.global-session-problems {
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.global-session-problems[hidden] {
+  display: none !important;
+}
+
+.global-session-hint {
+  flex: 0 1 280px;
+  min-width: 0;
+  align-self: center;
+  padding: 0.15rem 0;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--accent-teal) 92%, white);
+}
+
+.global-session-hint[hidden] {
+  display: none !important;
+}
+
+.session-problem-chip {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--outline-variant);
+  background: color-mix(in srgb, var(--surface-muted) 88%, transparent);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.session-problem-chip--error {
+  border-color: color-mix(in srgb, var(--status-critical) 45%, var(--outline-variant));
+  background: color-mix(in srgb, var(--status-critical) 12%, transparent);
+}
+
+.session-problem-chip--warning {
+  border-color: color-mix(in srgb, var(--accent-ochre) 40%, var(--outline-variant));
+  background: color-mix(in srgb, var(--accent-ochre) 10%, transparent);
+}
+
+.session-problem-domain {
+  flex: 0 0 auto;
+  font-family: var(--font-data, inherit);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.92;
+}
+
+.session-problem-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sr-only {

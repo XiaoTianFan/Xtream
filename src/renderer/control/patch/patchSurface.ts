@@ -20,6 +20,7 @@ import { createMediaPoolController } from './mediaPool';
 import { createMixerPanelController } from './mixerPanel';
 import { createPatchHeaderController, type PatchHeaderController } from './patchHeader';
 import { openMissingMediaRelinkModal } from './missingMediaRelinkModal';
+import { markDismissedMissingSignatureIfStillMissing } from './missingMediaRelinkAutoOpen';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 
 type PatchSurfaceOptions = {
@@ -182,6 +183,9 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       void openMissingMediaRelinkModal({
         onRelinked: () => {
           options.refreshMediaOperationIssues();
+        },
+        onClose: (still) => {
+          markDismissedMissingSignatureIfStillMissing(still);
         },
       });
     });

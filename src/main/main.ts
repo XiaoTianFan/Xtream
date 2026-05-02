@@ -30,8 +30,17 @@ import {
 } from './showConfig';
 import { getActiveDisplays } from '../shared/layouts';
 import type { ShowOpenProfileLogEntry, ShowOpenProfilePayload } from '../shared/showOpenProfile';
+import { normalizeSessionLogEntry } from '../shared/showOpenProfile';
 import { mergeShowConfigPatchRouting } from '../shared/streamWorkspace';
 import { buildEmbeddedAudioImportPrompt } from '../shared/embeddedAudioImportPrompt';
+import {
+  allMediaPoolImportDialogExtensions,
+  AUDIO_FILE_IMPORT_EXTENSIONS,
+  classifyMediaPoolExtension,
+  VISUAL_IMPORT_EXTENSIONS,
+  VISUAL_IMPORT_EXTENSION_SET,
+  AUDIO_FILE_IMPORT_EXTENSION_SET,
+} from '../shared/mediaImportClassification';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
@@ -55,9 +64,11 @@ import type {
   LaunchShowData,
   MediaValidationIssue,
   MediaPoolImportFilesPayload,
+  MediaPoolClassifiedPaths,
   MissingMediaListItem,
   MissingMediaRelinkPayload,
   BatchMissingMediaRelinkResult,
+  BatchMissingMediaRelinkPayload,
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
@@ -106,11 +117,23 @@ let showExplicitDirty = false;
 /** Skip flushing pending autosave on shutdown (Don't save branch). */
 let skipAutoSaveFlushOnShutdown = false;
 
-function forwardShowOpenProfileFromMain(payload: ShowOpenProfilePayload): void {
-  if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
-    const entry: ShowOpenProfileLogEntry = { ...payload, loggedAt: Date.now(), source: 'main' };
-    controlWindow.webContents.send('show-open-profile:log', entry);
+function forwardSessionLogFromMain(payload: ShowOpenProfilePayload): void {
+  if (!controlWindow || controlWindow.isDestroyed() || controlWindow.webContents.isDestroyed()) {
+    return;
   }
+  const entry: ShowOpenProfileLogEntry = normalizeSessionLogEntry(
+    {
+      checkpoint: payload.checkpoint,
+      runId: payload.runId,
+      sinceRunStartMs: payload.sinceRunStartMs,
+      segmentMs: payload.segmentMs,
+      extra: payload.extra,
+      domain: 'main',
+      kind: 'checkpoint',
+    },
+    'main',
+  );
+  controlWindow.webContents.send('session-log:entry', entry);
 }
 
 function normalizeShowProjectKey(configPath: string): string {
@@ -167,9 +190,6 @@ const pendingDisplayMediaGrants = new Map<number, PendingDisplayMediaGrant[]>();
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const preloadPath = path.join(__dirname, '../preload/preload.js');
 const rendererRoot = path.join(__dirname, '../../renderer');
-const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
-/** Matches add-file dialog: Audio + Video/Audio groups (excludes * catch-all) */
-const AUDIO_FILE_IMPORT_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'm4v', 'webm']);
 const CONTROL_PROJECT_UI_STATE_FILENAME = 'control-project-ui-state.json';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -582,7 +602,7 @@ function createDroppedVisualImportItems(filePaths: string[]): VisualImportItem[]
   const items: VisualImportItem[] = [];
   for (const filePath of filePaths) {
     const extension = path.extname(filePath).toLowerCase().replace('.', '');
-    if (!VISUAL_IMPORT_EXTENSIONS.has(extension) || !fs.existsSync(filePath)) {
+    if (!VISUAL_IMPORT_EXTENSION_SET.has(extension) || !fs.existsSync(filePath)) {
       continue;
     }
     items.push(createVisualImportItem(filePath));
@@ -594,7 +614,7 @@ function createDroppedAudioFilePaths(filePaths: string[]): string[] {
   const paths: string[] = [];
   for (const filePath of filePaths) {
     const extension = path.extname(filePath).toLowerCase().replace('.', '');
-    if (!AUDIO_FILE_IMPORT_EXTENSIONS.has(extension) || !fs.existsSync(filePath)) {
+    if (!AUDIO_FILE_IMPORT_EXTENSION_SET.has(extension) || !fs.existsSync(filePath)) {
       continue;
     }
     paths.push(filePath);
@@ -602,12 +622,44 @@ function createDroppedAudioFilePaths(filePaths: string[]): string[] {
   return paths;
 }
 
+function classifyMediaPoolPathsOnDisk(filePaths: string[]): MediaPoolClassifiedPaths {
+  const seen = new Set<string>();
+  const visualPaths: string[] = [];
+  const audioPaths: string[] = [];
+  const unsupportedPaths: string[] = [];
+
+  for (const filePath of filePaths) {
+    const key = path.resolve(filePath).toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    if (!fs.existsSync(filePath)) {
+      unsupportedPaths.push(filePath);
+      continue;
+    }
+
+    const extension = path.extname(filePath).toLowerCase().replace('.', '');
+    const bucket = classifyMediaPoolExtension(extension);
+    if (bucket === 'unsupported') {
+      unsupportedPaths.push(filePath);
+    } else if (bucket === 'visual') {
+      visualPaths.push(filePath);
+    } else {
+      audioPaths.push(filePath);
+    }
+  }
+
+  return { visualPaths, audioPaths, unsupportedPaths };
+}
+
 async function pickVisualFiles(properties: Electron.OpenDialogOptions['properties']): Promise<VisualImportItem[] | undefined> {
   const options: Electron.OpenDialogOptions = {
     title: 'Choose visual media',
     properties,
     filters: [
-      { name: 'Visual Media', extensions: ['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif'] },
+      { name: 'Visual Media', extensions: [...VISUAL_IMPORT_EXTENSIONS] },
       { name: 'Video', extensions: ['mp4', 'mov', 'm4v', 'webm', 'ogv'] },
       { name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
       { name: 'All Files', extensions: ['*'] },
@@ -637,7 +689,7 @@ function restoreShowConfigFromDiskConfig(
     if (!profile) {
       return;
     }
-    forwardShowOpenProfileFromMain({
+    forwardSessionLogFromMain({
       runId: profile.runId,
       checkpoint,
       sinceRunStartMs: Date.now() - profile.t0,
@@ -700,10 +752,10 @@ function restoreShowConfigFromDiskConfig(
 async function openShowConfigPath(configPath: string): Promise<ShowConfigOperationResult> {
   const runId = `so-${Date.now()}-${randomBytes(4).toString('hex')}`;
   const t0 = Date.now();
-  forwardShowOpenProfileFromMain({ runId, checkpoint: 'main_open_path_enter', sinceRunStartMs: 0 });
+  forwardSessionLogFromMain({ runId, checkpoint: 'main_open_path_enter', sinceRunStartMs: 0 });
   let seg = Date.now();
   const config = hydratePersistedShowMediaPaths(await readShowConfig(configPath), configPath);
-  forwardShowOpenProfileFromMain({
+  forwardSessionLogFromMain({
     runId,
     checkpoint: 'main_read_config_done',
     sinceRunStartMs: Date.now() - t0,
@@ -711,7 +763,7 @@ async function openShowConfigPath(configPath: string): Promise<ShowConfigOperati
   });
   seg = Date.now();
   const result = restoreShowConfigFromDiskConfig(configPath, config, { runId, t0 });
-  forwardShowOpenProfileFromMain({
+  forwardSessionLogFromMain({
     runId,
     checkpoint: 'main_restore_call_done',
     sinceRunStartMs: Date.now() - t0,
@@ -719,13 +771,13 @@ async function openShowConfigPath(configPath: string): Promise<ShowConfigOperati
   });
   seg = Date.now();
   await addRecentShow(app.getPath('userData'), configPath);
-  forwardShowOpenProfileFromMain({
+  forwardSessionLogFromMain({
     runId,
     checkpoint: 'main_add_recent_done',
     sinceRunStartMs: Date.now() - t0,
     segmentMs: Date.now() - seg,
   });
-  forwardShowOpenProfileFromMain({ runId, checkpoint: 'main_open_path_exit', sinceRunStartMs: Date.now() - t0 });
+  forwardSessionLogFromMain({ runId, checkpoint: 'main_open_path_exit', sinceRunStartMs: Date.now() - t0 });
   return result;
 }
 
@@ -1017,6 +1069,25 @@ function registerIpcHandlers(): void {
     const items = await pickVisualFiles(['openFile', 'multiSelections']);
     return items?.map((item) => item.path) ?? [];
   });
+
+  ipcMain.handle('media-pool:choose-import-files', async () => {
+    const result = await showOpenDialog({
+      title: 'Import media',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'All supported media', extensions: allMediaPoolImportDialogExtensions() },
+        { name: 'Visual media', extensions: [...VISUAL_IMPORT_EXTENSIONS] },
+        { name: 'Audio', extensions: [...AUDIO_FILE_IMPORT_EXTENSIONS] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return [];
+    }
+    return result.filePaths;
+  });
+
+  ipcMain.handle('media-pool:classify-import-paths', (_event, filePaths: string[]) => classifyMediaPoolPathsOnDisk(filePaths));
 
   ipcMain.handle('visual:import-files', async (_event, payload: MediaPoolImportFilesPayload) => {
     const items = createDroppedVisualImportItems(payload.filePaths);
@@ -1329,8 +1400,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'show:batch-relink-from-directory',
-    async (_event, directory: string, mode: 'link' | 'copy'): Promise<BatchMissingMediaRelinkResult> => {
-      const dir = path.resolve(directory);
+    async (_event, payload: BatchMissingMediaRelinkPayload): Promise<BatchMissingMediaRelinkResult> => {
+      const dir = path.resolve(payload.directory);
       let stat: fs.Stats;
       try {
         stat = fs.statSync(dir);
@@ -1340,7 +1411,11 @@ function registerIpcHandlers(): void {
       if (!stat.isDirectory()) {
         throw new Error(`Not a directory: ${dir}`);
       }
-      const missing = listMissingMediaItems();
+      let missing = listMissingMediaItems();
+      if (payload.onlyIds && payload.onlyIds.length > 0) {
+        const allow = new Set(payload.onlyIds);
+        missing = missing.filter((m) => allow.has(m.id));
+      }
       const relinkedIds: string[] = [];
       const notFoundFilenames: string[] = [];
       for (const item of missing) {
@@ -1350,9 +1425,9 @@ function registerIpcHandlers(): void {
           continue;
         }
         const assetKind: 'visual' | 'audio' = item.kind === 'visual' ? 'visual' : 'audio';
-        const finalPath = await resolveRelinkPickerPath(candidate, mode, assetKind);
+        const finalPath = await resolveRelinkPickerPath(candidate, payload.mode, assetKind);
         applyResolvedRelink(
-          { kind: item.kind, id: item.id, sourcePath: candidate, mode },
+          { kind: item.kind, id: item.id, sourcePath: candidate, mode: payload.mode },
           finalPath,
         );
         relinkedIds.push(item.id);

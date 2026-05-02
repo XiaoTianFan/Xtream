@@ -29,17 +29,11 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     renderDirectorState,
     requestRender,
   } = deps;
+  void streamPublic;
 
   const wrap = document.createElement('section');
   wrap.className = 'stream-scene-edit';
   wrap.classList.toggle('is-locked', isSceneRunning);
-
-  if (streamPublic.validationMessages.length > 0) {
-    const vb = document.createElement('div');
-    vb.className = 'stream-validation-banner hint';
-    vb.textContent = streamPublic.validationMessages.slice(0, 6).join(' · ');
-    wrap.append(vb);
-  }
 
   const rail = createSubCueRail({
     stream,
