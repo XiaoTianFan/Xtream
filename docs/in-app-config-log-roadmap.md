@@ -276,4 +276,3 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 
 - `docs/stream-workspace-and-runtime-plan.md` — Stream timeline, scene states, transport semantics; footer strip / session log cross-link under “Current implementation context”.
 - `src/shared/streamSchedule.ts` — `StreamScheduleIssue`, `getAuthoringIssuesForStreamUi`, `getStreamAuthoringErrorHighlights`, human-readable validation messages for stream authoring.
-

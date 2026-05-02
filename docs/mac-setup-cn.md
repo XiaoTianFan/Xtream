@@ -35,7 +35,7 @@ Git 是一个版本控制工具，用于从 GitHub 等平台下载代码。
 
 1. **找到你要克隆的 GitHub 仓库页面。**`https://github.com/XiaoTianFan/Xtream`
 2. 在仓库页面的右上方，找到绿色的 `**Code`** 按钮，点击它。
-3. 在弹出的菜单中，选择 `**HTTPS**` 标签页，然后点击旁边的 **剪贴板图标** 复制仓库的 URL (链接)。它看起来像这样：`https://github.com/XiaoTianFan/Xtream.git`
+3. 在弹出的菜单中，选择 `**HTTPS`** 标签页，然后点击旁边的 **剪贴板图标** 复制仓库的 URL (链接)。它看起来像这样：`https://github.com/XiaoTianFan/Xtream.git`
 4. 回到 Terminal，输入 `git clone`，然后粘贴你刚刚复制的 URL。确保 `git clone` 和 URL 之间有一个空格。
   ```bash
     git clone https://github.com/XiaoTianFan/Xtream.git
