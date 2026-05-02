@@ -33,10 +33,27 @@
 
 .config-tab-panels {
   flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: var(--panel-padding-top) var(--pane-padding) var(--pane-padding);
+}
+
+.config-tab-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Overview uses `.config-overview-columns`; other tabs use `.surface-grid` — both fill the upper pane. */
+.config-tab-panel:not([hidden]) > .surface-grid {
+  flex: 1 1 0;
+  min-height: 0;
+  align-content: start;
 }
 
 .config-surface-log {
@@ -115,21 +132,41 @@ button.config-log-header-btn {
 /* Config Overview: left column = Runtime + Patch Topology stacked; right = App configuration */
 .config-overview-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 22rem);
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
   gap: var(--gutter);
+  flex: 1 1 0;
   width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Bounded min-height:auto so dense overview content scrolls inside the stretched row */
+.config-overview-columns > .surface-card {
+  min-height: 0;
+  overflow: auto;
 }
 
 .config-overview-stack {
   display: flex;
   flex-direction: column;
   gap: var(--gutter);
+  flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+}
+
+/* Use leftover height in the left column so topology aligns with filled right column */
+.config-overview-stack > .surface-card:last-child {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 @media (max-width: 720px) {
   .config-overview-columns {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
   }
 }

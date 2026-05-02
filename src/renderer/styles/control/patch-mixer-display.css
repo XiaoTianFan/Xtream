@@ -48,7 +48,7 @@
 
 .media-list-region .asset-row {
   display: grid;
-  grid-template-columns: min-content minmax(0, 1fr) minmax(0, 1.15fr) var(--media-pool-row-tail, 1.75rem);
+  grid-template-columns: min-content minmax(0, 1fr) minmax(0, 1.15fr) var(--media-pool-row-tail, 2rem);
   align-items: center;
   column-gap: 0.45rem;
   min-height: 2.85rem;
@@ -90,7 +90,7 @@
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  height: var(--media-pool-row-tail, 1.75rem);
+  height: var(--media-pool-row-tail, 2rem);
   justify-self: end;
   align-self: center;
 }
@@ -99,9 +99,9 @@
   position: absolute;
   inset: 0;
   margin: auto;
-  width: 1.25rem;
-  min-width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.2rem;
 }
 
 .media-list-region .asset-row__tail .row-action {

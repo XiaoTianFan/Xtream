@@ -1,7 +1,11 @@
 import { patchElements as elements } from './elements';
 import type { LayoutPrefs } from '../shared/types';
+import { notifyPatchWorkspaceSharedDimsChanged } from '../shared/workspacePaneTwinSync';
 
-const UI_PREF_KEY = 'xtream.control.layout.v1';
+/** localStorage key shared with project UI snapshots (see `ControlProjectUiPatchLayout`). */
+export const PATCH_LAYOUT_LS_KEY = 'xtream.control.layout.v1';
+
+const UI_PREF_KEY = PATCH_LAYOUT_LS_KEY;
 
 let mixerExpandedTemporarily = false;
 
@@ -16,7 +20,7 @@ export function installSplitters(): void {
   installSplitter(elements.mainFooterSplitter, 'y', (delta) => {
     const frame = elements.mainFooterSplitter.parentElement!;
     const current = readLayoutPrefs().footerHeightPx ?? frame.querySelector<HTMLElement>('.operator-footer')!.getBoundingClientRect().height;
-    saveLayoutPrefs({ footerHeightPx: clamp(current - delta, 180, Math.max(220, frame.getBoundingClientRect().height - 280)) });
+    saveLayoutPrefs({ footerHeightPx: clamp(current - delta, 220, Math.max(220, frame.getBoundingClientRect().height - 280)) });
   });
   installSplitter(elements.footerSplitter, 'x', (delta) => {
     const footer = elements.footerSplitter.parentElement!;
@@ -42,7 +46,7 @@ export function syncSplitterAria(): void {
   const footer = mainFrame?.querySelector<HTMLElement>('.operator-footer');
   if (mainFrame && footer) {
     const frameH = mainFrame.getBoundingClientRect().height;
-    const minH = 180;
+    const minH = 220;
     const maxH = Math.max(220, frameH - 280);
     const hNow = clamp(footer.getBoundingClientRect().height, minH, maxH);
     setSeparatorValue(elements.mainFooterSplitter, 'horizontal', minH, maxH, hNow);
@@ -125,6 +129,7 @@ function saveLayoutPrefs(update: LayoutPrefs): void {
   const prefs = { ...readLayoutPrefs(), ...update };
   localStorage.setItem(UI_PREF_KEY, JSON.stringify(prefs));
   applyLayoutPrefs(prefs);
+  notifyPatchWorkspaceSharedDimsChanged(prefs.mediaWidthPx, prefs.footerHeightPx);
 }
 
 export function setTemporaryMixerWidth(widthPx: number): void {
@@ -150,6 +155,24 @@ export function mergeImportedLayoutPrefs(imported: LayoutPrefs): void {
   const merged = { ...readLayoutPrefs(), ...imported };
   localStorage.setItem(UI_PREF_KEY, JSON.stringify(merged));
   applyLayoutPrefs(merged);
+  notifyPatchWorkspaceSharedDimsChanged(merged.mediaWidthPx, merged.footerHeightPx);
+}
+
+/** Persist Patch media/footer sizes from the Stream twin without re-emitting toward Stream (avoids ping-pong). */
+export function applyPatchLayoutTwinFromStream(mediaWidthPx?: number, bottomHeightPx?: number): void {
+  if (mediaWidthPx === undefined && bottomHeightPx === undefined) {
+    return;
+  }
+  mixerExpandedTemporarily = false;
+  const prefs = { ...readLayoutPrefs() };
+  if (mediaWidthPx !== undefined) {
+    prefs.mediaWidthPx = mediaWidthPx;
+  }
+  if (bottomHeightPx !== undefined) {
+    prefs.footerHeightPx = bottomHeightPx;
+  }
+  localStorage.setItem(UI_PREF_KEY, JSON.stringify(prefs));
+  applyLayoutPrefs(prefs);
 }
 
 export function applyLayoutPrefs(prefs: LayoutPrefs): void {

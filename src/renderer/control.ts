@@ -8,6 +8,12 @@ import { createSurfaceRouter } from './control/app/surfaceRouter';
 import { isWorkspaceTransportShortcutSuppressedTarget } from './control/app/workspaceTransportKeys';
 import { createConfigSurfaceController } from './control/config/configSurface';
 import { createStreamSurfaceController } from './control/stream/streamSurface';
+import { mergeStoredStreamLayoutTwinFromPatch } from './control/stream/layoutPrefs';
+import {
+  reconcileHydratedWorkspacePaneTwin,
+  registerWorkspacePaneTwinSync,
+} from './control/shared/workspacePaneTwinSync';
+import { applyPatchLayoutTwinFromStream } from './control/patch/layoutPrefs';
 import { patchElements } from './control/patch/elements';
 import { installPatchIcons } from './control/patch/patchIcons';
 import { createPatchSurfaceController } from './control/patch/patchSurface';
@@ -293,6 +299,14 @@ const streamSurface = createStreamSurfaceController({
   getShowConfigPath: () => getShownProjectPath(),
 });
 
+registerWorkspacePaneTwinSync({
+  applyStreamTwinFromPatchDimensions(mediaWidthPx, footerHeightAsBottomPx) {
+    const prefs = mergeStoredStreamLayoutTwinFromPatch(mediaWidthPx, footerHeightAsBottomPx);
+    streamSurface.applyStoredTwinLayoutPrefs(prefs);
+  },
+  applyPatchTwinFromStreamDimensions: applyPatchLayoutTwinFromStream,
+});
+
 const globalOperatorFooter = createGlobalOperatorFooterController({
   elements: {
     globalAudioMuteButton: elements.globalAudioMuteButton,
@@ -428,6 +442,7 @@ hydrateControlShellAfterShow = async (result, ctx) => {
     });
   }
   streamSurface.applyImportedProjectUi(snapshot.stream, result.state, streamPublic);
+  reconcileHydratedWorkspacePaneTwin(snapshot.patch, snapshot.stream?.layout);
   const rawSurface = snapshot.activeSurface as ControlSurface | 'logs';
   const surfaceId: ControlSurface = rawSurface === 'logs' ? 'config' : rawSurface;
   if (surfaceId === 'patch' || surfaceId === 'stream' || surfaceId === 'performance' || surfaceId === 'config') {

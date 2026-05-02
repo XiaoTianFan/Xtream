@@ -28,6 +28,7 @@ import {
   createStreamLayoutController,
   mergeStreamLayoutFromSnapshot,
   readStreamLayoutPrefs,
+  type StreamLayoutPrefs,
 } from './layoutPrefs';
 import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
@@ -201,6 +202,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     elements.surfacePanel.classList.remove('stream-surface-panel');
     lastWorkspacePaneSignature = '';
     refs.root?.remove();
+  }
+
+  function applyStoredTwinLayoutPrefs(prefs: StreamLayoutPrefs): void {
+    if (!mounted) {
+      return;
+    }
+    applyStreamLayoutPrefs(refs, prefs);
+    layoutCtl.syncSplitterAria();
   }
 
   function createRenderSignature(state: DirectorState): string {
@@ -1186,5 +1195,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     exportProjectUiSnapshot,
     applyImportedProjectUi,
     handleWorkspaceTransportKeydown,
+    applyStoredTwinLayoutPrefs,
   };
 }

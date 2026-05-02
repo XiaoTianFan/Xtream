@@ -1,4 +1,5 @@
 import type { StreamSurfaceRefs } from './streamTypes';
+import { notifyStreamWorkspaceSharedDimsChanged } from '../shared/workspacePaneTwinSync';
 
 export const STREAM_LAYOUT_PREF_KEY = 'xtream.control.stream.layout.v1';
 
@@ -33,6 +34,19 @@ export function readStreamLayoutPrefs(): StreamLayoutPrefs {
   } catch {
     return {};
   }
+}
+
+/** Merge stream-stored layout from Patch twin dimensions (no notify toward Patch). */
+export function mergeStoredStreamLayoutTwinFromPatch(mediaWidthPx?: number, footerHeightAsBottomPx?: number): StreamLayoutPrefs {
+  const prefs = { ...readStreamLayoutPrefs() };
+  if (mediaWidthPx !== undefined) {
+    prefs.mediaWidthPx = mediaWidthPx;
+  }
+  if (footerHeightAsBottomPx !== undefined) {
+    prefs.bottomHeightPx = footerHeightAsBottomPx;
+  }
+  setStreamLayoutPrefsInStorage(prefs);
+  return prefs;
 }
 
 export function setStreamLayoutPrefsInStorage(prefs: StreamLayoutPrefs): void {
@@ -179,6 +193,7 @@ export function createStreamLayoutController(refs: StreamSurfaceRefs): StreamLay
     setStreamLayoutPrefsInStorage(prefs);
     applyStreamLayoutPrefs(refs, prefs);
     syncStreamSplitterAria(refs);
+    notifyStreamWorkspaceSharedDimsChanged(prefs.mediaWidthPx, prefs.bottomHeightPx);
   }
 
   function installSplitters(requireRef: (name: string) => HTMLElement): void {

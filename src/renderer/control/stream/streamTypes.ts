@@ -51,4 +51,6 @@ export type StreamSurfaceController = SurfaceController & {
     directorState: DirectorState,
     streamPublic: StreamEnginePublicState,
   ) => void;
+  /** Apply persisted stream layout CSS when the surface is mounted (Patch↔Stream pane sync). */
+  applyStoredTwinLayoutPrefs: (prefs: { mediaWidthPx?: number; bottomHeightPx?: number; assetPreviewHeightPx?: number }) => void;
 };
