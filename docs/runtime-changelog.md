@@ -1,5 +1,14 @@
 # Xtream Runtime Changelog
 
+## v0.1.5
+
+- **Display details in Stream:** The display inspector in the stream overlay includes **layout** controls and a toolbar for **fullscreen** and **always on top**. Detail panes track live display state, and changing scenes clears stale details so the panel matches your outputs.
+- **Launch dashboard:** After you have cleared unsaved-change state, you are less likely to see a **repeat** unsaved-changes prompt when opening or creating a show from the dashboard.
+- **Stream validation:** When validation results change, Stream UI updates more reliably; opening the console also **probes** media in the pool so problem states surface consistently.
+- **Accurate durations:** Editing **visual** or **audio** sources refreshes media durations so timelines reflect the clips you are using now.
+- **Scene editor:** The **note** field and action toolbar (enable, duplicate, remove) are laid out more clearly, and the redundant trigger-summary line was removed from scene metadata for a cleaner panel.
+- **Stream mixer:** The mixer bottom strip avoids unnecessary redraws during some interactions for steadier feedback.
+
 ## v0.1.4
 
 - **Room to work on startup:** The control window opens **maximized** in normal windowed mode (title bar and menus stay visible—not presentation fullscreen) on Windows and macOS, so the console fills your screen as soon as the app is ready.
