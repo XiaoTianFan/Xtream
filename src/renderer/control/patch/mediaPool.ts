@@ -170,7 +170,10 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     return 'No audio sources match this filter.';
   }
 
-  function createMediaPoolEmptyState(message: string, onImport: () => void | Promise<void>): HTMLElement {
+  function createMediaPoolEmptyState(
+    message: string,
+    onImport: (trigger: HTMLButtonElement) => void | Promise<void>,
+  ): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'media-pool-empty';
     const hint = document.createElement('p');
@@ -183,7 +186,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     cta.setAttribute('aria-label', 'Import media sources');
     cta.addEventListener('click', (event) => {
       event.stopPropagation();
-      void onImport();
+      void onImport(cta);
     });
     wrap.append(hint, cta);
     return wrap;
@@ -196,7 +199,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     if (lastListVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListListPane)) {
       const listRows = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual));
       elements.visualListListPane.replaceChildren(
-        ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => showAddVisualsMenu())]),
+        ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), (cta) => showAddVisualsMenu(cta))]),
       );
       lastListVisualsDomKey = cKey;
     }
@@ -205,7 +208,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       clearVisualPoolGridCleanups();
       const gridCards = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualGridCard(visual));
       elements.visualListGridPane.replaceChildren(
-        ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => showAddVisualsMenu())]),
+        ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), (cta) => showAddVisualsMenu(cta))]),
       );
       lastGridVisualsDomKey = cKey;
     }
@@ -247,7 +250,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       createAudioSourceRow(source, state),
     );
     elements.audioPanel.replaceChildren(
-      ...(audioRows.length > 0 ? audioRows : [createMediaPoolEmptyState(audioPoolEmptyMessage(state), () => void runPoolHeaderAudioImport())]),
+      ...(audioRows.length > 0 ? audioRows : [createMediaPoolEmptyState(audioPoolEmptyMessage(state), (_trigger) => void runPoolHeaderAudioImport())]),
     );
   }
 
@@ -640,7 +643,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     options.renderState(await window.xtream.director.getState());
   }
 
-  function showAddVisualsMenu(): void {
+  function showAddVisualsMenu(anchor: HTMLElement = elements.addVisualsButton): void {
     dismissAudioSourceContextMenu();
     const menu = document.createElement('div');
     menu.className = 'context-menu audio-source-menu';
@@ -672,7 +675,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     liveStream.setAttribute('role', 'menuitem');
     menu.append(localFiles, liveStream);
     document.body.append(menu);
-    const bounds = elements.addVisualsButton.getBoundingClientRect();
+    const bounds = anchor.getBoundingClientRect();
     positionContextMenu(menu, bounds.left, bounds.bottom + 4);
     activeAudioSourceMenu = menu;
   }
