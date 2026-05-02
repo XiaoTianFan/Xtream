@@ -14,6 +14,7 @@ describe('shouldDeferStreamMixerBottomPaneRedraw', () => {
         'mixer',
         panelStub,
         activeAlways,
+        panelStub,
       ),
     ).toBe(false);
   });
@@ -25,23 +26,36 @@ describe('shouldDeferStreamMixerBottomPaneRedraw', () => {
         'mixer',
         panelStub,
         activeAlways,
+        panelStub,
       ),
     ).toBe(false);
   });
 
   it('defers mixer subtree rebuild while interaction guard reports active', () => {
-    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', panelStub, activeAlways)).toBe(true);
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', panelStub, activeAlways, panelStub)).toBe(true);
   });
 
-  it('does not defer when interaction inactive', () => {
-    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', panelStub, inactiveAlways)).toBe(false);
+  it('does not defer mixer when interaction inactive', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', panelStub, inactiveAlways, panelStub)).toBe(false);
   });
 
-  it('does not defer outside mixer tab', () => {
-    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'scene', panelStub, activeAlways)).toBe(false);
+  it('does not defer mixer when stream output panel ref is missing', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', undefined, activeAlways, panelStub)).toBe(false);
   });
 
-  it('does not defer when stream output panel ref is missing', () => {
-    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', undefined, activeAlways)).toBe(false);
+  it('defers scene-edit subtree rebuild while scene-edit bottom panel is interacted with', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'scene', panelStub, activeAlways, panelStub)).toBe(true);
+  });
+
+  it('does not defer scene-edit when interaction is inactive', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'scene', panelStub, inactiveAlways, panelStub)).toBe(false);
+  });
+
+  it('does not defer scene-edit when scene-edit bottom panel ref is missing', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'scene', panelStub, activeAlways, undefined)).toBe(false);
+  });
+
+  it('does not defer on other tabs even with active panels', () => {
+    expect(shouldDeferStreamMixerBottomPaneRedraw(undefined, 'mixer', undefined, activeAlways, undefined)).toBe(false);
   });
 });

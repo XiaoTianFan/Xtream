@@ -35,15 +35,19 @@ export function createLaunchDashboardController({
   getActiveSurface,
 }: LaunchDashboardOptions) {
   let visible = true;
+  /** Set when the dashboard was shown after already clearing the unsaved-changes prompt (e.g. via the header \"New\" button). */
+  let unsavedClearedForSession = false;
 
-  const show = (): void => {
+  const show = (opts?: { unsavedAlreadyCleared?: boolean }): void => {
     visible = true;
+    unsavedClearedForSession = opts?.unsavedAlreadyCleared ?? false;
     elements.launchDashboard.hidden = false;
     elements.appFrame.classList.add('launch-blocked');
   };
 
   const hide = (): void => {
     visible = false;
+    unsavedClearedForSession = false;
     elements.launchDashboard.hidden = true;
     elements.appFrame.classList.remove('launch-blocked');
   };
@@ -123,9 +127,12 @@ export function createLaunchDashboardController({
     filePath.textContent = entry.filePath;
     row.replaceChildren(name, filePath);
     row.addEventListener('click', async () => {
-      if (!(await window.xtream.show.promptUnsavedIfNeeded('openRecent'))) {
+      // If the unsaved-changes check was already done before showing the dashboard, skip it here.
+      const skipPrompt = unsavedClearedForSession;
+      if (!skipPrompt && !(await window.xtream.show.promptUnsavedIfNeeded('openRecent'))) {
         return;
       }
+      unsavedClearedForSession = false;
       setLaunchDashboardLoadingUi(true);
       try {
         const result = await window.xtream.show.openRecent(entry.filePath, { skipUnsavedPrompt: true });
@@ -150,5 +157,11 @@ export function createLaunchDashboardController({
     isVisible: () => visible,
     load,
     show,
+    /** Consumes the unsaved-cleared flag; returns true if the unsaved prompt can be skipped. */
+    consumeUnsavedClearedFlag: (): boolean => {
+      const v = unsavedClearedForSession;
+      unsavedClearedForSession = false;
+      return v;
+    },
   };
 }

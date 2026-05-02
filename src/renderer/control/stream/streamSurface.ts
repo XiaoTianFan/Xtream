@@ -99,6 +99,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   const refs: StreamSurfaceRefs = {};
   const layoutCtl = createStreamLayoutController(refs);
+  /** Timestamp (from performance.now()) until which scene-edit bottom pane rebuilds are deferred. */
+  let bottomPaneInteractionGuardUntil = 0;
 
   function outputTopologyDirectorSlice(state: DirectorState): unknown {
     return Object.values(state.outputs)
@@ -587,6 +589,27 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         }
       });
     });
+    // Guard the scene-edit bottom pane against rebuilds briefly after a pointer gesture.
+    // This prevents the Loop toggle (and other buttons) from triggering a full form redraw
+    // mid-click: the async IPC stream-state update arrives within the guard window and is
+    // skipped; the form rebuilds once the panel is idle.
+    // 30 ms is imperceptible to the user but safely outlasts a local IPC round-trip (~5–15 ms).
+    installInteractionLock(shell.bottom);
+    shell.bottom.addEventListener('pointerup', () => {
+      bottomPaneInteractionGuardUntil = performance.now() + 30;
+      window.setTimeout(() => {
+        if (!mounted || !currentState || !streamState) {
+          return;
+        }
+        // Flush any deferred redraw now that the guard has expired.
+        if (bottomPaneInteractionGuardUntil <= performance.now()) {
+          renderBottomPaneIfNeeded();
+        }
+      }, 60);
+    });
+    shell.bottom.addEventListener('pointercancel', () => {
+      bottomPaneInteractionGuardUntil = 0;
+    });
     layoutCtl.installSplitters(requireRef);
     return shell.root;
   }
@@ -783,7 +806,17 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     const streamOutputPanel = refs.outputPanel;
-    if (shouldDeferStreamMixerBottomPaneRedraw(detailPane, bottomTab, streamOutputPanel ?? undefined, isPanelInteractionActive)) {
+    if (shouldDeferStreamMixerBottomPaneRedraw(
+      detailPane,
+      bottomTab,
+      streamOutputPanel ?? undefined,
+      isPanelInteractionActive,
+      refs.bottom ?? undefined,
+    )) {
+      return;
+    }
+    // Also defer while a pointer gesture in the scene-edit bottom pane is still settling.
+    if (bottomTab === 'scene' && bottomPaneInteractionGuardUntil > performance.now()) {
       return;
     }
     bottomRenderSignature = signature;
@@ -814,15 +847,15 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       selectedSceneRunning: isSelectedSceneRunning(),
       media: currentState
         ? {
-            visuals: Object.values(currentState.visuals)
-              .filter((visual) => !isStreamRuntimeVisualId(visual.id))
-              .map((visual) => ({ id: visual.id, label: visual.label, kind: visual.kind, type: visual.type })),
-            audioSources: Object.values(currentState.audioSources)
-              .filter((source) => !isStreamRuntimeAudioSourceId(source.id))
-              .map((source) => ({ id: source.id, label: source.label, type: source.type })),
-            outputs: Object.values(currentState.outputs).map((output) => ({ id: output.id, label: output.label })),
-            displays: Object.values(currentState.displays).map((display) => ({ id: display.id, label: display.label, layout: display.layout })),
-          }
+          visuals: Object.values(currentState.visuals)
+            .filter((visual) => !isStreamRuntimeVisualId(visual.id))
+            .map((visual) => ({ id: visual.id, label: visual.label, kind: visual.kind, type: visual.type })),
+          audioSources: Object.values(currentState.audioSources)
+            .filter((source) => !isStreamRuntimeAudioSourceId(source.id))
+            .map((source) => ({ id: source.id, label: source.label, type: source.type })),
+          outputs: Object.values(currentState.outputs).map((output) => ({ id: output.id, label: output.label })),
+          displays: Object.values(currentState.displays).map((display) => ({ id: display.id, label: display.label, layout: display.layout })),
+        }
         : undefined,
       selectedScene: scene?.id,
     };
@@ -948,10 +981,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       layout: readStreamLayoutPrefs(),
       detailPane: detailPane
         ? {
-            type: detailPane.type,
-            id: detailPane.id,
-            returnTab: detailPane.returnTab,
-          }
+          type: detailPane.type,
+          id: detailPane.id,
+          returnTab: detailPane.returnTab,
+        }
         : undefined,
     };
   }

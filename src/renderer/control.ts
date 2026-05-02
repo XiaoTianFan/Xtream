@@ -263,7 +263,7 @@ const showActions = createShowActions({
       return;
     }
     setLaunchDashboardLoadingUi(false);
-    launchShellRef.controller!.show();
+    launchShellRef.controller!.show({ unsavedAlreadyCleared: true });
     await launchShellRef.controller!.load();
   },
 });
@@ -503,7 +503,7 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('scroll', patchSurface.dismissContextMenu, true);
 installRailNavigation(surfaceRouter.setActiveSurface);
 elements.launchOpenShowButton.addEventListener('click', async () => {
-  if (!(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
+  if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
     return;
   }
   setLaunchDashboardLoadingUi(true);
@@ -522,7 +522,7 @@ elements.launchOpenShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchCreateShowButton.addEventListener('click', async () => {
-  if (!(await window.xtream.show.promptUnsavedIfNeeded('create'))) {
+  if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('create'))) {
     return;
   }
   setLaunchDashboardLoadingUi(true);
@@ -540,7 +540,7 @@ elements.launchCreateShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
-  if (!(await window.xtream.show.promptUnsavedIfNeeded('openDefault'))) {
+  if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('openDefault'))) {
     return;
   }
   setLaunchDashboardLoadingUi(true);
