@@ -404,6 +404,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       stream: streamState.stream,
       expandedListSceneIds,
       directorState: mediaState,
+      validationMessages: streamState.validationMessages,
+      playbackTimelineStatus: streamState.playbackTimeline.status,
     });
     if (lastWorkspacePaneSignature !== nextWorkspaceSig) {
       lastWorkspacePaneSignature = nextWorkspaceSig;

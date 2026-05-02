@@ -36,6 +36,7 @@ import { logSessionEvent, logShowOpenProfile, type ShowOpenProfileFlowContext } 
 import { getShownProjectPath, setShownProjectPath } from './control/app/showProjectPath';
 import type { ControlSurface } from './control/shared/types';
 import { installShellModalPresenter } from './control/shell/shellModalPresenter';
+import { probeAllMedia } from './control/app/mediaProber';
 
 installShellModalPresenter();
 
@@ -350,7 +351,12 @@ window.xtream.audioRuntime.onSoloOutputIds((ids) => {
 });
 
 window.xtream.stream.onState((state) => {
+  const previousValidation = latestStreamState ? JSON.stringify(latestStreamState.validationMessages) : '';
   latestStreamState = state;
+  const newValidation = JSON.stringify(state.validationMessages);
+  if (previousValidation !== newValidation && currentState) {
+    surfaceRouter.render(currentState);
+  }
   patchSurface.syncTransportInputs();
   scheduleRefreshStreamMediaIssues();
   flushGlobalSessionShell();
@@ -436,6 +442,10 @@ hydrateControlShellAfterShow = async (result, ctx) => {
     });
   }
   scheduleMaybeAutoOpenMissingRelink();
+
+  if (currentState) {
+    probeAllMedia(currentState);
+  }
 };
 
 window.__xtreamGetControlUiSnapshot = (): ControlProjectUiStateV1 | null => {

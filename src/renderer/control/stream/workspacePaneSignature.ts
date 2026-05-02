@@ -69,9 +69,11 @@ export type StreamWorkspacePaneSignatureInput = {
   stream: PersistedStreamConfig;
   expandedListSceneIds: Iterable<SceneId>;
   directorState: DirectorState;
+  validationMessages?: unknown;
+  playbackTimelineStatus?: string;
 };
 
-/** Stable when playback/runtime or unrelated director assets change; changes when stream structure, list expansion, or stream-referenced media labels/durations change. */
+/** Stable when playback/runtime or unrelated director assets change; changes when stream structure, list expansion, stream-referenced media labels/durations, or validation messages change. */
 export function createStreamWorkspacePaneSignature(input: StreamWorkspacePaneSignatureInput): string {
   const expanded = [...input.expandedListSceneIds].filter((id) => input.stream.scenes[id]).sort((a, b) => a.localeCompare(b));
   return JSON.stringify({
@@ -79,5 +81,8 @@ export function createStreamWorkspacePaneSignature(input: StreamWorkspacePaneSig
     stream: input.stream,
     expandedListSceneIds: expanded,
     media: mediaDigestForWorkspace(input.directorState, input.stream),
+    validationMessages: input.validationMessages,
+    playbackTimelineStatus: input.playbackTimelineStatus,
   });
 }
+
