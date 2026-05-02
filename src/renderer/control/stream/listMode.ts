@@ -111,7 +111,7 @@ export type StreamListModeContext = {
   clearDetailPane: () => void;
   setListDragSceneId: (id: SceneId | undefined) => void;
   toggleExpandedScene: (id: SceneId) => void;
-  applySceneReorder: (draggedId: SceneId, insertBeforeId: SceneId | undefined) => void;
+  applySceneReorder: (draggedId: SceneId, insertBeforeId: SceneId | undefined) => void | Promise<void>;
   requestRender: () => void;
   /** Updates header, bottom pane, and list/flow selection chrome without rebuilding the scene list. */
   refreshSceneSelectionUi: () => void;
@@ -234,7 +234,9 @@ export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamL
     const dragged = e.dataTransfer?.getData('text/plain') as SceneId | undefined;
     const intent = finalizeDropIntent();
     if (dragged && intent) {
-      ctx.applySceneReorder(dragged, intent.insertBeforeId);
+      void Promise.resolve(ctx.applySceneReorder(dragged, intent.insertBeforeId)).catch((err) => {
+        console.error('applySceneReorder failed.', err);
+      });
     }
   });
 
@@ -351,7 +353,9 @@ function createSceneRowWrap(
     if (!dragged || !intent) {
       return;
     }
-    ctx.applySceneReorder(dragged, intent.insertBeforeId);
+    void Promise.resolve(ctx.applySceneReorder(dragged, intent.insertBeforeId)).catch((err) => {
+      console.error('applySceneReorder failed.', err);
+    });
   });
 
   row.addEventListener('contextmenu', (event) => showSceneRowContextMenu(event, stream, scene, ctx));

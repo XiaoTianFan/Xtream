@@ -31,6 +31,7 @@ import {
 import { getActiveDisplays } from '../shared/layouts';
 import type { ShowOpenProfileLogEntry, ShowOpenProfilePayload } from '../shared/showOpenProfile';
 import { mergeShowConfigPatchRouting } from '../shared/streamWorkspace';
+import { buildEmbeddedAudioImportPrompt } from '../shared/embeddedAudioImportPrompt';
 import type {
   AudioMetadataReport,
   AudioExtractionFormat,
@@ -60,6 +61,8 @@ import type {
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
+  ShowUnsavedPromptKind,
+  ShowDiskActionIpcOpts,
   ControlProjectUiStateV1,
   GlobalStateUpdate,
   AppControlSettingsV1,
@@ -76,6 +79,12 @@ import type {
   VirtualOutputUpdate,
 } from '../shared/types';
 import { XTREAM_RUNTIME_VERSION } from '../shared/version';
+import {
+  attachShellModalIpcHandlers,
+  cancelAllPendingShellModals,
+  clearShellModalsBeforeWindowClosePrompt,
+  promptShellChoiceModal,
+} from './shellModalBridge';
 
 const director = new Director();
 const streamEngine = new StreamEngine(director);
@@ -161,7 +170,6 @@ const rendererRoot = path.join(__dirname, '../../renderer');
 const VISUAL_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'ogv', 'png', 'jpg', 'jpeg', 'webp', 'gif']);
 /** Matches add-file dialog: Audio + Video/Audio groups (excludes * catch-all) */
 const AUDIO_FILE_IMPORT_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'm4v', 'webm']);
-const LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS = 30 * 60;
 const CONTROL_PROJECT_UI_STATE_FILENAME = 'control-project-ui-state.json';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -190,6 +198,9 @@ function createControlWindow(): BrowserWindow {
   }
   window.webContents.on('did-finish-load', () => {
     sendSoloOutputIds(window);
+  });
+  window.webContents.once('destroyed', () => {
+    cancelAllPendingShellModals('Control WebContents destroyed');
   });
   window.on('close', (e) => {
     if (suppressCloseGuard || isShuttingDown) {
@@ -858,9 +869,7 @@ async function extractEmbeddedAudio(visualId: string, format: AudioExtractionFor
   }
 }
 
-type UnsavedPromptKind = 'create' | 'open' | 'openDefault' | 'openRecent';
-
-function unsavedPromptCopy(kind: UnsavedPromptKind): { title: string; message: string; detail: string } {
+function unsavedPromptCopy(kind: ShowUnsavedPromptKind): { title: string; message: string; detail: string } {
   switch (kind) {
     case 'create':
       return {
@@ -898,70 +907,63 @@ async function saveCurrentShowToDiskExplicitly(): Promise<void> {
 }
 
 /** Returns whether to continue the attempted action (`true`) or abort (`false`). */
-async function promptUnsavedChangesIfNeeded(kind: UnsavedPromptKind): Promise<boolean> {
+async function promptUnsavedChangesIfNeeded(kind: ShowUnsavedPromptKind): Promise<boolean> {
   if (!showExplicitDirty) {
     return true;
   }
   const { title, message, detail } = unsavedPromptCopy(kind);
-  const result = controlWindow
-    ? await dialog.showMessageBox(controlWindow, {
-        type: 'question',
-        buttons: ['Save', "Don't Save", 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        title,
-        message,
-        detail,
-      })
-    : await dialog.showMessageBox({
-        type: 'question',
-        buttons: ['Save', "Don't Save", 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        title,
-        message,
-        detail,
-      });
-  if (result.response === 2) {
+  const response = await promptShellChoiceModal(
+    {
+      title,
+      message,
+      detail,
+      buttons: [
+        { label: 'Save', variant: 'primary' },
+        { label: "Don't Save", variant: 'secondary' },
+        { label: 'Cancel', variant: 'secondary' },
+      ],
+      defaultId: 0,
+      cancelId: 2,
+    },
+    () => controlWindow,
+  );
+  if (response === 2) {
     return false;
   }
-  if (result.response === 0) {
+  if (response === 0) {
     await saveCurrentShowToDiskExplicitly();
   }
-  if (result.response === 1) {
+  if (response === 1) {
     cancelPendingAutosaveWithoutFlush();
   }
   return true;
 }
 
 async function runCloseOrQuitConfirmation(): Promise<'abort' | 'quit'> {
+  clearShellModalsBeforeWindowClosePrompt(() => controlWindow);
   if (!showExplicitDirty) {
     skipAutoSaveFlushOnShutdown = false;
     return 'quit';
   }
-  const result = controlWindow
-    ? await dialog.showMessageBox(controlWindow, {
-        type: 'question',
-        buttons: ['Save', "Don't Save", 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        title: 'Quit Xtream',
-        message: 'The current show has unsaved changes.',
-        detail: 'Save your changes before quitting or discard changes without saving.',
-      })
-    : await dialog.showMessageBox({
-        type: 'question',
-        buttons: ['Save', "Don't Save", 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        title: 'Quit Xtream',
-        message: 'The current show has unsaved changes.',
-        detail: 'Save your changes before quitting or discard changes without saving.',
-      });
-  if (result.response === 2) {
+  const response = await promptShellChoiceModal(
+    {
+      title: 'Quit Xtream',
+      message: 'The current show has unsaved changes.',
+      detail: 'Save your changes before quitting or discard changes without saving.',
+      buttons: [
+        { label: 'Save', variant: 'primary' },
+        { label: "Don't Save", variant: 'secondary' },
+        { label: 'Cancel', variant: 'secondary' },
+      ],
+      defaultId: 0,
+      cancelId: 2,
+    },
+    () => controlWindow,
+  );
+  if (response === 2) {
     return 'abort';
   }
-  if (result.response === 0) {
+  if (response === 0) {
     try {
       await saveCurrentShowToDiskExplicitly();
     } catch (error: unknown) {
@@ -976,6 +978,7 @@ async function runCloseOrQuitConfirmation(): Promise<'abort' | 'quit'> {
 }
 
 function registerIpcHandlers(): void {
+  attachShellModalIpcHandlers();
   ipcMain.handle('director:get-state', () => director.getState());
 
   ipcMain.handle('director:apply-preset', (_event, preset: PresetId): PresetResult => {
@@ -1248,6 +1251,10 @@ function registerIpcHandlers(): void {
     return true;
   });
 
+  ipcMain.handle('show:prompt-unsaved-if-needed', (_event, kind: ShowUnsavedPromptKind) =>
+    promptUnsavedChangesIfNeeded(kind),
+  );
+
   ipcMain.handle('show:save', async (): Promise<ShowConfigOperationResult> => {
     currentShowConfigPath ??= getDefaultShowConfigPath(app.getPath('userData'));
     await ensureShowProjectStructure(currentShowConfigPath);
@@ -1275,22 +1282,25 @@ function registerIpcHandlers(): void {
     return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
   });
 
-  ipcMain.handle('show:create-project', async (): Promise<ShowConfigOperationResult | undefined> => {
-    if (!(await promptUnsavedChangesIfNeeded('create'))) {
-      return undefined;
-    }
-    const result = await showOpenDialog({
-      title: 'Create Xtream show project',
-      properties: ['openDirectory', 'createDirectory'],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return undefined;
-    }
-    const projectDirectory = result.filePaths[0];
-    await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME));
-    await addRecentShow(app.getPath('userData'), currentShowConfigPath!);
-    return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
-  });
+  ipcMain.handle(
+    'show:create-project',
+    async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('create'))) {
+        return undefined;
+      }
+      const result = await showOpenDialog({
+        title: 'Create Xtream show project',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return undefined;
+      }
+      const projectDirectory = result.filePaths[0];
+      await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME));
+      await addRecentShow(app.getPath('userData'), currentShowConfigPath!);
+      return { state: director.getState(), filePath: currentShowConfigPath, issues: validateRuntimeState(director.getState()) };
+    },
+  );
 
   ipcMain.handle('show:media-validation-issues', (): MediaValidationIssue[] => {
     return validateShowConfigMedia(createPersistedShowForDisk(), currentShowConfigPath ?? undefined);
@@ -1368,27 +1378,33 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('show:get-current-path', (): string | undefined => currentShowConfigPath);
 
-  ipcMain.handle('show:open-default', async (): Promise<ShowConfigOperationResult | undefined> => {
-    const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
-    if (!(await promptUnsavedChangesIfNeeded('openDefault'))) {
-      return undefined;
-    }
-    if (!fs.existsSync(defaultShowPath)) {
-      await createEmptyShowProject(defaultShowPath);
-    }
-    return openShowConfigPath(defaultShowPath);
-  });
+  ipcMain.handle(
+    'show:open-default',
+    async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+      const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
+      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openDefault'))) {
+        return undefined;
+      }
+      if (!fs.existsSync(defaultShowPath)) {
+        await createEmptyShowProject(defaultShowPath);
+      }
+      return openShowConfigPath(defaultShowPath);
+    },
+  );
 
-  ipcMain.handle('show:open-recent', async (_event, filePath: string): Promise<ShowConfigOperationResult | undefined> => {
-    if (!fs.existsSync(filePath)) {
-      await readRecentShows(app.getPath('userData'));
-      return undefined;
-    }
-    if (!(await promptUnsavedChangesIfNeeded('openRecent'))) {
-      return undefined;
-    }
-    return openShowConfigPath(filePath);
-  });
+  ipcMain.handle(
+    'show:open-recent',
+    async (_event, filePath: string, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+      if (!fs.existsSync(filePath)) {
+        await readRecentShows(app.getPath('userData'));
+        return undefined;
+      }
+      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openRecent'))) {
+        return undefined;
+      }
+      return openShowConfigPath(filePath);
+    },
+  );
 
   ipcMain.handle('show:update-settings', (_event, update: ShowSettingsUpdate) => {
     const state = director.updateShowSettings(update);
@@ -1404,53 +1420,29 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     'show:choose-embedded-audio-import',
     async (_event, candidates: EmbeddedAudioImportCandidate[]): Promise<EmbeddedAudioImportChoice> => {
-      const label = candidates.length === 1 ? candidates[0]?.label ?? 'video' : `${candidates.length} videos`;
-      const hasLongVideo = candidates.some((candidate) => (candidate.durationSeconds ?? 0) > LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS);
-      const buttons = hasLongVideo
-        ? ['Do not extract audio', 'Extract audio into files']
-        : ['Do not extract audio', 'Extract into representation', 'Extract audio into files'];
-      const fileResponseId = hasLongVideo ? 1 : 2;
-      const representationResponseId = hasLongVideo ? -1 : 1;
-      const detail = hasLongVideo
-        ? 'Videos longer than 30 minutes use extracted audio files for more stable playback.'
-        : 'Choose how Xtream should create audio sources for the imported video media.';
-      const result = controlWindow
-        ? await dialog.showMessageBox(controlWindow, {
-            type: 'question',
-            buttons,
-            defaultId: 1,
-            cancelId: 0,
-            title: 'Import video audio',
-            message: `Import audio from ${label}?`,
-            detail,
-          })
-        : await dialog.showMessageBox({
-            type: 'question',
-            buttons,
-            defaultId: 1,
-            cancelId: 0,
-            title: 'Import video audio',
-            message: `Import audio from ${label}?`,
-            detail,
-          });
-      return result.response === fileResponseId ? 'file' : result.response === representationResponseId ? 'representation' : 'skip';
+      const { payload, resolveChoice } = buildEmbeddedAudioImportPrompt(candidates);
+      const responseIndex = await promptShellChoiceModal(payload, () => controlWindow);
+      return resolveChoice(responseIndex);
     },
   );
 
-  ipcMain.handle('show:open', async (): Promise<ShowConfigOperationResult | undefined> => {
-    if (!(await promptUnsavedChangesIfNeeded('open'))) {
-      return undefined;
-    }
-    const result = await showOpenDialog({
-      title: 'Open Xtream show config',
-      properties: ['openFile'],
-      filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return undefined;
-    }
-    return openShowConfigPath(result.filePaths[0]);
-  });
+  ipcMain.handle(
+    'show:open',
+    async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('open'))) {
+        return undefined;
+      }
+      const result = await showOpenDialog({
+        title: 'Open Xtream show config',
+        properties: ['openFile'],
+        filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return undefined;
+      }
+      return openShowConfigPath(result.filePaths[0]);
+    },
+  );
 
   ipcMain.handle('controlUi:get-for-path', (_event, filePath: string) => getControlUiStateForPath(filePath));
 

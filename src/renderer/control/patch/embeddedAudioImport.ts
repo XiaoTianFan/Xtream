@@ -4,7 +4,7 @@ import { createButton } from '../shared/dom';
 import { hasEmbeddedAudioTrack } from '../media/mediaMetadata';
 import type { SelectedEntity } from '../shared/types';
 
-export const LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS = 30 * 60;
+export { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from '../../../shared/embeddedAudioImportPrompt';
 
 export type EmbeddedAudioImportController = {
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;

@@ -1,5 +1,6 @@
 import type { BatchMissingMediaRelinkResult, MissingMediaListItem } from '../../../shared/types';
 import { createButton, createHint } from '../shared/dom';
+import { shellShowAlert } from '../shell/shellModalPresenter';
 
 export type MissingMediaRelinkModalOptions = {
   /** After a successful relink or batch; refresh validation issues in the shell. */
@@ -121,13 +122,13 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
         await refreshList();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        window.alert(message);
+        await shellShowAlert('Relink media error', message);
       }
     }
 
     async function runBatch(mode: 'link' | 'copy'): Promise<void> {
       if (!batchDir) {
-        window.alert('Choose a folder first.');
+        await shellShowAlert('Relink media', 'Choose a folder first.');
         return;
       }
       try {
@@ -143,7 +144,7 @@ export function openMissingMediaRelinkModal(options: MissingMediaRelinkModalOpti
         await refreshList();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        window.alert(message);
+        await shellShowAlert('Relink media error', message);
       }
     }
 

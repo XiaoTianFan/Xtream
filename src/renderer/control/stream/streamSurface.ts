@@ -19,6 +19,7 @@ import { createMixerPanelController, type MixerPanelController } from '../patch/
 import type { SelectedEntity } from '../shared/types';
 import { installInteractionLock, isPanelInteractionActive } from '../app/interactionLocks';
 import { elements } from '../shell/elements';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { renderStreamBottomPane, type StreamBottomPaneContext } from './bottomPane';
 import { shouldDeferStreamMixerBottomPaneRedraw } from './streamMixerBottomRedrawDefer';
 import {
@@ -130,9 +131,11 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     setShowStatus: options.setShowStatus,
   });
 
-  function confirmPoolRecordRemoval(label: string): boolean {
-    return window.confirm(
-      `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+  async function confirmPoolRecordRemoval(label: string): Promise<boolean> {
+    return shellShowConfirm(
+      'Remove from media pool',
+      `Remove "${label}" from the media pool?`,
+      'This only removes the project record from the pool. It will not erase or delete the media file from disk.',
     );
   }
 
@@ -659,7 +662,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderStreamWorkspacePane(panel, stream, ctx);
   }
 
-  function applySceneReorder(draggedId: SceneId, insertBeforeId: SceneId | undefined): void {
+  async function applySceneReorder(draggedId: SceneId, insertBeforeId: SceneId | undefined): Promise<void> {
     const stream = streamState?.stream;
     if (!stream || !stream.scenes[draggedId]) {
       return;
@@ -667,10 +670,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const followers = scenesExplicitlyFollowing(stream, draggedId);
     if (followers.length > 0) {
       const titles = followers.map((id) => stream.scenes[id]?.title ?? id).join(', ');
-      const ok = window.confirm(
-        `Other scenes reference this one as an explicit trigger predecessor: ${titles}. Reordering can make dependencies harder to read. Continue?`,
-      );
-      if (!ok) {
+      if (
+        !(await shellShowConfirm(
+          'Reorder scenes?',
+          `Other scenes reference this one as an explicit trigger predecessor: ${titles}. Reordering can make dependencies harder to read. Continue?`,
+        ))
+      ) {
         return;
       }
     }

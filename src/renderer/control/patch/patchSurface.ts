@@ -20,6 +20,7 @@ import { createMediaPoolController } from './mediaPool';
 import { createMixerPanelController } from './mixerPanel';
 import { createPatchHeaderController, type PatchHeaderController } from './patchHeader';
 import { openMissingMediaRelinkModal } from './missingMediaRelinkModal';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 
 type PatchSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
@@ -217,9 +218,11 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     return selectedEntity?.type === type && selectedEntity.id === id;
   }
 
-  function confirmPoolRecordRemoval(label: string): boolean {
-    return window.confirm(
-      `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+  async function confirmPoolRecordRemoval(label: string): Promise<boolean> {
+    return shellShowConfirm(
+      'Remove from media pool',
+      `Remove "${label}" from the media pool?`,
+      'This only removes the project record from the pool. It will not erase or delete the media file from disk.',
     );
   }
 

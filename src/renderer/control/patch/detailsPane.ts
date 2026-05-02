@@ -13,6 +13,7 @@ import { patchElements as elements } from './elements';
 import type { SelectedEntity } from '../shared/types';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from './mediaDetailSharedForms';
 import { applyMediaDetailLivePreview } from './mediaDetailLivePreview';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 
 type DetailsPaneControllerOptions = {
   getSelectedEntity: () => SelectedEntity | undefined;
@@ -22,7 +23,7 @@ type DetailsPaneControllerOptions = {
   isPanelInteractionActive: (panel: HTMLElement) => boolean;
   renderState: (state: DirectorState) => void;
   clearSelectionIf: (entity: SelectedEntity) => void;
-  confirmPoolRecordRemoval: (label: string) => boolean;
+  confirmPoolRecordRemoval: (label: string) => Promise<boolean>;
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
   probeVisualMetadata: (visual: VisualState) => void;
   reportVisualMetadataFromVideo: (visualId: VisualId, video: HTMLVideoElement) => void;
@@ -269,11 +270,12 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     }
     toolbarActions.append(
       createButton('Remove', 'secondary', async () => {
-        if (confirm(`Remove ${display.id}?`)) {
-          await window.xtream.displays.remove(display.id);
-          options.clearSelectionIf({ type: 'display', id: display.id });
-          options.renderState(await window.xtream.director.getState());
+        if (!(await shellShowConfirm('Remove display?', `Remove ${display.id}?`))) {
+          return;
         }
+        await window.xtream.displays.remove(display.id);
+        options.clearSelectionIf({ type: 'display', id: display.id });
+        options.renderState(await window.xtream.director.getState());
       }),
     );
     toolbar.append(toolbarStart, toolbarActions);
@@ -311,11 +313,12 @@ export function createDetailsPaneController(options: DetailsPaneControllerOption
     toolbarActions.append(
       createButton('Test Tone', 'secondary', () => playOutputTestTone(output)),
       createButton('Remove', 'secondary', async () => {
-        if (confirm(`Remove ${output.label}?`)) {
-          await window.xtream.outputs.remove(output.id);
-          options.clearSelectionIf({ type: 'output', id: output.id });
-          options.renderState(await window.xtream.director.getState());
+        if (!(await shellShowConfirm('Remove output?', `Remove ${output.label}?`))) {
+          return;
         }
+        await window.xtream.outputs.remove(output.id);
+        options.clearSelectionIf({ type: 'output', id: output.id });
+        options.renderState(await window.xtream.director.getState());
       }),
     );
     toolbar.append(toolbarStart, toolbarActions);

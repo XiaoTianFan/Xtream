@@ -1,0 +1,128 @@
+/* Unified shell modal host — same fullscreen dimmer treatment as `.live-capture-overlay`
+   (media import / link-vs-copy), not a bright in-frame wash. */
+.shell-modal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 0.58);
+}
+
+.shell-modal-host[data-open="true"] {
+  display: grid;
+}
+
+.shell-modal-host__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  /* Invisible full-area click target. Global `button` rules use `--surface-active` (opaque gray);
+     without a reset the scrim paints solid gray over `.shell-modal-host`'s translucent dimmer. */
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: transparent;
+  box-shadow: none;
+  cursor: default;
+  appearance: none;
+}
+
+.shell-modal-host__panel {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  /* Default ~520px cap; grows with wide footer buttons (no row wrap) up to viewport. */
+  width: fit-content;
+  min-width: min(520px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: min(480px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 0.45);
+  padding: 18px 20px;
+  border-radius: 2px;
+}
+
+.shell-modal-host__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shell-modal-host__body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.shell-modal-host__message {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--on-surface);
+}
+
+.shell-modal-host__detail {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  font-family: var(--font-data, monospace);
+}
+
+.shell-modal-host__footer {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+  min-width: 0;
+}
+
+.shell-modal-host__footer button {
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shell-modal-btn--primary {
+  border-color: color-mix(in srgb, var(--accent-teal) 45%, var(--border-subtle));
+  background: var(--surface-low);
+  color: var(--accent-teal);
+}
+
+.shell-modal-btn--primary:hover:not(:disabled) {
+  border-color: var(--accent-teal);
+  background: color-mix(in srgb, var(--accent-teal) 14%, var(--surface-low));
+}
+
+.shell-modal-btn--secondary {
+  border-color: var(--border-subtle);
+  background: var(--surface-low);
+  color: var(--text-secondary);
+}
+
+.shell-modal-btn--danger {
+  border-color: color-mix(in srgb, var(--status-critical) 52%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 14%, transparent);
+  color: var(--status-critical);
+}
+
+.app-frame.shell-modal-blocking {
+  user-select: none;
+}

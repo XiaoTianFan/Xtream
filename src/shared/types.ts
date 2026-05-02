@@ -779,6 +779,14 @@ export type ShowConfigOperationResult = {
   openProfileRunId?: string;
 };
 
+/** Which copy to use in the unsaved-changes modal before switching shows. */
+export type ShowUnsavedPromptKind = 'create' | 'open' | 'openDefault' | 'openRecent';
+
+/** Passed to disk show IPC when the renderer already ran `show:prompt-unsaved-if-needed`. */
+export type ShowDiskActionIpcOpts = {
+  skipUnsavedPrompt?: boolean;
+};
+
 export type DiagnosticsReportLogs = {
   /** Show-open checkpoints (main + renderer), same source as Config → profile log. */
   showOpenProfile: ShowOpenProfileLogEntry[];
@@ -1052,17 +1060,18 @@ export type IpcChannels = {
   'audio:meter-report': (report: OutputMeterReport) => void;
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
+  'show:prompt-unsaved-if-needed': (kind: ShowUnsavedPromptKind) => Promise<boolean>;
   'show:save': () => ShowConfigOperationResult;
   'show:save-as': () => ShowConfigOperationResult | undefined;
-  'show:create-project': () => ShowConfigOperationResult | undefined;
+  'show:create-project': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
   'show:get-current-path': () => string | undefined;
   'show:get-launch-data': () => LaunchShowData;
-  'show:open-default': () => ShowConfigOperationResult | undefined;
-  'show:open-recent': (filePath: string) => ShowConfigOperationResult | undefined;
+  'show:open-default': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
+  'show:open-recent': (filePath: string, opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
   'show:update-settings': (update: ShowSettingsUpdate) => DirectorState;
   'app-control:merge-settings': (patch: Partial<Pick<DirectorState, 'performanceMode' | 'audioExtractionFormat' | 'controlDisplayPreviewMaxFps'>>) => DirectorState;
   'show:choose-embedded-audio-import': (candidates: EmbeddedAudioImportCandidate[]) => Promise<EmbeddedAudioImportChoice>;
-  'show:open': () => ShowConfigOperationResult | undefined;
+  'show:open': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
   'show:export-diagnostics': (attach?: DiagnosticsExportAttachPayload) => string | undefined;
   'show:media-validation-issues': () => MediaValidationIssue[];
   'show:list-missing-media': () => MissingMediaListItem[];

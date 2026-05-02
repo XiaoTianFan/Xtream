@@ -9,9 +9,10 @@ import { createButton, createHint } from '../shared/dom';
 import { formatAudioChannelLabel, formatDuration } from '../shared/formatters';
 import { decorateIconButton } from '../shared/icons';
 import type { SelectedEntity } from '../shared/types';
-import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from './embeddedAudioImport';
+import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from '../../../shared/embeddedAudioImportPrompt';
 import { chooseMediaImportMode, openMediaImportModal, runMediaImportAfterPickerChoice } from './mediaImportModal';
 import { mountVisualPoolGridPreview } from './visualPoolGridPreview';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 
 type PoolTab = 'visuals' | 'audio';
 type PoolSort = 'label' | 'duration' | 'status';
@@ -295,7 +296,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       getVisualPoolPlacement(visual, options.getShowConfigPath(), isWindowsStylePath()),
     );
     const remove = createButton('Remove', 'secondary row-action', async () => {
-      if (!confirmPoolRecordRemoval(visual.label)) {
+      if (!(await confirmPoolRecordRemoval(visual.label))) {
         return;
       }
       await window.xtream.visuals.remove(visual.id);
@@ -365,7 +366,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     );
     placementBadge.classList.add('visual-pool-card__placement-marker');
     const remove = createButton('Remove', 'secondary row-action', async () => {
-      if (!confirmPoolRecordRemoval(visual.label)) {
+      if (!(await confirmPoolRecordRemoval(visual.label))) {
         return;
       }
       await window.xtream.visuals.remove(visual.id);
@@ -414,7 +415,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       getAudioPoolPlacement(source, options.getShowConfigPath(), isWindowsStylePath()),
     );
     const remove = createButton('Remove', 'secondary row-action', async () => {
-      if (!confirmPoolRecordRemoval(source.label)) {
+      if (!(await confirmPoolRecordRemoval(source.label))) {
         return;
       }
       await window.xtream.audioSources.remove(source.id);
@@ -450,9 +451,11 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     }
   }
 
-  function confirmPoolRecordRemoval(label: string): boolean {
-    return window.confirm(
-      `Remove "${label}" from the media pool?\n\nThis only removes the project record from the pool. It will not erase or delete the media file from disk.`,
+  async function confirmPoolRecordRemoval(label: string): Promise<boolean> {
+    return shellShowConfirm(
+      'Remove from media pool',
+      `Remove "${label}" from the media pool?`,
+      'This only removes the project record from the pool. It will not erase or delete the media file from disk.',
     );
   }
 

@@ -123,9 +123,12 @@ export function createLaunchDashboardController({
     filePath.textContent = entry.filePath;
     row.replaceChildren(name, filePath);
     row.addEventListener('click', async () => {
+      if (!(await window.xtream.show.promptUnsavedIfNeeded('openRecent'))) {
+        return;
+      }
       setLaunchDashboardLoadingUi(true);
       try {
-        const result = await window.xtream.show.openRecent(entry.filePath);
+        const result = await window.xtream.show.openRecent(entry.filePath, { skipUnsavedPrompt: true });
         if (result) {
           await complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
           return;

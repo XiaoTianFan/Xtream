@@ -37,6 +37,10 @@ describe('control shell markup', () => {
     expect(controlHtml.slice(footerIdx)).toContain('id="refreshOutputsButton"');
   });
 
+  it('provides the unified shell modal host for main-process prompts', () => {
+    expect(controlHtml).toContain('id="shellModalHost"');
+  });
+
   it('includes the launch dashboard with actions and recents', () => {
     expect(controlHtml).toContain('id="launchDashboard"');
     expect(controlHtml).toContain('id="launchOpenShowButton"');

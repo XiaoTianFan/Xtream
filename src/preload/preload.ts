@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ShowOpenProfileLogEntry } from '../shared/showOpenProfile';
+import type { ShellModalOpenPayload } from '../shared/modalSpec';
 import type {
   AudioMetadataReport,
   AppControlSettingsV1,
@@ -37,6 +38,8 @@ import type {
   RendererReadyReport,
   ShowSettingsUpdate,
   ShowConfigOperationResult,
+  ShowUnsavedPromptKind,
+  ShowDiskActionIpcOpts,
   StreamCommand,
   StreamEditCommand,
   StreamEnginePublicState,
@@ -159,17 +162,23 @@ const api = {
       ipcRenderer.invoke('app-control:merge-settings', patch),
   },
   show: {
+    promptUnsavedIfNeeded: (kind: ShowUnsavedPromptKind): Promise<boolean> =>
+      ipcRenderer.invoke('show:prompt-unsaved-if-needed', kind),
     save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
     saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
-    createProject: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:create-project'),
+    createProject: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> =>
+      ipcRenderer.invoke('show:create-project', opts),
     getLaunchData: (): Promise<LaunchShowData> => ipcRenderer.invoke('show:get-launch-data'),
     getCurrentPath: (): Promise<string | undefined> => ipcRenderer.invoke('show:get-current-path'),
-    openDefault: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-default'),
-    openRecent: (filePath: string): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open-recent', filePath),
+    openDefault: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> =>
+      ipcRenderer.invoke('show:open-default', opts),
+    openRecent: (filePath: string, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> =>
+      ipcRenderer.invoke('show:open-recent', filePath, opts),
     updateSettings: (update: ShowSettingsUpdate): Promise<DirectorState> => ipcRenderer.invoke('show:update-settings', update),
     chooseEmbeddedAudioImport: (candidates: EmbeddedAudioImportCandidate[]): Promise<EmbeddedAudioImportChoice> =>
       ipcRenderer.invoke('show:choose-embedded-audio-import', candidates),
-    open: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:open'),
+    open: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> =>
+      ipcRenderer.invoke('show:open', opts),
     exportDiagnostics: (attach?: DiagnosticsExportAttachPayload): Promise<string | undefined> =>
       ipcRenderer.invoke('show:export-diagnostics', attach),
     getMediaValidationIssues: (): Promise<MediaValidationIssue[]> => ipcRenderer.invoke('show:media-validation-issues'),
@@ -184,6 +193,20 @@ const api = {
     getForPath: (filePath: string): Promise<ControlProjectUiStateV1 | undefined> => ipcRenderer.invoke('controlUi:get-for-path', filePath),
     saveSnapshot: (filePath: string, snapshot: ControlProjectUiStateV1): Promise<void> =>
       ipcRenderer.invoke('controlUi:save-snapshot', filePath, snapshot),
+  },
+  shellModal: {
+    respond: (correlationId: string, responseIndex: number): Promise<void> =>
+      ipcRenderer.invoke('control-ui:shell-modal-response', correlationId, responseIndex),
+    onOpen: (callback: (payload: ShellModalOpenPayload) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: ShellModalOpenPayload) => callback(payload);
+      ipcRenderer.on('control-ui:shell-modal-open', listener);
+      return () => ipcRenderer.removeListener('control-ui:shell-modal-open', listener);
+    },
+    onDismissAllForWindowClose: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('control-ui:shell-modal-dismiss-all', listener);
+      return () => ipcRenderer.removeListener('control-ui:shell-modal-dismiss-all', listener);
+    },
   },
   showOpenProfile: {
     onLog: (callback: (entry: ShowOpenProfileLogEntry) => void): (() => void) => {

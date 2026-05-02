@@ -9,6 +9,7 @@ import {
 import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
 import { formatMilliseconds } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 
 export type DisplayWorkspaceController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -63,12 +64,13 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
         telemetry.dataset.displayDetails = display.id;
         telemetry.textContent = getDisplayCardTelemetry(display);
         const remove = createButton('Remove', 'secondary icon-button display-remove', async () => {
-          if (confirm(`Remove ${display.id}?`)) {
-            await window.xtream.displays.close(display.id);
-            await window.xtream.displays.remove(display.id);
-            options.clearSelectionIf({ type: 'display', id: display.id });
-            options.renderState(await window.xtream.director.getState());
+          if (!(await shellShowConfirm('Remove display?', `Remove ${display.id}?`))) {
+            return;
           }
+          await window.xtream.displays.close(display.id);
+          await window.xtream.displays.remove(display.id);
+          options.clearSelectionIf({ type: 'display', id: display.id });
+          options.renderState(await window.xtream.director.getState());
         });
         remove.textContent = 'X';
         remove.title = `Remove ${display.id}`;

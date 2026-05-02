@@ -40,8 +40,11 @@ export function createShowActions(options: ShowActionsOptions) {
   }
 
   async function openShow(): Promise<void> {
+    if (!(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
+      return;
+    }
     options.beginLaunchPresentationLoad?.();
-    const result = await window.xtream.show.open();
+    const result = await window.xtream.show.open({ skipUnsavedPrompt: true });
     if (!result) {
       options.clearLaunchPresentationLoading?.();
       return;

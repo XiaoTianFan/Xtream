@@ -25,6 +25,9 @@ import { installShowOpenProfileLogBridge, subscribeShowOpenProfileLogBuffer } fr
 import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../shared/showOpenProfile';
 import { getShownProjectPath, setShownProjectPath } from './control/app/showProjectPath';
 import type { ControlSurface } from './control/shared/types';
+import { installShellModalPresenter } from './control/shell/shellModalPresenter';
+
+installShellModalPresenter();
 
 let currentState: DirectorState | undefined;
 let latestStreamState: StreamEnginePublicState | undefined;
@@ -139,6 +142,9 @@ const showActions = createShowActions({
     setLaunchDashboardLoadingUi(false);
   },
   presentLaunchDashboardForCreate: async () => {
+    if (!(await window.xtream.show.promptUnsavedIfNeeded('create'))) {
+      return;
+    }
     setLaunchDashboardLoadingUi(false);
     launchShellRef.controller!.show();
     await launchShellRef.controller!.load();
@@ -353,9 +359,12 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('scroll', patchSurface.dismissContextMenu, true);
 installRailNavigation(surfaceRouter.setActiveSurface);
 elements.launchOpenShowButton.addEventListener('click', async () => {
+  if (!(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
+    return;
+  }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.open();
+    const result = await window.xtream.show.open({ skipUnsavedPrompt: true });
     if (result) {
       setShownProjectPath(result.filePath);
       await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
@@ -369,9 +378,12 @@ elements.launchOpenShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchCreateShowButton.addEventListener('click', async () => {
+  if (!(await window.xtream.show.promptUnsavedIfNeeded('create'))) {
+    return;
+  }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.createProject();
+    const result = await window.xtream.show.createProject({ skipUnsavedPrompt: true });
     if (result) {
       await launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
       return;
@@ -384,9 +396,12 @@ elements.launchCreateShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
+  if (!(await window.xtream.show.promptUnsavedIfNeeded('openDefault'))) {
+    return;
+  }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.openDefault();
+    const result = await window.xtream.show.openDefault({ skipUnsavedPrompt: true });
     if (!result) {
       setLaunchDashboardLoadingUi(false);
       await launchDashboard.load();

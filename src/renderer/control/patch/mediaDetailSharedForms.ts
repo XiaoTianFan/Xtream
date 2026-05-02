@@ -7,7 +7,7 @@ import type { SelectedEntity } from '../shared/types';
 export type MediaDetailSharedDeps = {
   renderState: (state: DirectorState) => void;
   clearSelectionIf: (entity: SelectedEntity) => void;
-  confirmPoolRecordRemoval: (label: string) => boolean;
+  confirmPoolRecordRemoval: (label: string) => Promise<boolean>;
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
   probeVisualMetadata: (visual: VisualState) => void;
   reportVisualMetadataFromVideo: (visualId: VisualId, video: HTMLVideoElement) => void;
@@ -119,7 +119,7 @@ export function createVisualDetailMetaCard(visual: VisualState, deps: MediaDetai
     );
   }
   const removeFromPool = createButton('Remove', 'secondary', async () => {
-    if (!deps.confirmPoolRecordRemoval(visual.label)) {
+    if (!(await deps.confirmPoolRecordRemoval(visual.label))) {
       return;
     }
     await window.xtream.visuals.remove(visual.id);
@@ -193,7 +193,7 @@ export function createAudioDetailMetaCard(source: AudioSourceState, state: Direc
       : []),
   );
   const removeFromPool = createButton('Remove', 'secondary', async () => {
-    if (!deps.confirmPoolRecordRemoval(source.label)) {
+    if (!(await deps.confirmPoolRecordRemoval(source.label))) {
       return;
     }
     await window.xtream.audioSources.remove(source.id);
