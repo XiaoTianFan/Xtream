@@ -78,33 +78,6 @@
   gap: var(--compact);
 }
 
-.details-panel-header {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas:
-    'title actions'
-    'status status';
-  gap: var(--compact) var(--gutter);
-  align-items: center;
-}
-
-.details-panel-header h2 {
-  grid-area: title;
-}
-
-.details-panel-header-actions {
-  grid-area: actions;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--compact);
-}
-
-.details-panel-header .details-panel-status {
-  grid-area: status;
-  width: 100%;
-}
-
 .missing-media-relink-panel .live-capture-modal {
   max-height: min(92vh, 720px);
   display: flex;

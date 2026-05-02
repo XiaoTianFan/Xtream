@@ -33,6 +33,7 @@ function mountControlShellFixture(): void {
     <div id="globalSessionHint" hidden></div>
     <button type="button" id="globalAudioMuteButton"></button>
     <button type="button" id="displayBlackoutButton"></button>
+    <button type="button" id="missingMediaRelinkButton"></button>
     <button type="button" id="clearSoloButton"></button>
     <button type="button" id="displayIdentifyFlashButton"></button>
   `;

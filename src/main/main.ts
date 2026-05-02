@@ -96,6 +96,7 @@ import {
   clearShellModalsBeforeWindowClosePrompt,
   promptShellChoiceModal,
 } from './shellModalBridge';
+import { checkAndPromptRuntimeUpdateReminder } from './runtimeUpdateReminder';
 
 const director = new Director();
 const streamEngine = new StreamEngine(director);
@@ -1696,10 +1697,12 @@ app.whenReady().then(() => {
 
   controlWindow = createControlWindow();
   audioWindow = createAudioWindow();
+  void checkAndPromptRuntimeUpdateReminder(() => controlWindow);
 
   app.on('activate', () => {
     if (!isShuttingDown && BrowserWindow.getAllWindows().length === 0) {
       controlWindow = createControlWindow();
+      void checkAndPromptRuntimeUpdateReminder(() => controlWindow);
     }
   });
 });

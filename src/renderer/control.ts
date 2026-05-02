@@ -278,7 +278,6 @@ const patchSurface = createPatchSurfaceController({
   setActiveSurface: (surface) => surfaceRouter.setActiveSurface(surface),
   setShowStatus,
   showActions,
-  refreshMediaOperationIssues: scheduleRefreshStreamMediaIssues,
 });
 
 clearPatchSelection = patchSurface.clearSelection;
@@ -480,6 +479,16 @@ installShellIcons();
 installPatchIcons();
 patchSurface.install();
 globalOperatorFooter.install();
+elements.missingMediaRelinkButton.addEventListener('click', () => {
+  void openMissingMediaRelinkModal({
+    onRelinked: () => {
+      scheduleRefreshStreamMediaIssues();
+    },
+    onClose: (still) => {
+      markDismissedMissingSignatureIfStillMissing(still);
+    },
+  });
+});
 launchDashboard.show();
 
 document.addEventListener('keydown', (event) => {

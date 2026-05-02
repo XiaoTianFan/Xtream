@@ -31,6 +31,10 @@ export const elements = {
   globalSessionHint: assertElement(document.querySelector<HTMLDivElement>('#globalSessionHint'), 'globalSessionHint'),
   globalAudioMuteButton: assertElement(document.querySelector<HTMLButtonElement>('#globalAudioMuteButton'), 'globalAudioMuteButton'),
   displayBlackoutButton: assertElement(document.querySelector<HTMLButtonElement>('#displayBlackoutButton'), 'displayBlackoutButton'),
+  missingMediaRelinkButton: assertElement(
+    document.querySelector<HTMLButtonElement>('#missingMediaRelinkButton'),
+    'missingMediaRelinkButton',
+  ),
   clearSoloButton: assertElement(document.querySelector<HTMLButtonElement>('#clearSoloButton'), 'clearSoloButton'),
   displayIdentifyFlashButton: assertElement(
     document.querySelector<HTMLButtonElement>('#displayIdentifyFlashButton'),

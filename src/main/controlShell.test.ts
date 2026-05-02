@@ -22,6 +22,7 @@ describe('control shell markup', () => {
     expect(controlHtml).toContain('id="globalAudioMuteButton"');
     expect(controlHtml).toContain('id="displayBlackoutButton"');
     expect(controlHtml).toContain('id="displayIdentifyFlashButton"');
+    expect(controlHtml).toContain('id="missingMediaRelinkButton"');
     expect(controlHtml).toContain('id="clearSoloButton"');
     expect(controlHtml).toContain('id="refreshOutputsButton"');
     expect(controlHtml).not.toContain('id="performanceModeButton"');
@@ -36,7 +37,9 @@ describe('control shell markup', () => {
     expect(footerIdx).toBeGreaterThan(surfacePanelIdx);
     expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('globalAudioMuteButton');
     expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('refreshOutputsButton');
+    expect(controlHtml.slice(patchStart, surfacePanelIdx)).not.toContain('missingMediaRelinkButton');
     expect(controlHtml.slice(footerIdx)).toContain('id="refreshOutputsButton"');
+    expect(controlHtml.slice(footerIdx)).toContain('id="missingMediaRelinkButton"');
   });
 
   it('provides the unified shell modal host for main-process prompts', () => {
