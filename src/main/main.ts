@@ -202,6 +202,7 @@ function createControlWindow(): BrowserWindow {
     height: 860,
     minWidth: 980,
     minHeight: 680,
+    show: false,
     title: 'Xtream Control',
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
@@ -210,6 +211,10 @@ function createControlWindow(): BrowserWindow {
       nodeIntegration: false,
       backgroundThrottling: false,
     },
+  });
+  window.once('ready-to-show', () => {
+    window.maximize();
+    window.show();
   });
   if (isDevelopment) {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL!);

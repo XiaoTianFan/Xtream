@@ -2,13 +2,15 @@ import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneI
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import type { BottomTab } from './streamTypes';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { createButton, createHint } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
 import {
   formatSceneDuration,
-  formatSceneStateLabel,
+  formatSceneStateLabelForSceneList,
   formatSubCueLabel,
   formatTriggerSummary,
+  sceneListRowRuntimeStatus,
 } from './formatting';
 import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
 import { createStreamCell } from './streamDom';
@@ -78,11 +80,17 @@ function showSceneRowContextMenu(
       return;
     }
     dismissSceneRowContextMenu();
-    void window.xtream.stream.edit({ type: 'remove-scene', sceneId: scene.id }).then((s) => {
-      ctx.setPlaybackAndEditFocus(s.stream.sceneOrder[0]);
-      ctx.expandedListSceneIds.delete(scene.id);
-      ctx.requestRender();
-    });
+    const label = scene.title?.trim() || scene.id;
+    void (async () => {
+      if (!(await shellShowConfirm('Remove scene?', `Remove "${label}" from the stream?`))) {
+        return;
+      }
+      void window.xtream.stream.edit({ type: 'remove-scene', sceneId: scene.id }).then((s) => {
+        ctx.setPlaybackAndEditFocus(s.stream.sceneOrder[0]);
+        ctx.expandedListSceneIds.delete(scene.id);
+        ctx.requestRender();
+      });
+    })();
   });
   removeBtn.setAttribute('role', 'menuitem');
   removeBtn.disabled = removeDisabled;
@@ -288,10 +296,9 @@ function createSceneRowWrap(
   highlights: ReturnType<typeof getStreamAuthoringErrorHighlights>,
 ): HTMLElement {
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
-  const runtimeRowStatus = runtimeState?.status ?? 'ready';
-  const statusClass = scene.disabled ? 'disabled' : runtimeRowStatus;
   const sceneAuthoringError = highlights.scenesWithErrors.has(scene.id);
   const badSubCues = highlights.subCuesWithErrors.get(scene.id);
+  const statusClass = sceneListRowRuntimeStatus(runtimeState, scene, sceneAuthoringError);
   const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(scene.id, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
   const pb = pbFlag ? ' stream-playback-focus' : '';
   const eb = ebFlag ? ' stream-edit-focus' : '';
@@ -377,7 +384,7 @@ function createSceneRowWrap(
   const titleCell = createStreamCell(scene.title ?? `Scene ${number}`, 'stream-list-col-title');
   const triggerCell = createStreamCell(formatTriggerSummary(stream, scene), 'stream-list-col-trigger');
   const durationCell = createStreamCell(formatSceneDuration(ctx.currentState, scene), 'stream-list-col-duration');
-  const stateCell = createStreamCell(formatSceneStateLabel(runtimeState, scene), 'stream-list-col-state');
+  const stateCell = createStreamCell(formatSceneStateLabelForSceneList(runtimeState, scene, sceneAuthoringError), 'stream-list-col-state');
 
   const actions = document.createElement('div');
   actions.className = 'stream-scene-row-actions';

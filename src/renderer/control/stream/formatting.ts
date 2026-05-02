@@ -75,6 +75,34 @@ export function formatSceneStateLabel(runtimeState: SceneRuntimeState | undefine
   return 'ready';
 }
 
+/**
+ * Stream scene list row: same as formatSceneStateLabel except baseline `ready` (including when
+ * runtime is absent) becomes `error` when authoring validators flag the scene, matching
+ * StreamEngine.applyAuthoringErrorOverlay.
+ */
+export function sceneListRowRuntimeStatus(
+  runtimeState: SceneRuntimeState | undefined,
+  scene: PersistedSceneConfig,
+  authoringSceneError: boolean,
+): SceneRuntimeState['status'] | 'disabled' {
+  if (scene.disabled) {
+    return 'disabled';
+  }
+  const st = runtimeState?.status ?? 'ready';
+  if (st === 'error' || (authoringSceneError && st === 'ready')) {
+    return 'error';
+  }
+  return st;
+}
+
+export function formatSceneStateLabelForSceneList(
+  runtimeState: SceneRuntimeState | undefined,
+  scene: PersistedSceneConfig,
+  authoringSceneError: boolean,
+): string {
+  return sceneListRowRuntimeStatus(runtimeState, scene, authoringSceneError);
+}
+
 function getVisualDurationMap(state: DirectorState): Record<VisualId, number> {
   return Object.fromEntries(
     Object.values(state.visuals).flatMap((visual) => (visual.durationSeconds !== undefined ? [[visual.id, visual.durationSeconds]] : [])),

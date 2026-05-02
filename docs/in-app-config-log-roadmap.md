@@ -13,13 +13,13 @@ Work proceeds **in stages**. This document is the **canonical checklist**: what 
 ### Where the log lives today
 
 
-| Piece                                              | Role                                                                                          |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `src/shared/showOpenProfile.ts`                    | Session log types, `logShowOpenProfile`, `logSessionEvent`, `normalizeSessionLogEntry`, domain/kind |
-| `src/renderer/control/shell/sessionLogUi.ts`      | Session log ring buffer (400 rows), clear + subscribe; `installSessionLogBridge`                 |
-| `src/renderer/control/config/configSurface.ts`     | Session log pane, line format, diagnostics export attach                                         |
-| `src/main/main.ts`                                 | Forwards main rows via IPC (`session-log:entry`, `forwardSessionLogFromMain`) during open path   |
-| `src/preload/preload.ts`                           | `sessionLog.onEntry`; `showOpenProfile.onLog` alias (same IPC)                                  |
+| Piece                                          | Role                                                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/shared/showOpenProfile.ts`                | Session log types, `logShowOpenProfile`, `logSessionEvent`, `normalizeSessionLogEntry`, domain/kind |
+| `src/renderer/control/shell/sessionLogUi.ts`   | Session log ring buffer (400 rows), clear + subscribe; `installSessionLogBridge`                    |
+| `src/renderer/control/config/configSurface.ts` | Session log pane, line format, diagnostics export attach                                            |
+| `src/main/main.ts`                             | Forwards main rows via IPC (`session-log:entry`, `forwardSessionLogFromMain`) during open path      |
+| `src/preload/preload.ts`                       | `sessionLog.onEntry`; `showOpenProfile.onLog` alias (same IPC)                                      |
 
 
 ### Row format today
@@ -54,7 +54,7 @@ These are **done** for the open-show flow. They assume a per-open `runId`; rende
 
 | Checkpoint                          | Meaning (short)                                                                                                                          |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderer_open_flow_start`          | renderer open flow started; `extra.route`: `menu_open` | `launch_dashboard` | (create path: *not yet first-class*)                       |
+| `renderer_open_flow_start`          | renderer open flow started; `extra.route`: `menu_open`                                                                                   |
 | `renderer_after_first_render_state` | first `renderState` after open                                                                                                           |
 | `renderer_hydrate_*`                | control UI snapshot hydrate (`enter`, `after_control_ui_get`, `skip_no_snapshot`, `after_patch_apply`, `after_stream_get_state`, `exit`) |
 | `renderer_before_wait_ready`        | about to wait for presentation readiness                                                                                                 |
@@ -75,14 +75,14 @@ These are **done** for the open-show flow. They assume a per-open `runId`; rende
 Today, **two different validation channels** are merged in the Patch **Patch Summary** detail column:
 
 - `**state.readiness.issues`** from the **Director** (live graph: displays, mapped media readiness, routing, loop, previews, etc.).
-- `**show:media-validation-issues`** → `**validateShowConfigMedia**`, which includes **missing files on disk** and **stream graph checks on the persisted snapshot** (`target: stream:…`).
+- `**show:media-validation-issues`** → `**validateShowConfigMedia`**, which includes **missing files on disk** and **stream graph checks on the persisted snapshot** (`target: stream:…`).
 
-Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (human-readable strings, derived from structured schedule validation in `src/shared/streamSchedule.ts`) via the **global session problems strip** (Stage 1). The stream workspace also reflects authoring health in the **scene list** (State column, including runtime status **`error`** for misconfigured non-disabled scenes), **flow cards**, and **scene edit / sub-cue rail** (red-tinted rows for scenes and sub-cues with severity-`error` authoring issues). Legacy: the stream header static problem line and scene-edit validation banner were removed per Stage 1.
+Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (human-readable strings, derived from structured schedule validation in `src/shared/streamSchedule.ts`) via the **global session problems strip** (Stage 1). The stream workspace also reflects authoring health in the **scene list** (State column, including runtime status `**error`** for misconfigured non-disabled scenes), **flow cards**, and **scene edit / sub-cue rail** (red-tinted rows for scenes and sub-cues with severity-`error` authoring issues). Legacy: the stream header static problem line and scene-edit validation banner were removed per Stage 1.
 
 **Why “Show readiness: ready” can disagree with an `ERROR stream:…` line in the issue list**
 
-- The short line in the Patch header / Patch Summary (`#showStatus`) is driven by `**transportControls.syncTransportInputs`**: it reflects `**state.readiness.ready**`, i.e. **whether `Director` readiness contains any `severity: 'error'` issue**.
-- Stream-on-disk validation errors from `**getMediaValidationIssues`** are `**MediaValidationIssue**` rows rendered in `**#issueList**`, but they are **not** part of `readiness.issues` unless the same condition is also expressed there.
+- The short line in the Patch header / Patch Summary (`#showStatus`) is driven by `**transportControls.syncTransportInputs`**: it reflects `**state.readiness.ready`**, i.e. **whether `Director` readiness contains any `severity: 'error'` issue**.
+- Stream-on-disk validation errors from `**getMediaValidationIssues`** are `**MediaValidationIssue`** rows rendered in `**#issueList`**, but they are **not** part of `readiness.issues` unless the same condition is also expressed there.
 - So the UI can show **ready** in the one-line summary while the list below still shows **stream configuration errors** from the persisted validation path—**inconsistent copy and confusing mental model**. Stage 1 removes that split presentation and fixes domain separation.
 
 ---
@@ -99,7 +99,7 @@ Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (human-rea
 4. **Timestamps**
   Keep **wall clock** (`loggedAt` or explicit ISO in `extra` when needed). For Stream timeline-related events, also record **timeline-relative timecode** (see Stage 5).
 5. **Workspace attribution**
-  Every log row and every **problem** shown to the operator should carry `**domain`**: `**patch`  `stream`  `config`  `global`  `main**` (exact enum TBD) so filtering and copy stay honest.
+  Every log row and every **problem** shown to the operator should carry `**domain`**: `**patch`  `stream`  `config`  `global`  `main`** (exact enum TBD) so filtering and copy stay honest.
 6. **Unify persistence vs engine stream checks (data model)**
   - **Persisted / disk validation** (`validateShowConfigMedia`): stream section folded into `MediaValidationIssue` with `target: stream:…`.  
   - **Live stream engine** (`StreamEngine.revalidate` → `validationMessages`): plain strings + timeline issues.  
@@ -127,11 +127,11 @@ Separately, **Stream** surfaces `**StreamEngine.validationMessages`** (human-rea
 **Domain rules for what appears in the strip**
 
 
-| Domain              | Source (conceptual)                                                                                                                                                                                                   | Operator expectation                                                                                |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Patch**           | Director `readiness` errors/warnings that concern **patch timeline / displays / pool / routing**; optional **patch-relevant** media-on-disk warnings if they block patch operation (semantics TBD in implementation). | Never show **stream engine graph string** messages here.                                            |
+| Domain              | Source (conceptual)                                                                                                                                                                                                                                                                                      | Operator expectation                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **Patch**           | Director `readiness` errors/warnings that concern **patch timeline / displays / pool / routing**; optional **patch-relevant** media-on-disk warnings if they block patch operation (semantics TBD in implementation).                                                                                    | Never show **stream engine graph string** messages here.                                            |
 | **Stream**          | `StreamEnginePublicState.validationMessages` (messages use **scene titles** / **cue numbers** and **sub-cue kind + ordinal**, e.g. `audio sub-cue no.1`, not raw ids), timeline `notice` / invalid timeline state, and **stream-class** persisted validation if not already represented in engine state. | Never show **patch-only readiness** copy here unless it is a **shared** global blocker (see below). |
-| **Shared / global** | Conditions that block **both** worlds (e.g. project load failure, catastrophic missing show file)—tag `**global`**.                                                                                                   | Shown with clear label.                                                                             |
+| **Shared / global** | Conditions that block **both** worlds (e.g. project load failure, catastrophic missing show file)—tag `**global`**.                                                                                                                                                                                      | Shown with clear label.                                                                             |
 
 
 When the **Patch** rail is active, the strip may **prioritize** Patch + Shared rows; when **Stream** is active, prioritize Stream + Shared—**or** show all domains in one list with badges; pick one behavior in implementation and document it in the PR. The hard requirement is **no stream validity rows inside Patch Summary** and **no duplicate competing headers** in Stream.
@@ -139,12 +139,12 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 ### 1B — Unified session log (same mechanism, broader scope)
 
 
-| Requirement                 | Notes                                                                                                                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **One append path**         | Generalize `logShowOpenProfile` / `forwardShowOpenProfileFromMain` into a **session log API** (name TBD: e.g. `logSessionEvent`) with `**domain`** + `**kind**` (`checkpoint` | `validation` | `operation` | …). |
-| **Same buffer + Config UI** | Keep ring buffer + clear + subscribe; **rename** pane from “Show open profile log” to **“Session log”** (or “Activity log”) and empty-state copy.                                                                |
-| **Emit high-value events**  | At minimum in Stage 1, log **transitions** (not per-frame): e.g. stream validation set changed, readiness blocked/unblocked, save/open completed. Exact checklist in implementation; throttle duplicates.        |
-| **Diagnostics export**      | Attach full session buffer (alias `showOpenProfile` in JSON for backward compatibility or bump export `schemaVersion` field if present).                                                                         |
+| Requirement                 | Notes                                                                                                                                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **One append path**         | Generalize `logShowOpenProfile` / `forwardShowOpenProfileFromMain` into a **session log API** (name TBD: e.g. `logSessionEvent`) with `**domain`** + `**kind`** (`checkpoint`                             |
+| **Same buffer + Config UI** | Keep ring buffer + clear + subscribe; **rename** pane from “Show open profile log” to **“Session log”** (or “Activity log”) and empty-state copy.                                                         |
+| **Emit high-value events**  | At minimum in Stage 1, log **transitions** (not per-frame): e.g. stream validation set changed, readiness blocked/unblocked, save/open completed. Exact checklist in implementation; throttle duplicates. |
+| **Diagnostics export**      | Attach full session buffer (alias `showOpenProfile` in JSON for backward compatibility or bump export `schemaVersion` field if present).                                                                  |
 
 
 ### 1C — Readiness vs “problems” copy
@@ -168,11 +168,13 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 
 These items tighten **operator-facing copy and affordances** while keeping one global strip for problems; they do **not** replace Stage 5 (session **logging** of scene transitions).
 
-| Item | Notes |
-| ---- | ----- |
-| **Readable validation strings** | `validateStreamContentIssues` / engine `revalidate` produce messages via `scenePrimaryLabel` and per-kind sub-cue ordinals (`audio` / `visual` / `control` sub-cue no.*). |
-| **Highlight map for Stream UI** | `getStreamAuthoringErrorHighlights` + `getAuthoringIssuesForStreamUi` drive red styling for errored **scene rows**, **sub-cue lines** (expanded list), **flow cards**, and **scene edit / sub-cue rail**. |
-| **Runtime scene status `error`** | `SceneRuntimeState.status` includes `error`; stream engine overlays authoring errors on otherwise `ready` rows so the list **State** column matches misconfiguration. |
+
+| Item                             | Notes                                                                                                                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Readable validation strings**  | `validateStreamContentIssues` / engine `revalidate` produce messages via `scenePrimaryLabel` and per-kind sub-cue ordinals (`audio` / `visual` / `control` sub-cue no.*).                                 |
+| **Highlight map for Stream UI**  | `getStreamAuthoringErrorHighlights` + `getAuthoringIssuesForStreamUi` drive red styling for errored **scene rows**, **sub-cue lines** (expanded list), **flow cards**, and **scene edit / sub-cue rail**. |
+| **Runtime scene status `error`** | `SceneRuntimeState.status` includes `error`; stream engine overlays authoring errors on otherwise `ready` rows so the list **State** column matches misconfiguration.                                     |
+
 
 ---
 
@@ -237,7 +239,7 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 
 ### Product / UI (ahead of logging)
 
-- The **scene state set** in the app already includes **`error`** (authoring / misconfiguration overlay). Operators see it in the stream **list** State column; **session log rows** for transitions are still **Stage 5** scope.
+- The **scene state set** in the app already includes `**error`** (authoring / misconfiguration overlay). Operators see it in the stream **list** State column; **session log rows** for transitions are still **Stage 5** scope.
 
 ### Timestamps
 
@@ -250,14 +252,14 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 ## Roadmap Summary
 
 
-| Stage | Scope                                                                                                                                 | Implementation status                                           |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **0** | Show open + hydrate + presentation readiness; main open path; legacy problem UI in Patch header/detail and Stream header/scene        | **Implemented** (session log); legacy problem UI **replaced by Stage 1** |
-| **1** | **Session log foundation + domain separation + global problem strip** (footer after runtime label); unify stream validation surfacing; stream messages readable; list/flow/edit authoring highlights; scene runtime **`error`** | **Implemented**                                                 |
-| **2** | Open / create / save / save as — UI first beat + backend completion                                                                   | Not started                                                     |
-| **3** | Patch & Stream transport — UI + engine checkpoints                                                                                    | Not started                                                     |
-| **4** | Patch seek — manual vs drift correction                                                                                               | Not started                                                     |
-| **5** | Stream scene — **log** all state changes (wall + timeline timecode); UI/runtime already includes **`error`** status | **Not started** (logging only)                                                     |
+| Stage | Scope                                                                                                                                                                                                                           | Implementation status                                                    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **0** | Show open + hydrate + presentation readiness; main open path; legacy problem UI in Patch header/detail and Stream header/scene                                                                                                  | **Implemented** (session log); legacy problem UI **replaced by Stage 1** |
+| **1** | **Session log foundation + domain separation + global problem strip** (footer after runtime label); unify stream validation surfacing; stream messages readable; list/flow/edit authoring highlights; scene runtime `**error`** | **Implemented**                                                          |
+| **2** | Open / create / save / save as — UI first beat + backend completion                                                                                                                                                             | Not started                                                              |
+| **3** | Patch & Stream transport — UI + engine checkpoints                                                                                                                                                                              | Not started                                                              |
+| **4** | Patch seek — manual vs drift correction                                                                                                                                                                                         | Not started                                                              |
+| **5** | Stream scene — **log** all state changes (wall + timeline timecode); UI/runtime already includes `**error`** status                                                                                                             | **Not started** (logging only)                                           |
 
 
 ---

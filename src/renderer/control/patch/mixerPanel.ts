@@ -35,8 +35,33 @@ import {
   renderAudioFaderGraticule,
   renderOutputMeterGraticule,
 } from '../meters/graticuleLayout';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 import type { SelectedEntity } from '../shared/types';
 import { deriveOutputMeterLanes } from './meterLanes';
+
+let activeMixerOutputMenu: HTMLElement | undefined;
+
+function dismissMixerOutputContextMenu(): void {
+  activeMixerOutputMenu?.remove();
+  activeMixerOutputMenu = undefined;
+}
+
+function positionMixerOutputContextMenu(menu: HTMLElement, clientX: number, clientY: number): void {
+  const menuBounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(clientX, window.innerWidth - menuBounds.width - 4)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - menuBounds.height - 4)}px`;
+}
+
+let mixerOutputMenuDismissListenersAttached = false;
+
+function ensureMixerOutputMenuDismissListeners(): void {
+  if (mixerOutputMenuDismissListenersAttached) {
+    return;
+  }
+  mixerOutputMenuDismissListenersAttached = true;
+  document.addEventListener('click', dismissMixerOutputContextMenu);
+  window.addEventListener('blur', dismissMixerOutputContextMenu);
+}
 
 export type MixerPanelController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -65,6 +90,7 @@ type MixerPanelControllerOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
   isSelected: (type: SelectedEntity['type'], id: string) => boolean;
   selectEntity: (entity: SelectedEntity) => void;
+  clearSelectionIf?: (entity: SelectedEntity) => void;
   renderState: (state: DirectorState) => void;
   syncTransportInputs: (state: DirectorState) => void;
   refreshDetails: (state: DirectorState) => void;
@@ -452,11 +478,48 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     });
   }
 
+  function showMixerOutputContextMenu(event: MouseEvent, output: VirtualOutputState): void {
+    event.preventDefault();
+    event.stopPropagation();
+    dismissMixerOutputContextMenu();
+    ensureMixerOutputMenuDismissListeners();
+
+    const menu = document.createElement('div');
+    menu.className = 'context-menu audio-source-menu';
+    menu.setAttribute('role', 'menu');
+    menu.addEventListener('click', (e) => e.stopPropagation());
+
+    const removeBtn = createButton('Remove virtual output…', 'secondary context-menu-item', () => {
+      dismissMixerOutputContextMenu();
+      void (async () => {
+        if (!(await shellShowConfirm('Remove output?', `Remove ${output.label}?`))) {
+          return;
+        }
+        await window.xtream.outputs.remove(output.id);
+        options.clearSelectionIf?.({ type: 'output', id: output.id });
+        const nextState = await window.xtream.director.getState();
+        options.renderState(nextState);
+        options.refreshDetails(nextState);
+      })();
+    });
+    removeBtn.setAttribute('role', 'menuitem');
+
+    menu.append(removeBtn);
+    document.body.append(menu);
+    positionMixerOutputContextMenu(menu, event.clientX, event.clientY);
+    activeMixerOutputMenu = menu;
+  }
+
+  function attachMixerStripContextMenu(strip: HTMLElement, output: VirtualOutputState): void {
+    strip.addEventListener('contextmenu', (event) => showMixerOutputContextMenu(event, output));
+  }
+
   function createMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
     const strip = document.createElement('article');
     strip.className = `mixer-strip${options.isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
     strip.dataset.outputStrip = output.id;
     attachMixerStripSelectionHandlers(strip, output.id);
+    attachMixerStripContextMenu(strip, output);
     mountMixerStripContents(strip, output, state);
     return strip;
   }
@@ -466,6 +529,7 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     strip.className = `mixer-strip mixer-strip--detail${options.isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
     strip.dataset.outputStrip = output.id;
     attachMixerStripSelectionHandlers(strip, output.id);
+    attachMixerStripContextMenu(strip, output);
     mountMixerStripContents(strip, output, state);
     return strip;
   }

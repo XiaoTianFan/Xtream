@@ -72,6 +72,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     getAudioDevices: options.getAudioDevices,
     isSelected,
     selectEntity,
+    clearSelectionIf,
     renderState: options.renderState,
     syncTransportInputs: (state) => header.sync(state),
     refreshDetails: (state) => refreshDetailsPane(state),

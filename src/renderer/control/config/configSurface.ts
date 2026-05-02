@@ -168,7 +168,7 @@ function formatSessionLogLine(entry: ShowOpenProfileLogEntry): string {
   return `${t} [${entry.source}][${entry.domain}](${entry.kind}) ${rid} ${entry.checkpoint} +${Math.round(entry.sinceRunStartMs)}ms${seg}${extra}`;
 }
 
-function renderSessionLogCard(): HTMLElement {
+function renderSessionLogCard(options: ConfigSurfaceOptions): HTMLElement {
   const root = document.createElement('div');
   root.className = 'config-log-pane';
 
@@ -176,10 +176,22 @@ function renderSessionLogCard(): HTMLElement {
   header.className = 'config-log-pane-header';
   const title = createDetailTitle('Session log');
   title.className = 'config-log-pane-title';
-  const clearBtn = createButton('Clear log', 'secondary config-log-clear', () => {
+  const actions = document.createElement('div');
+  actions.className = 'config-log-pane-actions';
+  const exportBtn = createButton('Export Diagnostics', 'secondary config-log-header-btn', async () => {
+    const filePath = await window.xtream.show.exportDiagnostics({
+      showOpenProfileLog: [...getSessionLogBuffer()],
+      sessionLog: [...getSessionLogBuffer()],
+    });
+    if (filePath) {
+      options.setShowStatus(`Exported diagnostics: ${filePath}`);
+    }
+  });
+  const clearBtn = createButton('Clear log', 'secondary config-log-header-btn', () => {
     clearSessionLogBuffer();
   });
-  header.append(title, clearBtn);
+  actions.append(exportBtn, clearBtn);
+  header.append(title, actions);
 
   const scroll = document.createElement('div');
   scroll.className = 'config-log-scroll';
@@ -197,22 +209,6 @@ function renderSessionLogCard(): HTMLElement {
 }
 
 function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOptions): HTMLElement {
-  const exportCard = createSurfaceCard('Diagnostics export');
-  const exportRow = document.createElement('div');
-  exportRow.className = 'button-row';
-  exportRow.append(
-    createButton('Export Diagnostics', 'secondary', async () => {
-      const filePath = await window.xtream.show.exportDiagnostics({
-        showOpenProfileLog: [...getSessionLogBuffer()],
-        sessionLog: [...getSessionLogBuffer()],
-      });
-      if (filePath) {
-        options.setShowStatus(`Exported diagnostics: ${filePath}`);
-      }
-    }),
-  );
-  exportCard.append(exportRow);
-
   const combinedMedia = options.getOperationIssues();
   const { patchMedia, streamMedia } = partitionMediaValidationIssues(combinedMedia);
   const patchIssueItems = [...state.readiness.issues, ...patchMedia];
@@ -270,7 +266,7 @@ function renderDiagnosticsContent(state: DirectorState, options: ConfigSurfaceOp
     );
   }
 
-  return wrapSurfaceGrid(exportCard, patchIssueCard, streamPersistCard, displayCard, outputCard);
+  return wrapSurfaceGrid(patchIssueCard, streamPersistCard, displayCard, outputCard);
 }
 
 function wrapConfigOverviewPanels(
@@ -442,7 +438,7 @@ function renderIntoShell(state: DirectorState, options: ConfigSurfaceOptions, se
   }
 
   upperMount.replaceChildren(tabRow, panels);
-  layoutRefs.logPane!.replaceChildren(renderSessionLogCard());
+  layoutRefs.logPane!.replaceChildren(renderSessionLogCard(options));
 }
 
 async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSurfaceOptions): Promise<void> {

@@ -10,6 +10,7 @@ import type {
   SubCueId,
   VirtualOutputId,
 } from '../../../shared/types';
+import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
 import { createEmbeddedAudioImportController } from '../patch/embeddedAudioImport';
@@ -31,7 +32,7 @@ import {
 import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
-import { formatSceneStateLabel } from './formatting';
+import { formatSceneStateLabelForSceneList, sceneListRowRuntimeStatus } from './formatting';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
@@ -312,6 +313,68 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return id.startsWith('stream-audio:');
   }
 
+  function syncListRuntimeChrome(root: HTMLElement, state: StreamEnginePublicState, directorState: DirectorState | undefined): void {
+    const stream = state.stream;
+    const highlights = getStreamAuthoringErrorHighlights(
+      stream,
+      validateStreamContextFromDirector(directorState),
+      state.playbackTimeline,
+    );
+    const runtime = state.runtime;
+    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
+      const sceneId = wrap.dataset.sceneId as SceneId | undefined;
+      if (!sceneId) {
+        continue;
+      }
+      const scene = stream.scenes[sceneId];
+      if (!scene) {
+        continue;
+      }
+      const runtimeState = runtime?.sceneStates[sceneId];
+      const authoringErr = highlights.scenesWithErrors.has(sceneId);
+      const statusClass = sceneListRowRuntimeStatus(runtimeState, scene, authoringErr);
+      replaceWrapListRuntimeStatus(wrap, statusClass);
+
+      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
+      if (row) {
+        replaceRowListRuntimeStatus(row, statusClass);
+        const stateCell = row.querySelector<HTMLElement>('.stream-list-col-state');
+        if (stateCell) {
+          stateCell.textContent = formatSceneStateLabelForSceneList(runtimeState, scene, authoringErr);
+        }
+      }
+
+      let bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
+      if (runtimeState?.status === 'running') {
+        const progress = runtimeState.progress;
+        if (!bar) {
+          bar = document.createElement('div');
+          wrap.append(bar);
+        }
+        if (progress !== undefined && Number.isFinite(progress)) {
+          bar.className = 'stream-scene-row-progress';
+          bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+        } else {
+          bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
+          bar.style.removeProperty('--stream-row-progress');
+        }
+      } else {
+        bar?.remove();
+      }
+    }
+  }
+
+  function syncListDragAppearance(root: HTMLElement, draggingSceneId: SceneId | undefined): void {
+    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
+      const id = wrap.dataset.sceneId as SceneId | undefined;
+      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
+      if (!id || !row) {
+        continue;
+      }
+      row.classList.toggle('dragging', draggingSceneId !== undefined && id === draggingSceneId);
+    }
+  }
+
   function render(state: DirectorState): void {
     currentState = state;
     if (!mounted) {
@@ -348,7 +411,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     } else {
       const workspace = requireRef('workspace');
       syncWorkspaceSceneSelection(workspace, playbackFocusSceneId, sceneEditSceneId);
-      syncListRuntimeChrome(workspace, streamState);
+      syncListRuntimeChrome(workspace, streamState, currentState);
       syncListDragAppearance(workspace, listDragSceneId);
     }
     renderBottomPaneIfNeeded();
@@ -372,7 +435,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
-    syncListRuntimeChrome(requireRef('workspace'), streamState);
+    syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }
@@ -418,7 +481,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderHeader(pub);
     mediaPool?.syncPoolSelectionHighlight(mediaState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
-    syncListRuntimeChrome(requireRef('workspace'), pub);
+    syncListRuntimeChrome(requireRef('workspace'), pub, currentState);
     syncListDragAppearance(requireRef('workspace'), listDragSceneId);
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
@@ -433,65 +496,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     bottomRenderSignature = '';
     renderBottomPaneIfNeeded();
-  }
-
-  function syncListRuntimeChrome(root: HTMLElement, state: StreamEnginePublicState): void {
-    const runtime = state.runtime;
-    const stream = state.stream;
-    if (!runtime) {
-      return;
-    }
-    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
-      const sceneId = wrap.dataset.sceneId as SceneId | undefined;
-      if (!sceneId) {
-        continue;
-      }
-      const scene = stream.scenes[sceneId];
-      if (!scene) {
-        continue;
-      }
-      const runtimeState = runtime.sceneStates[sceneId];
-      const statusClass = scene.disabled ? 'disabled' : runtimeState?.status ?? 'ready';
-      replaceWrapListRuntimeStatus(wrap, statusClass);
-
-      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
-      if (row) {
-        replaceRowListRuntimeStatus(row, statusClass);
-        const stateCell = row.querySelector<HTMLElement>('.stream-list-col-state');
-        if (stateCell) {
-          stateCell.textContent = formatSceneStateLabel(runtimeState, scene);
-        }
-      }
-
-      let bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
-      if (runtimeState?.status === 'running') {
-        const progress = runtimeState.progress;
-        if (!bar) {
-          bar = document.createElement('div');
-          wrap.append(bar);
-        }
-        if (progress !== undefined && Number.isFinite(progress)) {
-          bar.className = 'stream-scene-row-progress';
-          bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
-        } else {
-          bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
-          bar.style.removeProperty('--stream-row-progress');
-        }
-      } else {
-        bar?.remove();
-      }
-    }
-  }
-
-  function syncListDragAppearance(root: HTMLElement, draggingSceneId: SceneId | undefined): void {
-    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
-      const id = wrap.dataset.sceneId as SceneId | undefined;
-      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
-      if (!id || !row) {
-        continue;
-      }
-      row.classList.toggle('dragging', draggingSceneId !== undefined && id === draggingSceneId);
-    }
   }
 
   function syncSelectedScene(): void {
@@ -562,6 +566,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       getAudioDevices: options.getAudioDevices,
       isSelected,
       selectEntity,
+      clearSelectionIf,
       renderState: options.renderState,
       syncTransportInputs: () => undefined,
       refreshDetails: () => renderCurrent(),
@@ -864,13 +869,27 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function removeSelectedScene(sceneId: SceneId): void {
-    void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((state) => {
-      const first = state.stream.sceneOrder[0];
-      sceneEditSceneId = first;
-      playbackFocusSceneId = first;
-      sceneEditSelection = { kind: 'scene' };
-      bottomRenderSignature = '';
-    });
+    const pub = streamState;
+    if (!pub || pub.stream.sceneOrder.length <= 1) {
+      return;
+    }
+    const scene = pub.stream.scenes[sceneId];
+    if (!scene) {
+      return;
+    }
+    const label = scene.title?.trim() || scene.id;
+    void (async () => {
+      if (!(await shellShowConfirm('Remove scene?', `Remove "${label}" from the stream?`))) {
+        return;
+      }
+      void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((next) => {
+        const first = next.stream.sceneOrder[0];
+        sceneEditSceneId = first;
+        playbackFocusSceneId = first;
+        sceneEditSelection = { kind: 'scene' };
+        bottomRenderSignature = '';
+      });
+    })();
   }
 
   async function refreshDirector(): Promise<void> {
