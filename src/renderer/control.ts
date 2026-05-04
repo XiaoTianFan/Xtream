@@ -42,6 +42,7 @@ import { logSessionEvent, logShowOpenProfile, type ShowOpenProfileFlowContext } 
 import { getShownProjectPath, setShownProjectPath } from './control/app/showProjectPath';
 import type { ControlSurface } from './control/shared/types';
 import { installShellModalPresenter } from './control/shell/shellModalPresenter';
+import { installThemeToggle } from './control/shell/themeToggle';
 import { probeAllMedia } from './control/app/mediaProber';
 
 installShellModalPresenter();
@@ -491,6 +492,7 @@ installInteractionLock(patchElements.outputPanel);
 installInteractionLock(patchElements.detailsContent);
 elements.runtimeVersionLabel.textContent = `Xtream runtime ${XTREAM_RUNTIME_VERSION}`;
 installShellIcons();
+installThemeToggle(elements.themeToggleButton);
 installPatchIcons();
 patchSurface.install();
 globalOperatorFooter.install();

@@ -40,7 +40,7 @@
   min-height: var(--status-footer-height);
   padding: 0 var(--pane-padding);
   overflow: hidden;
-  background: #0e0e0f;
+  background: var(--surface-deep);
   color: var(--text-secondary);
   font-size: 0.7rem;
   letter-spacing: 0.04em;
@@ -112,7 +112,7 @@
   letter-spacing: 0.02em;
   text-transform: none;
   font-weight: 500;
-  color: color-mix(in srgb, var(--accent-teal) 92%, white);
+  color: color-mix(in srgb, var(--accent-teal) 92%, var(--button-hover-text));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -133,7 +133,7 @@
 }
 
 .session-problem-inline--warning {
-  color: color-mix(in srgb, var(--accent-ochre) 88%, white);
+  color: color-mix(in srgb, var(--accent-ochre) 88%, var(--button-hover-text));
 }
 
 .session-problem-tag {

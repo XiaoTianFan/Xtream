@@ -17,7 +17,7 @@
   grid-template-rows: auto 1fr;
   gap: var(--gutter);
   border-right: 1px solid var(--border-subtle);
-  background: #0e0e0f;
+  background: var(--surface-deep);
   padding: var(--gutter) var(--compact);
 }
 
@@ -154,7 +154,7 @@
   max-height: min(640px, calc(100vh - 96px));
   border: 1px solid var(--border-subtle);
   background: var(--surface);
-  box-shadow: 0 18px 60px rgb(0 0 0 / 0.35);
+  box-shadow: 0 18px 60px var(--shadow-medium);
   padding: 16px;
   overflow: hidden;
 }
@@ -288,7 +288,7 @@
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--status-critical) 36%, transparent);
   background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-low));
-  color: #ffb4ab;
+  color: var(--error-text);
   padding: 10px;
   white-space: pre-wrap;
   word-break: break-word;

@@ -983,7 +983,7 @@
 .stream-subcue-chip.active {
   border-color: color-mix(in srgb, var(--accent-teal) 72%, var(--border-subtle));
   background: color-mix(in srgb, var(--accent-teal) 16%, var(--surface-low));
-  color: #fff;
+  color: var(--button-hover-text);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-teal) 34%, transparent);
 }
 
@@ -1140,7 +1140,7 @@
   min-height: 3.55rem;
   border: 1px solid var(--border-subtle);
   padding: 0.45rem 0.55rem;
-  background: #0e0e0f;
+  background: var(--surface-deep);
 }
 
 .stream-subcue-pan-label {

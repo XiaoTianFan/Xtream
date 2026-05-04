@@ -36,6 +36,7 @@ function mountControlShellFixture(): void {
     <button type="button" id="missingMediaRelinkButton"></button>
     <button type="button" id="clearSoloButton"></button>
     <button type="button" id="displayIdentifyFlashButton"></button>
+    <button type="button" id="themeToggleButton"></button>
   `;
 }
 

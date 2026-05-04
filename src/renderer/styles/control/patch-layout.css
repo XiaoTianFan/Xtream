@@ -171,7 +171,7 @@ body.extraction-blocked .nav-rail {
 
 .timeline-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, transparent var(--loop-start, 0%), rgb(194 153 88 / 0.45) var(--loop-start, 0%), rgb(194 153 88 / 0.45) var(--loop-end, 0%), transparent var(--loop-end, 0%)),
+    linear-gradient(90deg, transparent var(--loop-start, 0%), var(--timeline-loop-range) var(--loop-start, 0%), var(--timeline-loop-range) var(--loop-end, 0%), transparent var(--loop-end, 0%)),
     linear-gradient(90deg, var(--accent-teal) var(--progress, 0%), var(--outline-variant) var(--progress, 0%));
 }
 
@@ -207,14 +207,14 @@ body.extraction-blocked .nav-rail {
 }
 
 .status-chip[data-state="live"] {
-  border-color: #f87171;
-  background: rgb(127 29 29 / 0.55);
-  color: #fecaca;
+  border-color: var(--status-live-border);
+  background: var(--status-live-bg);
+  color: var(--status-live-text);
 }
 
 .status-chip[data-state="blocked"] {
   border-color: var(--status-critical);
-  color: #ffdad6;
+  color: var(--status-blocked-text);
 }
 
 .status-chip[data-state="degraded"] {
@@ -244,8 +244,8 @@ body.extraction-blocked .nav-rail {
   padding: 6px 8px;
   background: var(--surface);
   box-shadow:
-    0 1px 0 rgb(255 255 255 / 0.04) inset,
-    0 8px 24px rgb(0 0 0 / 0.35);
+    0 1px 0 var(--loop-popover-inset) inset,
+    0 8px 24px var(--loop-popover-shadow);
 }
 
 .loop-popover[hidden] {

@@ -40,6 +40,10 @@ export const elements = {
     document.querySelector<HTMLButtonElement>('#displayIdentifyFlashButton'),
     'displayIdentifyFlashButton',
   ),
+  themeToggleButton: assertElement(
+    document.querySelector<HTMLButtonElement>('#themeToggleButton'),
+    'themeToggleButton',
+  ),
 };
 
 export type ControlElements = typeof elements;

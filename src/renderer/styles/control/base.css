@@ -37,7 +37,7 @@ button.secondary {
 
 button:hover:not(:disabled) {
   border-color: var(--accent-teal);
-  color: #fff;
+  color: var(--button-hover-text);
 }
 
 button:disabled {
@@ -90,7 +90,7 @@ select {
   width: 100%;
   border: 1px solid var(--border-subtle);
   padding: 0.45rem 0.5rem;
-  background: #0e0e0f;
+  background: var(--surface-deep);
   color: var(--text-primary);
 }
 
@@ -118,7 +118,7 @@ input[type="range"].mini-slider::-webkit-slider-thumb {
   width: 8px;
   height: 8px;
   margin-top: -3px;
-  border: 1px solid var(--surface-tint, #bcc8d0);
+  border: 1px solid var(--surface-tint);
   background: var(--slider-fill);
 }
 
@@ -135,7 +135,7 @@ input[type="range"].mini-slider::-moz-range-progress {
 input[type="range"].mini-slider::-moz-range-thumb {
   width: 8px;
   height: 8px;
-  border: 1px solid var(--surface-tint, #bcc8d0);
+  border: 1px solid var(--surface-tint);
   border-radius: 0;
   background: var(--slider-fill);
 }
