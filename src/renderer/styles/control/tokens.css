@@ -165,19 +165,19 @@
 }
 
 html[data-theme="light"] {
-  --color-bg-base: #f3f4f6;
-  --color-surface: #ffffff;
-  --color-surface-low: #f9fafb;
-  --color-surface-muted: #e5e7eb;
-  --color-surface-active: #d1d5db;
-  --color-text-primary: #111827;
-  --color-text-secondary: #6b7280;
-  --color-on-surface: #374151;
-  --color-accent-teal: #2d7a8a;
-  --color-accent-ochre: #a67c3e;
-  --color-status-critical: #c53030;
-  --color-border-subtle: #d1d5db;
-  --color-outline-variant: #e5e7eb;
+  --color-bg-base: #e8e6e3;
+  --color-surface: #efece9;
+  --color-surface-low: #eeedea;
+  --color-surface-muted: #d8d6d3;
+  --color-surface-active: #c4c2be;
+  --color-text-primary: #3d3a36;
+  --color-text-secondary: #8a8580;
+  --color-on-surface: #5c5854;
+  --color-accent-teal: #4a7c85;
+  --color-accent-ochre: #9a7a4a;
+  --color-status-critical: #a84848;
+  --color-border-subtle: #c9c7c4;
+  --color-outline-variant: #d8d6d3;
 
   --surface: var(--color-surface);
   --surface-low: var(--color-surface-low);
@@ -194,7 +194,7 @@ html[data-theme="light"] {
   --border-subtle: var(--color-border-subtle);
   --outline-variant: var(--color-outline-variant);
 
-  --meter-zone-approaching: #8b7d1c;
+  --meter-zone-approaching: #7a7028;
 
   --scrollbar-track: var(--surface-low);
   --scrollbar-thumb: color-mix(in srgb, var(--accent-teal) 42%, var(--surface-low));
@@ -219,58 +219,58 @@ html[data-theme="light"] {
   --video-bg: #000;
 
   /* Deep surfaces */
-  --surface-deep: #f3f4f6;
-  --surface-darker: #ffffff;
+  --surface-deep: #dedcd9;
+  --surface-darker: #f5f3f0;
 
   /* Display workspace */
-  --display-workspace-bg: #f3f4f6;
+  --display-workspace-bg: #e8e6e3;
 
   /* Meter */
-  --meter-bg: #e5e7eb;
-  --meter-well-border: #d1d5db;
-  --meter-segment-inactive: #d1d5db;
-  --meter-nominal: #22c55e;
-  --meter-gradient-start: #22c55e;
-  --meter-gradient-mid: #eab308;
-  --meter-gradient-end: #ef4444;
+  --meter-bg: #d8d6d3;
+  --meter-well-border: #c9c7c4;
+  --meter-segment-inactive: #c9c7c4;
+  --meter-nominal: #5a9e6e;
+  --meter-gradient-start: #5a9e6e;
+  --meter-gradient-mid: #b89a4a;
+  --meter-gradient-end: #b85a5a;
 
   /* Scale text */
-  --scale-text: #9ca3af;
+  --scale-text: #a09994;
 
   /* Preview empty */
-  --preview-empty-text: #9ca3af;
+  --preview-empty-text: #a09994;
 
   /* Fader */
-  --fader-cap-border: #9ca3af;
-  --fader-rail-gradient: linear-gradient(90deg, #e5e7eb, #d1d5db 45%, #9ca3af 50%, #e5e7eb);
-  --fader-cap-highlight-gradient: linear-gradient(90deg, rgb(0 0 0 / 0.15), transparent 28%, transparent 72%, rgb(255 255 255 / 0.20));
-  --fader-cap-body-gradient: linear-gradient(to bottom, #9ca3af, #d1d5db 42%, #e5e7eb 50%, #9ca3af);
+  --fader-cap-border: #a09994;
+  --fader-rail-gradient: linear-gradient(90deg, #d8d6d3, #c9c7c4 45%, #a09994 50%, #d8d6d3);
+  --fader-cap-highlight-gradient: linear-gradient(90deg, rgb(0 0 0 / 0.12), transparent 28%, transparent 72%, rgb(255 255 255 / 0.18));
+  --fader-cap-body-gradient: linear-gradient(to bottom, #a09994, #c9c7c4 42%, #e8e6e3 50%, #a09994);
 
   /* Warning / error */
-  --warning-bg: #fee2e2;
-  --warning-border: #fca5a5;
-  --warning-text: #991b1b;
-  --error-text: #991b1b;
+  --warning-bg: #f0e6e4;
+  --warning-border: #d4b4b0;
+  --warning-text: #7a4a46;
+  --error-text: #7a4a46;
 
   /* Status live */
-  --status-live-border: #ef4444;
-  --status-live-bg: rgb(254 226 226 / 0.55);
-  --status-live-text: #991b1b;
-  --status-blocked-text: #991b1b;
+  --status-live-border: #b85a5a;
+  --status-live-bg: rgb(232 216 214 / 0.55);
+  --status-live-text: #7a4a46;
+  --status-blocked-text: #7a4a46;
 
   /* Timeline loop */
-  --timeline-loop-range: rgb(194 153 88 / 0.35);
+  --timeline-loop-range: rgb(154 122 74 / 0.35);
 
   /* Display overlay */
-  --display-overlay-border: rgb(209 213 219 / 0.75);
-  --display-overlay-bg: rgb(243 244 246 / 0.82);
-  --display-telemetry-bg: rgb(243 244 246 / 0.9);
+  --display-overlay-border: rgb(201 199 196 / 0.75);
+  --display-overlay-bg: rgb(232 230 227 / 0.82);
+  --display-telemetry-bg: rgb(232 230 227 / 0.9);
 
   /* Surface tint */
-  --surface-tint: #9ca3af;
+  --surface-tint: #a09994;
 
   /* Accent glow */
-  --accent-teal-glow: rgb(45 122 138 / 0.20);
+  --accent-teal-glow: rgb(74 124 133 / 0.20);
 
   /* Live overlay button */
   --live-overlay-highlight: rgb(0 0 0 / 0.08);
