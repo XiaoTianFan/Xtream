@@ -646,11 +646,62 @@ export type StreamScheduleEntry = {
   triggerKnown: boolean;
 };
 
+export type StreamThreadId = string;
+
+export type StreamThreadEdge = {
+  predecessorSceneId: SceneId;
+  followerSceneId: SceneId;
+  triggerType: 'follow-start' | 'follow-end';
+  delayMs: number;
+};
+
+export type StreamThreadBranch = {
+  sceneIds: SceneId[];
+  durationMs?: number;
+};
+
+export type StreamThreadSceneTiming = {
+  sceneId: SceneId;
+  threadLocalStartMs?: number;
+  threadLocalEndMs?: number;
+};
+
+export type StreamCanonicalThreadPlan = {
+  threadId: StreamThreadId;
+  rootSceneId: SceneId;
+  rootTriggerType: 'manual' | 'at-timecode';
+  sceneIds: SceneId[];
+  edges: StreamThreadEdge[];
+  branches: StreamThreadBranch[];
+  longestBranchSceneIds: SceneId[];
+  sceneTimings: Record<SceneId, StreamThreadSceneTiming>;
+  durationMs?: number;
+  temporarilyDisabledSceneIds: SceneId[];
+};
+
+export type StreamThreadPlan = {
+  threads: StreamCanonicalThreadPlan[];
+  threadBySceneId: Record<SceneId, StreamThreadId>;
+  temporarilyDisabledSceneIds: SceneId[];
+  issues: StreamTimelineIssue[];
+};
+
+export type StreamMainTimelineSegment = {
+  threadId: StreamThreadId;
+  rootSceneId: SceneId;
+  startMs: number;
+  durationMs: number;
+  endMs: number;
+  proportion: number;
+};
+
 export type CalculatedStreamTimeline = {
   revision: number;
   status: StreamTimelineCalculationStatus;
   entries: Record<SceneId, StreamScheduleEntry>;
   expectedDurationMs?: number;
+  threadPlan?: StreamThreadPlan;
+  mainSegments?: StreamMainTimelineSegment[];
   calculatedAtWallTimeMs: number;
   issues: StreamTimelineIssue[];
   notice?: string;
@@ -690,6 +741,31 @@ export type StreamRuntimeVisualSubCue = {
   fadeOutDurationMs?: number;
 };
 
+export type StreamRuntimeTimelineInstance = {
+  id: string;
+  kind: 'main' | 'parallel';
+  status: 'idle' | 'running' | 'paused' | 'complete' | 'failed';
+  orderedThreadInstanceIds: string[];
+  cursorMs: number;
+  offsetMs?: number;
+  originWallTimeMs?: number;
+  pausedAtMs?: number;
+  durationMs?: number;
+};
+
+export type StreamRuntimeThreadInstance = {
+  id: string;
+  canonicalThreadId: StreamThreadId;
+  timelineId: string;
+  rootSceneId: SceneId;
+  launchSceneId: SceneId;
+  launchLocalMs: number;
+  state: 'ready' | 'running' | 'paused' | 'complete' | 'failed' | 'skipped';
+  timelineStartMs: number;
+  durationMs?: number;
+  copiedFromThreadInstanceId?: string;
+};
+
 export type StreamRuntimeState = {
   status: 'idle' | 'preloading' | 'running' | 'paused' | 'complete' | 'failed';
   originWallTimeMs?: number;
@@ -705,6 +781,11 @@ export type StreamRuntimeState = {
   activeAudioSubCues?: StreamRuntimeAudioSubCue[];
   activeVisualSubCues?: StreamRuntimeVisualSubCue[];
   timelineNotice?: string;
+  timelineInstances?: Record<string, StreamRuntimeTimelineInstance>;
+  threadInstances?: Record<string, StreamRuntimeThreadInstance>;
+  mainTimelineId?: string;
+  timelineOrder?: string[];
+  playbackFocusSceneId?: SceneId;
 };
 
 export type StreamCommand =

@@ -305,7 +305,30 @@ describe('streamSchedule', () => {
     expect(schedule.status).toBe('valid');
     expect(schedule.entries.s1).toMatchObject({ startMs: 0, endMs: 0 });
     expect(schedule.entries.s2).toMatchObject({ startMs: 12_000, endMs: 13_000 });
-    expect(schedule.expectedDurationMs).toBe(13_000);
+    expect(schedule.expectedDurationMs).toBe(0);
+    expect(schedule.threadPlan?.threads.find((thread) => thread.rootSceneId === 's2')?.rootTriggerType).toBe('at-timecode');
+  });
+
+  it('excludes at-timecode-rooted threads from default main timeline duration', () => {
+    const s1 = {
+      ...createEmptyUserScene('s1', 'Main'),
+      subCueOrder: ['v1'],
+      subCues: { v1: { id: 'v1', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 4000 } },
+    };
+    const s2 = {
+      ...createEmptyUserScene('s2', 'Side'),
+      trigger: { type: 'at-timecode' as const, timecodeMs: 12_000 },
+      subCueOrder: ['v1'],
+      subCues: { v1: { id: 'v1', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 1000 } },
+    };
+    const stream = streamWithScenes({ s1, s2 }, ['s1', 's2']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: {}, audioDurations: {} });
+    expect(schedule.status).toBe('valid');
+    expect(schedule.expectedDurationMs).toBe(4000);
+    expect(schedule.entries.s2).toMatchObject({ startMs: 12_000, endMs: 13_000 });
+    expect(schedule.mainSegments).toEqual([
+      { threadId: 'thread:s1', rootSceneId: 's1', startMs: 0, durationMs: 4000, endMs: 4000, proportion: 1 },
+    ]);
   });
 
   it('reports disabled predecessor references as scene-specific errors', () => {
@@ -375,7 +398,7 @@ describe('streamSchedule', () => {
     );
   });
 
-  it('reports manual scenes blocked by unknown preceding ends', () => {
+  it('keeps manual-rooted threads independent when an earlier thread has unknown duration', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'Unknown preceding'),
       subCueOrder: ['v1'],
@@ -389,9 +412,8 @@ describe('streamSchedule', () => {
     const stream = streamWithScenes({ s1, s2 }, ['s1', 's2']);
     const schedule = buildStreamSchedule(stream, { visualDurations: {}, audioDurations: {} });
     expect(schedule.status).toBe('invalid');
-    expect(schedule.issues).toContainEqual(
-      expect.objectContaining({ severity: 'error', sceneId: 's2', message: expect.stringContaining('preceding scene end') }),
-    );
+    expect(schedule.entries.s2).toMatchObject({ startMs: 0, endMs: 1000 });
+    expect(schedule.issues).toContainEqual(expect.objectContaining({ severity: 'error', sceneId: 's1' }));
   });
 
   it('allows empty audio output and visual targets on patch compatibility scene only', () => {

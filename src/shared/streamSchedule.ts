@@ -9,12 +9,14 @@ import type {
   PersistedVisualSubCueConfig,
   SceneId,
   SceneTrigger,
+  StreamMainTimelineSegment,
   SubCueId,
   VisualId,
   VirtualOutputId,
 } from './types';
 import { createLoopValidationMessages, resolveLoopTiming } from './streamLoopTiming';
 import { PATCH_COMPAT_SCENE_ID } from './streamWorkspace';
+import { deriveStreamThreadPlan } from './streamThreadPlan';
 
 export type ValidateStreamContentContext = {
   visuals?: ReadonlySet<VisualId>;
@@ -503,6 +505,8 @@ export type StreamSchedule = {
   status: 'valid' | 'invalid';
   entries: Record<SceneId, StreamScheduleEntry>;
   expectedDurationMs?: number;
+  threadPlan?: CalculatedStreamTimeline['threadPlan'];
+  mainSegments?: StreamMainTimelineSegment[];
   issues: StreamScheduleIssue[];
   notice?: string;
 };
@@ -670,11 +674,12 @@ export function buildStreamSchedule(
   const entries: Record<SceneId, StreamScheduleEntry> = {};
   const issues: StreamScheduleIssue[] = [];
   const seenIssues = new Set<string>();
-  const enabledIds = stream.sceneOrder.filter((id) => isEnabledScene(stream, id));
+  const sceneDurations: Record<SceneId, number | undefined> = {};
 
   for (const id of stream.sceneOrder) {
     const scene = stream.scenes[id];
     const durationMs = scene && !scene.disabled ? estimateSceneDurationMs(scene, durations.visualDurations, durations.audioDurations) : undefined;
+    sceneDurations[id] = durationMs;
     entries[id] = {
       sceneId: id,
       durationMs,
@@ -685,120 +690,106 @@ export function buildStreamSchedule(
     }
   }
 
-  for (const id of enabledIds) {
-    const scene = stream.scenes[id];
-    if (scene?.trigger.type === 'at-timecode') {
-      entries[id].startMs = scene.trigger.timecodeMs;
-      entries[id].triggerKnown = true;
-      if (entries[id].durationMs !== undefined) {
-        entries[id].endMs = scene.trigger.timecodeMs + entries[id].durationMs;
-      }
-    }
+  const threadPlan = deriveStreamThreadPlan(stream, sceneDurations);
+  for (const issue of threadPlan.issues) {
+    pushIssueOnce(issues, seenIssues, issue);
   }
 
-  let changed = true;
-  for (let guard = 0; guard < Math.max(1, enabledIds.length * enabledIds.length) && changed; guard += 1) {
-    changed = false;
+  let mainCursorMs = 0;
+  const mainSegments: StreamMainTimelineSegment[] = [];
+  for (const thread of threadPlan.threads) {
+    if (thread.rootTriggerType !== 'manual') {
+      continue;
+    }
+    if (thread.durationMs === undefined) {
+      continue;
+    }
+    const startMs = mainCursorMs;
+    const endMs = startMs + thread.durationMs;
+    mainSegments.push({
+      threadId: thread.threadId,
+      rootSceneId: thread.rootSceneId,
+      startMs,
+      durationMs: thread.durationMs,
+      endMs,
+      proportion: 0,
+    });
+    mainCursorMs = endMs;
+  }
 
-    for (const id of enabledIds) {
-      const scene = stream.scenes[id];
-      const entry = entries[id];
-      if (!scene || entry.startMs !== undefined) {
+  const mainDurationMs = mainCursorMs;
+  for (const segment of mainSegments) {
+    segment.proportion = mainDurationMs > 0 ? segment.durationMs / mainDurationMs : 0;
+  }
+  const segmentByThreadId = new Map(mainSegments.map((segment) => [segment.threadId, segment]));
+  const temporarilyDisabled = new Set(threadPlan.temporarilyDisabledSceneIds);
+
+  for (const thread of threadPlan.threads) {
+    const rootScene = stream.scenes[thread.rootSceneId];
+    const threadBaseMs =
+      thread.rootTriggerType === 'manual'
+        ? segmentByThreadId.get(thread.threadId)?.startMs
+        : rootScene?.trigger.type === 'at-timecode'
+          ? rootScene.trigger.timecodeMs
+          : undefined;
+    if (threadBaseMs === undefined) {
+      continue;
+    }
+    for (const sceneId of thread.sceneIds) {
+      if (temporarilyDisabled.has(sceneId)) {
         continue;
       }
-
-      let start: number | undefined;
-      if (scene.trigger.type === 'manual') {
-        const manual = findManualStartAfterPrecedingScenes(stream, enabledIds, id, entries);
-        if (manual.blockedBySceneId) {
-          continue;
-        }
-        start = manual.startMs;
-      } else if (scene.trigger.type !== 'at-timecode') {
-        const pred = resolveFollowsSceneId(stream, id, scene.trigger);
-        const predEntry = pred ? entries[pred] : undefined;
-        if (!pred || !isEnabledScene(stream, pred)) {
-          pushIssueOnce(issues, seenIssues, {
-            severity: 'error',
-            sceneId: id,
-            message: `Scene ${scene.title ?? id} references a missing or disabled predecessor${pred ? `: ${pred}` : '.'}`,
-          });
-          continue;
-        }
-        if (!predEntry || predEntry.startMs === undefined) {
-          continue;
-        }
-        if (scene.trigger.type === 'follow-start') {
-          start = predEntry.startMs + (scene.trigger.delayMs ?? 0);
-        } else if (scene.trigger.type === 'follow-end') {
-          if (predEntry.endMs === undefined) {
-            continue;
-          }
-          start = predEntry.endMs + (scene.trigger.delayMs ?? 0);
-        }
+      const timing = thread.sceneTimings[sceneId];
+      const entry = entries[sceneId];
+      if (!timing || !entry || timing.threadLocalStartMs === undefined) {
+        continue;
       }
-
-      if (start !== undefined) {
-        entry.startMs = start;
-        entry.triggerKnown = true;
-        if (entry.durationMs !== undefined) {
-          entry.endMs = start + entry.durationMs;
-        }
-        changed = true;
+      entry.startMs = threadBaseMs + timing.threadLocalStartMs;
+      entry.triggerKnown = true;
+      if (entry.durationMs !== undefined) {
+        entry.endMs = entry.startMs + entry.durationMs;
       }
     }
   }
 
-  let maxEnd = 0;
-  for (const id of enabledIds) {
+  for (const id of stream.sceneOrder) {
     const scene = stream.scenes[id];
     const entry = entries[id];
-    if (!scene) {
+    if (!scene || scene.disabled) {
       continue;
     }
-    if (entry.startMs === undefined) {
-      if (scene.trigger.type === 'manual') {
-        const manual = findManualStartAfterPrecedingScenes(stream, enabledIds, id, entries);
-        if (manual.blockedBySceneId) {
-          pushIssueOnce(issues, seenIssues, {
-            severity: 'error',
-            sceneId: id,
-            message: `Scene ${scene.title ?? id} could not be placed because preceding scene end is unknown: ${manual.blockedBySceneId}`,
-          });
-          continue;
-        }
-      } else if (scene.trigger.type === 'follow-end') {
-        const pred = resolveFollowsSceneId(stream, id, scene.trigger);
-        const predEntry = pred ? entries[pred] : undefined;
-        if (pred && isEnabledScene(stream, pred) && predEntry?.startMs !== undefined && predEntry.endMs === undefined) {
-          pushIssueOnce(issues, seenIssues, {
-            severity: 'error',
-            sceneId: id,
-            message: `Scene ${scene.title ?? id} could not be placed because predecessor end is unknown: ${pred}`,
-          });
-          continue;
-        }
+    if (temporarilyDisabled.has(id)) {
+      continue;
+    }
+    if (entry.startMs !== undefined) {
+      continue;
+    }
+    if (scene.trigger.type === 'follow-end') {
+      const pred = resolveFollowsSceneId(stream, id, scene.trigger);
+      const predEntry = pred ? entries[pred] : undefined;
+      if (pred && isEnabledScene(stream, pred) && predEntry && predEntry.endMs === undefined) {
+        pushIssueOnce(issues, seenIssues, {
+          severity: 'error',
+          sceneId: id,
+          message: `Scene ${scene.title ?? id} could not be placed because predecessor end is unknown: ${pred}`,
+        });
+        continue;
       }
-      pushIssueOnce(issues, seenIssues, {
-        severity: 'error',
-        sceneId: id,
-        message: `Scene ${scene.title ?? id} could not be placed on the Stream timeline.`,
-      });
-      continue;
     }
-    if (entry.durationMs === undefined) {
-      continue;
-    }
-    entry.endMs = entry.startMs + entry.durationMs;
-    maxEnd = Math.max(maxEnd, entry.endMs);
+    pushIssueOnce(issues, seenIssues, {
+      severity: 'error',
+      sceneId: id,
+      message: `Scene ${scene.title ?? id} could not be placed on the Stream timeline.`,
+    });
   }
 
   const status: StreamSchedule['status'] = issues.some((issue) => issue.severity === 'error') ? 'invalid' : 'valid';
-  /** Upper bound of stacked timeline: max of (scheduled start + duration) for every placed scene. Manual rows use the same stacking as other triggers; they contribute full segment length, not "until first manual only". */
   return {
     status,
     entries,
-    expectedDurationMs: status === 'valid' ? maxEnd : undefined,
+    expectedDurationMs: status === 'valid' ? mainDurationMs : undefined,
+    threadPlan,
+    mainSegments,
     issues,
     notice: status === 'invalid' ? 'Stream timeline has calculation errors.' : undefined,
   };

@@ -19,6 +19,33 @@ function createDirector(state: Partial<DirectorState> = {}): Director {
   } as unknown as Director;
 }
 
+function installThreeThreadStream(stream: ReturnType<typeof getDefaultStreamPersistence>['stream']): void {
+  const base = (id: SceneId, visualId: string) => ({
+    id,
+    title: id,
+    trigger: { type: 'manual' as const },
+    loop: { enabled: false as const },
+    preload: { enabled: false as const },
+    subCueOrder: ['vis'],
+    subCues: { vis: { id: 'vis', kind: 'visual' as const, visualId, targets: [{ displayId: 'd1' }] } },
+  });
+  stream.sceneOrder = ['a', 'b', 'b2', 'c'];
+  stream.scenes = {
+    a: base('a', 'v1'),
+    b: base('b', 'v2'),
+    b2: {
+      id: 'b2',
+      title: 'b2',
+      trigger: { type: 'follow-end', followsSceneId: 'b' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+    },
+    c: base('c', 'v3'),
+  };
+}
+
 describe('StreamEngine', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -384,7 +411,7 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates['scene-3']?.scheduledStartMs).toBe(5000);
     expect(state.runtime?.sceneStates['scene-4']?.scheduledStartMs).toBe(2000);
     expect(state.runtime?.sceneStates['scene-5']?.scheduledStartMs).toBe(7000);
-    expect(state.runtime?.expectedDurationMs).toBe(12_000);
+    expect(state.runtime?.expectedDurationMs).toBe(10_000);
   });
 
   it('plays a selected sequential scene from its absolute scheduled start', () => {
@@ -819,7 +846,7 @@ describe('StreamEngine', () => {
 
   it('marks at-timecode scenes before a seek target as skipped', () => {
     const director = createDirector({
-      visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
+      visuals: { v1: { id: 'v1', durationSeconds: 20 } } as DirectorState['visuals'],
     });
     const engine = new StreamEngine(director);
     const { stream } = getDefaultStreamPersistence();
@@ -944,7 +971,7 @@ describe('StreamEngine', () => {
     expect(resumed.runtime?.offsetStreamMs).toBe(1000);
   });
 
-  it('scene-row play while running starts the interacted scene without seeking the stream cursor', () => {
+  it('scene-row play while running seeks forward inside the same running thread', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const director = createDirector({
@@ -971,10 +998,10 @@ describe('StreamEngine', () => {
 
     const state = engine.applyTransport({ type: 'play', sceneId: 'scene-2', source: 'scene-row' });
 
-    expect(state.runtime?.currentStreamMs).toBe(1000);
+    expect(state.runtime?.currentStreamMs).toBe(10_000);
     expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
-    expect(state.runtime?.sceneStates['scene-2']?.startedAtStreamMs).toBe(1000);
-    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.visualId).sort()).toEqual(['v1', 'v2']);
+    expect(state.runtime?.sceneStates['scene-2']?.startedAtStreamMs).toBe(10_000);
+    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.visualId)).toEqual(['v2']);
   });
 
   it('dispatches a zero-duration manual control scene before completing it', () => {
@@ -1580,5 +1607,221 @@ describe('StreamEngine', () => {
     const after = engine.getPublicState().runtime;
     expect(after?.status).toBe('running');
     expect(after?.sceneStates['s1']?.status).toMatch(/running|preloading/);
+  });
+
+  it('reset launch creates main timeline and thread instances while keeping renderer projection flat', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+
+    expect(state.runtime?.mainTimelineId).toBeDefined();
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'main')).toHaveLength(1);
+    expect(Object.values(state.runtime?.threadInstances ?? {}).map((instance) => instance.canonicalThreadId).sort()).toEqual([
+      'thread:a',
+      'thread:b',
+      'thread:c',
+    ]);
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'a', visualId: 'v1' }]);
+  });
+
+  it('run from here on a later reset thread leaves earlier detached threads ready', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+
+    expect(state.runtime?.sceneStates.a?.status).toBe('ready');
+    expect(state.runtime?.sceneStates.b?.status).toBe('running');
+    expect(state.runtime?.playbackFocusSceneId).toBe('b');
+  });
+
+  it('middle-scene launch marks earlier scenes in the same thread skipped', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b2', source: 'scene-row' });
+
+    expect(state.runtime?.sceneStates.b?.status).toBe('skipped');
+    expect(state.runtime?.sceneStates.b2?.status).toBe('running');
+    expect(state.runtime?.sceneStates.a?.status).toBe('ready');
+  });
+
+  it('running main launch of a future thread creates a parallel timeline and removes it from main order', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    const timelines = Object.values(state.runtime?.timelineInstances ?? {});
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+
+    expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+    expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:c' && instance.timelineId !== state.runtime?.mainTimelineId)).toBe(true);
+    expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:c')).toBe(false);
+  });
+
+  it('running future-thread parallel spawn compacts following main threads and shortens main duration', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+    const cMainInstance = Object.values(state.runtime?.threadInstances ?? {}).find(
+      (instance) => instance.canonicalThreadId === 'thread:c' && instance.timelineId === state.runtime?.mainTimelineId,
+    );
+
+    expect(state.runtime?.expectedDurationMs).toBe(20_000);
+    expect(main?.durationMs).toBe(20_000);
+    expect(cMainInstance?.timelineStartMs).toBe(10_000);
+    expect(state.runtime?.sceneStates.c?.scheduledStartMs).toBe(10_000);
+  });
+
+  it('paused manual-tail launch of a later thread starts serially from the paused cursor after reorder', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 1 }, v3: { id: 'v3', durationSeconds: 1 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    stream.sceneOrder = ['a', 'b', 'c'];
+    delete stream.scenes.b2;
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.advanceTimersByTime(1_100);
+    const paused = engine.getPublicState();
+    expect(paused.runtime?.status).toBe('paused');
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+    const orderedThreadIds = main?.orderedThreadInstanceIds.map((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId);
+
+    expect(state.runtime?.status).toBe('running');
+    expect(state.runtime?.sceneStates.c?.status).toBe('running');
+    expect(state.runtime?.sceneStates.c?.scheduledStartMs).toBe(1_000);
+    expect(orderedThreadIds).toEqual(['thread:a', 'thread:c', 'thread:b']);
+  });
+
+  it('same-thread forward launch seeks the running main instance instead of copying it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'global' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b2', source: 'global' });
+
+    expect(state.runtime?.currentStreamMs).toBe(20_000);
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(0);
+  });
+
+  it('same-thread backward relaunch creates a copied parallel instance', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'b2', source: 'scene-row' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+    expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.copiedFromThreadInstanceId)).toBe(true);
+  });
+
+  it('completed thread relaunch creates a copied parallel instance', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 1 }, v3: { id: 'v3', durationSeconds: 1 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_200);
+    engine.applyTransport({ type: 'back-to-first' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'a', source: 'scene-row' });
+
+    expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:a' && instance.copiedFromThreadInstanceId)).toBe(true);
+  });
+
+  it('at-timecode root launch creates a side timeline outside main duration', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['main', 'side'];
+    stream.scenes = {
+      main: {
+        id: 'main',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      side: {
+        id: 'side',
+        trigger: { type: 'at-timecode', timecodeMs: 20_000 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'side', source: 'scene-row' });
+
+    expect(state.playbackTimeline.expectedDurationMs).toBe(5_000);
+    expect(Object.values(state.runtime?.timelineInstances ?? {})).toMatchObject([{ kind: 'parallel' }]);
+    expect(state.runtime?.mainTimelineId).toBeUndefined();
   });
 });
