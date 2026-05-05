@@ -125,5 +125,6 @@
 }
 
 .app-frame.shell-modal-blocking {
+  -webkit-user-select: none;
   user-select: none;
 }

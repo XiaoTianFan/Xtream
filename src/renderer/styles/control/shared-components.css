@@ -90,6 +90,7 @@
 
 .global-session-problems-window.is-dragging {
   cursor: grabbing;
+  -webkit-user-select: none;
   user-select: none;
 }
 

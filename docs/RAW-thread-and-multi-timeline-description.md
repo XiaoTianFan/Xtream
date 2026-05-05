@@ -50,7 +50,7 @@ You may ask me any questions to clarify anything or make any architectural decis
 
 ---
 
-Now we'd like to maintain an exhaustive list of additional colors that share the same vibe as the current steam token colors that is molandic but very from each other. And in the list mode we want all the scenes that belongs to the same thread. Calculated thread has the same shared background shade color among those among the particularly maintained color list for threads, so that the user may visually identify which thread is which by looking at the color code as the scenes belongs to the same thread, may not necessarily close to each other in the linear list. 
+Now we'd like to maintain an exhaustive list of additional colors that share the same vibe as the current steam token colors that is Molandic but very from each other. And in the list mode we want all the scenes that belongs to the same thread. Calculated thread has the same shared background shade color among those among the particularly maintained color list for threads, so that the user may visually identify which thread is which by looking at the color code as the scenes belongs to the same thread, may not necessarily close to each other in the linear list. 
 
 For the current progress bar at the bottom edge of each scene role in the list, they should also render in the corresponding scene thread color code
 
@@ -112,7 +112,7 @@ Now, beyond these descriptions, here are the extra UI UX I'd like to design and 
 
 3. The scene state should be indicated by style. Besides the normal style as ready, and running state with the progress bar below, disabled and skipped and complete state should have different levels of dim on the entire card - disabled is dimmest, and complete is lightest; paused should have a yellow-ish shade on the entire card like scene row in the list, failed should have a reddish shade, and preloading with a loading animation.
 
-4. The default cards layout and layout reset
+4. The default card layout and layout reset. By default, the threads should be placed one after another from left to right, while their longest branch should be visually in the middle of the different branches, if any. If the user drags the starting scene of the thread, the entire thread should move altogether; while dragging other scenes should only affect that scene.
 
 5. Timeline dotted curves and animation
 

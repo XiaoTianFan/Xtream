@@ -4,6 +4,7 @@
 
 - **Layout preferences sync across workspaces:** Pane dimensions and layout choices in Patch now carry over to Stream and vice versa, so your workspace stays consistent as you switch contexts.
 - **Missing media relink in footer:** The global status footer now shows a **Relink media** button when clips are offline—jump straight to resolving paths without hunting through menus; once relinked, media operation issues refresh automatically.
+- **Light theme support:** The light theme is now fully supported with improved color contrast and readability.
 
 ## v0.1.5
 
