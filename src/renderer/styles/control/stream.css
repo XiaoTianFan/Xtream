@@ -409,10 +409,10 @@
   width: 100%;
   border: 0;
   background: transparent;
-  padding: 0.38rem 0.3rem;
+  padding: 0.2rem 0.3rem;
   color: var(--text-primary);
-  font-size: 0.76rem;
-  line-height: 1.25;
+  font-size: 0.72rem;
+  line-height: 1.0;
   text-align: left;
 }
 
@@ -544,9 +544,9 @@
 }
 
 .stream-scene-row-actions .stream-row-action.icon-button {
-  width: 1.68rem;
-  min-width: 1.68rem;
-  height: 1.68rem;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
 }
 

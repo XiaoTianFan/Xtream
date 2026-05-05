@@ -51,11 +51,11 @@
   grid-template-columns: min-content minmax(0, 1fr) minmax(0, 1.15fr) var(--media-pool-row-tail, 2rem);
   align-items: center;
   column-gap: 0.45rem;
-  min-height: 2.85rem;
+  min-height: 2.2rem;
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
-  padding: 0.3rem 0.4rem;
+  padding: 0.2rem 0.3rem;
   cursor: pointer;
   font-size: 0.72rem;
 }
@@ -65,7 +65,7 @@
   min-width: 0;
   overflow: hidden;
   font-size: 0.72rem;
-  line-height: 1.15;
+  line-height: 1.0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
