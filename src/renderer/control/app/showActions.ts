@@ -22,6 +22,10 @@ type ShowActionsOptions = {
 
 export type ShowActions = ReturnType<typeof createShowActions>;
 
+function waitForUiHydrationTurn(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
 export function createShowActions(options: ShowActionsOptions) {
   async function saveShow(): Promise<void> {
     const result = await window.xtream.show.save();
@@ -59,6 +63,15 @@ export function createShowActions(options: ShowActionsOptions) {
       extra: { route: 'menu_open', hasMainRunId: Boolean(result.openProfileRunId) },
     });
     clearLiveVisualPoolThumbnailCache();
+    let workspaceExposed = false;
+    const exposeWorkspace = (): void => {
+      if (workspaceExposed) {
+        return;
+      }
+      workspaceExposed = true;
+      options.clearLaunchPresentationLoading?.();
+      options.onShowOpened();
+    };
     try {
       options.renderState(result.state);
       logShowOpenProfile({
@@ -69,21 +82,28 @@ export function createShowActions(options: ShowActionsOptions) {
       await options.hydrateAfterShowLoaded?.(result, { runId, flowStartMs });
       options.renderState(result.state);
       options.setShowStatus(`Opened show config: ${result.filePath ?? 'selected file'}`, result.issues);
+      await waitForUiHydrationTurn();
+      exposeWorkspace();
       logShowOpenProfile({
         runId,
         checkpoint: 'renderer_before_wait_ready',
         sinceRunStartMs: performance.now() - flowStartMs,
       });
-      await options.awaitLaunchPresentationReady?.({ runId, flowStartMs });
-      logShowOpenProfile({
-        runId,
-        checkpoint: 'renderer_open_flow_done',
-        sinceRunStartMs: performance.now() - flowStartMs,
-      });
+      const readinessWait = options.awaitLaunchPresentationReady?.({ runId, flowStartMs });
+      if (readinessWait) {
+        void readinessWait.then(() => {
+          logShowOpenProfile({
+            runId,
+            checkpoint: 'renderer_open_flow_done',
+            sinceRunStartMs: performance.now() - flowStartMs,
+          });
+        });
+      }
     } finally {
-      options.clearLaunchPresentationLoading?.();
+      if (!workspaceExposed) {
+        options.clearLaunchPresentationLoading?.();
+      }
     }
-    options.onShowOpened();
   }
 
   async function createShow(): Promise<void> {

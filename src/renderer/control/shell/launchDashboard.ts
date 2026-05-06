@@ -17,6 +17,25 @@ export function setLaunchDashboardLoadingUi(active: boolean): void {
   }
 }
 
+function waitForUiHydrationTurn(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function isHydratedSurfaceMounted(surface: ControlSurface): boolean {
+  if (surface === 'patch') {
+    return !elements.patchSurface.hidden && elements.patchSurface.querySelector('.workspace, .operator-footer') !== null;
+  }
+  if (surface === 'stream') {
+    return (
+      !elements.surfacePanel.hidden &&
+      elements.surfacePanel.querySelector('.stream-surface') !== null &&
+      elements.surfacePanel.querySelector('.stream-header') !== null &&
+      elements.surfacePanel.querySelector('.stream-workspace-pane') !== null
+    );
+  }
+  return !elements.surfacePanel.hidden && elements.surfacePanel.childElementCount > 0;
+}
+
 type LaunchDashboardOptions = {
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string, issues?: ShowConfigOperationResult['issues']) => void;
@@ -66,6 +85,19 @@ export function createLaunchDashboardController({
       extra: { route: 'launch_dashboard', hasMainRunId: Boolean(result.openProfileRunId) },
     });
     setLaunchDashboardLoadingUi(true);
+    let workspaceExposed = false;
+    const finishLaunchLoading = (): void => {
+      if (workspaceExposed) {
+        return;
+      }
+      workspaceExposed = true;
+      setLaunchDashboardLoadingUi(false);
+      hide();
+    };
+    const exposeWorkspace = (): void => {
+      setShowStatus(message, result.issues);
+      finishLaunchLoading();
+    };
     try {
       clearSelection();
       clearLiveVisualPoolThumbnailCache();
@@ -78,26 +110,37 @@ export function createLaunchDashboardController({
       });
       await hydrateAfterShowLoaded?.(result, { runId, flowStartMs });
       renderState(result.state);
+      await waitForUiHydrationTurn();
+      if (!isHydratedSurfaceMounted(getActiveSurface())) {
+        logShowOpenProfile({
+          runId,
+          checkpoint: 'renderer_hydrated_surface_not_mounted',
+          sinceRunStartMs: performance.now() - flowStartMs,
+          extra: { activeSurface: getActiveSurface() },
+        });
+      }
+      exposeWorkspace();
       logShowOpenProfile({
         runId,
         checkpoint: 'renderer_before_wait_ready',
         sinceRunStartMs: performance.now() - flowStartMs,
       });
-      await waitForLaunchPresentationReady({
+      void waitForLaunchPresentationReady({
         getActiveSurface,
         setShowStatus,
         showOpenProfile: { runId, flowStartMs },
-      });
-      logShowOpenProfile({
-        runId,
-        checkpoint: 'renderer_open_flow_done',
-        sinceRunStartMs: performance.now() - flowStartMs,
+      }).then(() => {
+        logShowOpenProfile({
+          runId,
+          checkpoint: 'renderer_open_flow_done',
+          sinceRunStartMs: performance.now() - flowStartMs,
+        });
       });
     } finally {
-      setLaunchDashboardLoadingUi(false);
+      if (!workspaceExposed) {
+        finishLaunchLoading();
+      }
     }
-    setShowStatus(message, result.issues);
-    hide();
   };
 
   const render = (data: LaunchShowData): void => {

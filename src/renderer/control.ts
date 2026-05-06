@@ -367,6 +367,7 @@ window.xtream.audioRuntime.onSoloOutputIds((ids) => {
 window.xtream.stream.onState((state) => {
   const previousValidation = latestStreamState ? JSON.stringify(latestStreamState.validationMessages) : '';
   latestStreamState = state;
+  streamSurface.applyStreamState(state);
   const newValidation = JSON.stringify(state.validationMessages);
   if (previousValidation !== newValidation && currentState) {
     surfaceRouter.render(currentState);
@@ -377,6 +378,7 @@ window.xtream.stream.onState((state) => {
 });
 void window.xtream.stream.getState().then((s) => {
   latestStreamState = s;
+  streamSurface.applyStreamState(s);
   patchSurface.syncTransportInputs();
   flushGlobalSessionShell();
 });
@@ -434,6 +436,10 @@ hydrateControlShellAfterShow = async (result, ctx) => {
   }
   seg = performance.now();
   const streamPublic = await window.xtream.stream.getState();
+  latestStreamState = streamPublic;
+  streamSurface.applyStreamState(streamPublic);
+  patchSurface.syncTransportInputs();
+  flushGlobalSessionShell();
   if (ctx) {
     logShowOpenProfile({
       runId: ctx.runId,

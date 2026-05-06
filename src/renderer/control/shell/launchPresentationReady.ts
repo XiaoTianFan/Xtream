@@ -1,4 +1,4 @@
-import type { DirectorState, PreviewStatus, VisualState } from '../../../shared/types';
+import type { DirectorState, PreviewStatus } from '../../../shared/types';
 import { getActiveDisplays, getLayoutVisualIds } from '../../../shared/layouts';
 import { logShowOpenProfile } from '../../../shared/showOpenProfile';
 import type { ControlSurface } from '../shared/types';
@@ -20,20 +20,8 @@ function previewDescribe(p: PreviewStatus | undefined): string {
   return 'pending';
 }
 
-function visualsNeedingPoolPreview(state: DirectorState): VisualState[] {
-  return Object.values(state.visuals).filter((v) => {
-    if (v.kind === 'live') {
-      return true;
-    }
-    if (v.kind !== 'file') {
-      return false;
-    }
-    return (v.type === 'image' || v.type === 'video') && Boolean(v.url);
-  });
-}
-
 /** Human-readable first blocking condition for launch presentation readiness (null if ready). */
-export function getLaunchPresentationBlockReason(state: DirectorState, activeSurface: ControlSurface): string | null {
+export function getLaunchPresentationBlockReason(state: DirectorState, _activeSurface: ControlSurface): string | null {
   if (!state.readiness.ready) {
     return `readiness:not_ready:issues=${state.readiness.issues.length}`;
   }
@@ -62,15 +50,6 @@ export function getLaunchPresentationBlockReason(state: DirectorState, activeSur
   for (const output of Object.values(state.outputs)) {
     if (output.sources.length > 0 && !output.ready) {
       return `output_not_ready:${output.id}`;
-    }
-  }
-
-  if (activeSurface === 'patch' || activeSurface === 'stream') {
-    for (const visual of visualsNeedingPoolPreview(state)) {
-      const key = `pool:${visual.id}`;
-      if (!previewSettled(state.previews[key])) {
-        return `pool_preview_not_settled:${key}:${previewDescribe(state.previews[key])}`;
-      }
     }
   }
 

@@ -51,6 +51,8 @@ export type StreamSurfaceController = SurfaceController & {
     directorState: DirectorState,
     streamPublic: StreamEnginePublicState,
   ) => void;
+  /** Prime or refresh the latest stream engine state, even while the surface is not mounted. */
+  applyStreamState: (state: StreamEnginePublicState) => void;
   /** Apply persisted stream layout CSS when the surface is mounted (Patch↔Stream pane sync). */
   applyStoredTwinLayoutPrefs: (prefs: { mediaWidthPx?: number; bottomHeightPx?: number; assetPreviewHeightPx?: number }) => void;
 };

@@ -177,19 +177,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     window.addEventListener('resize', layoutCtl.syncSplitterAria);
     layoutCtl.syncSplitterAria();
     unsubscribeStreamState = window.xtream.stream.onState((state) => {
-      const previous = streamState;
-      streamState = state;
-      syncSelectedScene();
-      if (canSyncRuntimeOnly(previous, state)) {
-        syncRuntimeDom();
-      } else {
-        renderCurrent();
-      }
+      applyStreamState(state);
     });
     void window.xtream.stream.getState().then((state) => {
-      streamState = state;
-      syncSelectedScene();
-      renderCurrent();
+      applyStreamState(state);
     });
   }
 
@@ -445,6 +436,20 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mixerPanel?.applyEngineSoloOutputIds(options.getEngineSoloOutputIds());
     syncSelectedScene();
     renderCurrent();
+  }
+
+  function applyStreamState(state: StreamEnginePublicState): void {
+    const previous = streamState;
+    streamState = state;
+    syncSelectedScene();
+    if (!mounted || !currentState) {
+      return;
+    }
+    if (canSyncRuntimeOnly(previous, state)) {
+      syncRuntimeDom();
+    } else {
+      renderCurrent();
+    }
   }
 
   function renderCurrent(): void {
@@ -1107,7 +1112,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     directorState: DirectorState,
     streamPublic: StreamEnginePublicState,
   ): void {
+    streamState = streamPublic;
+    syncSelectedScene();
     if (!snapshot) {
+      if (mounted && currentState) {
+        lastWorkspacePaneSignature = '';
+        bottomRenderSignature = '';
+        renderCurrent();
+      }
       return;
     }
     const streamCfg = streamPublic.stream;
@@ -1159,6 +1171,11 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     } else if (!playbackFocusSceneId || !streamCfg.scenes[playbackFocusSceneId]) {
       playbackFocusSceneId =
         sceneEditSceneId ?? streamCfg.sceneOrder.find((id) => !streamCfg.scenes[id]?.disabled) ?? streamCfg.sceneOrder[0];
+    }
+    if (mounted && currentState) {
+      lastWorkspacePaneSignature = '';
+      bottomRenderSignature = '';
+      renderCurrent();
     }
   }
 
@@ -1245,6 +1262,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     },
     exportProjectUiSnapshot,
     applyImportedProjectUi,
+    applyStreamState,
     handleWorkspaceTransportKeydown,
     applyStoredTwinLayoutPrefs,
   };

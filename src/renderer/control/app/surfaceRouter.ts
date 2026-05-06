@@ -56,7 +56,12 @@ export function createSurfaceRouter({ surfaces, initialSurface = 'patch', getCur
     activeSurface = surface;
     surfaceRenderSignature = '';
     mountedSurface = undefined;
-    syncShellState();
+    const state = getCurrentState();
+    if (state) {
+      render(state);
+    } else {
+      syncShellState();
+    }
   }
 
   function render(state: DirectorState): void {
