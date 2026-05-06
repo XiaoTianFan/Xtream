@@ -414,7 +414,7 @@ describe('StreamEngine', () => {
     expect(state.runtime?.expectedDurationMs).toBe(10_000);
   });
 
-  it('plays a selected sequential scene from its absolute scheduled start', () => {
+  it('launching a later reset thread leaves earlier detached threads ready', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const director = createDirector({
@@ -441,12 +441,12 @@ describe('StreamEngine', () => {
 
     expect(state.runtime?.currentStreamMs).toBe(60_000);
     expect(state.runtime?.offsetStreamMs).toBe(60_000);
-    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('complete');
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('ready');
     expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
     vi.useRealTimers();
   });
 
-  it('plays a selected overlapping offset scene without dropping earlier active scenes', () => {
+  it('launching a middle scene skips earlier scenes in the same thread', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 60 }, v2: { id: 'v2', durationSeconds: 10 } } as DirectorState['visuals'],
     });
@@ -470,9 +470,9 @@ describe('StreamEngine', () => {
     const state = engine.applyTransport({ type: 'play', sceneId: 'scene-2' });
 
     expect(state.runtime?.currentStreamMs).toBe(30_000);
-    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('running');
+    expect(state.runtime?.sceneStates['scene-1']?.status).toBe('skipped');
     expect(state.runtime?.sceneStates['scene-2']?.status).toBe('running');
-    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.sceneId).sort()).toEqual(['scene-1', 'scene-2']);
+    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.sceneId).sort()).toEqual(['scene-2']);
   });
 
   it('keeps idle jump-next as navigation without starting playback', () => {
@@ -1443,7 +1443,7 @@ describe('StreamEngine', () => {
       s0: {
         id: 's0',
         title: 's0',
-        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        trigger: { type: 'manual' },
         loop: { enabled: false },
         preload: { enabled: false },
         subCueOrder: ['vis'],
@@ -1505,7 +1505,7 @@ describe('StreamEngine', () => {
       s0: {
         id: 's0',
         title: 's0',
-        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        trigger: { type: 'manual' },
         loop: { enabled: false },
         preload: { enabled: false },
         subCueOrder: ['vis'],
@@ -1566,7 +1566,7 @@ describe('StreamEngine', () => {
     stream.scenes = {
       s0: {
         id: 's0',
-        trigger: { type: 'at-timecode', timecodeMs: 0 },
+        trigger: { type: 'manual' },
         loop: { enabled: false },
         preload: { enabled: false },
         subCueOrder: ['vis'],
@@ -1661,6 +1661,27 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates.b?.status).toBe('skipped');
     expect(state.runtime?.sceneStates.b2?.status).toBe('running');
     expect(state.runtime?.sceneStates.a?.status).toBe('ready');
+  });
+
+  it('header Play from playback focus matches row Run from here for a middle scene', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    const headerEngine = new StreamEngine(director);
+    const rowEngine = new StreamEngine(director);
+    headerEngine.loadFromShow({ stream: structuredClone(stream) });
+    rowEngine.loadFromShow({ stream: structuredClone(stream) });
+
+    const headerState = headerEngine.applyTransport({ type: 'play', sceneId: 'b2', source: 'global' });
+    const rowState = rowEngine.applyTransport({ type: 'play', sceneId: 'b2', source: 'scene-row' });
+
+    expect(headerState.runtime?.sceneStates.a?.status).toBe(rowState.runtime?.sceneStates.a?.status);
+    expect(headerState.runtime?.sceneStates.b?.status).toBe('skipped');
+    expect(headerState.runtime?.sceneStates.b?.status).toBe(rowState.runtime?.sceneStates.b?.status);
+    expect(headerState.runtime?.sceneStates.b2?.status).toBe(rowState.runtime?.sceneStates.b2?.status);
+    expect(headerState.runtime?.currentStreamMs).toBe(rowState.runtime?.currentStreamMs);
   });
 
   it('running main launch of a future thread creates a parallel timeline and removes it from main order', () => {
@@ -1840,6 +1861,8 @@ describe('StreamEngine', () => {
   });
 
   it('at-timecode root launch creates a side timeline outside main duration', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],
     });
@@ -1872,7 +1895,43 @@ describe('StreamEngine', () => {
     expect(Object.values(state.runtime?.timelineInstances ?? {})).toMatchObject([{ kind: 'parallel' }]);
     expect(state.runtime?.mainTimelineId).toBeUndefined();
     expect(state.runtime?.sceneStates.side?.status).toBe('running');
-    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'side', visualId: 'v2', streamStartMs: 20_000 }]);
+    expect(state.runtime?.currentStreamMs).toBe(0);
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'side', visualId: 'v2', streamStartMs: 0 }]);
+  });
+
+  it('header Play fallback starts the first main timeline thread, not an earlier at-timecode side thread', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['side', 'main'];
+    stream.scenes = {
+      side: {
+        id: 'side',
+        trigger: { type: 'at-timecode', timecodeMs: 1_000 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+      main: {
+        id: 'main',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play' });
+
+    expect(state.runtime?.cursorSceneId).toBe('main');
+    expect(state.runtime?.sceneStates.main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.side?.status).toBe('ready');
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'main', visualId: 'v1' }]);
   });
 
   it('running launch of an at-timecode root starts the side thread immediately', () => {

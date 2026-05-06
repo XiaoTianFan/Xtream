@@ -77,8 +77,8 @@ export class StreamEngine extends EventEmitter {
   private streamPlaybackAnchorMs: number | undefined;
   /** Scenes treated as already passed the playhead due to seek or starting after a later reference scene. */
   private scheduleConsumedSceneIds = new Set<SceneId>();
-  /** When true, the current session was started via scene-row / flow-card "run from here" (vs global play). Affects predecessor consumption and manual inclusion. */
-  private streamPlayUsedSceneRowIntent = false;
+  /** When true, an explicit focused launch should not consume earlier scenes in other canonical threads. */
+  private streamPlayIsolatedToReferenceThread = false;
   private skippedByThreadLaunchSceneIds = new Set<SceneId>();
   /**
    * After {@link resumeFromPausedCursor} from manual-tail paused state; prevents immediate
@@ -113,7 +113,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlayReferenceSceneId = undefined;
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
-    this.streamPlayUsedSceneRowIntent = false;
+    this.streamPlayIsolatedToReferenceThread = false;
     this.skippedByThreadLaunchSceneIds.clear();
     this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
@@ -697,7 +697,11 @@ export class StreamEngine extends EventEmitter {
     const pausedClock = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
     const resolved = this.resolveThreadForScene(sceneId);
     if (!resolved || resolved.thread.rootTriggerType === 'at-timecode') {
-      this.startFromStreamTime(this.sceneStartMs(sceneId) ?? pausedClock, sceneId, false);
+      this.startFromStreamTime(this.explicitLaunchStreamMs(sceneId, pausedClock), sceneId, {
+        isolateToReferenceThread: true,
+        markEarlierSameThreadSkipped: true,
+        forceReferenceStart: true,
+      });
       return true;
     }
     const launchLocalMs = this.threadLocalStartForScene(sceneId) ?? 0;
@@ -719,7 +723,10 @@ export class StreamEngine extends EventEmitter {
       }
       return true;
     }
-    this.startFromStreamTime(pausedClock, sceneId, false);
+    this.startFromStreamTime(pausedClock, sceneId, {
+      markEarlierSameThreadSkipped: true,
+      forceReferenceStart: true,
+    });
     const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances?.[this.runtime.mainTimelineId] : undefined;
     const selectedThreadInstanceId = mainTimeline?.orderedThreadInstanceIds.find(
       (id) => this.runtime?.threadInstances?.[id]?.canonicalThreadId === selectedThreadId,
@@ -781,7 +788,11 @@ export class StreamEngine extends EventEmitter {
         if (this.routePausedManualTailLaunch(target)) {
           return;
         }
-        this.startFromStreamTime(this.sceneStartMs(target) ?? 0, target, false);
+        this.startFromStreamTime(this.explicitLaunchStreamMs(target, pausedClock), target, {
+          isolateToReferenceThread: true,
+          markEarlierSameThreadSkipped: true,
+          forceReferenceStart: true,
+        });
         return;
       }
 
@@ -821,7 +832,10 @@ export class StreamEngine extends EventEmitter {
           target ?? (pauseSelectionStillReady ? pauseSelection : undefined) ?? firstReadyPlaybackAnchorSceneId();
 
         if (ref && stream.scenes[ref] && !stream.scenes[ref].disabled) {
-          this.startFromStreamTime(pausedClock, ref, false);
+          this.startFromStreamTime(pausedClock, ref, {
+            markEarlierSameThreadSkipped: true,
+            forceReferenceStart: true,
+          });
           return;
         }
       }
@@ -839,26 +853,37 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     if (target) {
-      const start = this.sceneStartMs(target) ?? 0;
-      const sceneRowRunFromHereIntent = source === 'scene-row' || source === 'flow-card';
-      this.startFromStreamTime(start, target, sceneRowRunFromHereIntent);
+      const start = this.explicitLaunchStreamMs(target, 0);
+      this.startFromStreamTime(start, target, {
+        isolateToReferenceThread: true,
+        markEarlierSameThreadSkipped: true,
+        forceReferenceStart: true,
+      });
       return;
     }
     if (this.runtime) {
       const current = this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? this.runtime.pausedAtStreamMs ?? 0;
-      this.startFromStreamTime(current, this.runtime.cursorSceneId, false);
+      this.startFromStreamTime(current, this.runtime.cursorSceneId);
       return;
     }
-    const first = this.firstEnabledSceneId();
+    const first = this.firstMainTimelineSceneId();
     if (!first) {
       this.stopTicking();
       this.runtime = { status: 'complete', sceneStates: {} };
       return;
     }
-    this.startFromStreamTime(this.sceneStartMs(first) ?? 0, first, false);
+    this.startFromStreamTime(this.sceneStartMs(first) ?? 0, first);
   }
 
-  private startFromStreamTime(timeMs: number, referenceSceneId?: SceneId, sceneRowRunFromHereIntent = false): void {
+  private startFromStreamTime(
+    timeMs: number,
+    referenceSceneId?: SceneId,
+    options: {
+      isolateToReferenceThread?: boolean;
+      markEarlierSameThreadSkipped?: boolean;
+      forceReferenceStart?: boolean;
+    } = {},
+  ): void {
     this.manualTailResumeIdleHold = false;
     const schedule = this.playbackTimeline;
     const now = Date.now();
@@ -872,7 +897,7 @@ export class StreamEngine extends EventEmitter {
       sceneStates: this.createInitialSceneStates(schedule),
       expectedDurationMs: schedule.expectedDurationMs,
       timelineNotice: schedule.notice,
-      ...this.resetRuntimeInstanceState(referenceSceneId, timeMs, now, sceneRowRunFromHereIntent),
+      ...this.resetRuntimeInstanceState(referenceSceneId, timeMs, now, options.markEarlierSameThreadSkipped === true),
     };
     this.dispatchedControlSubCues.clear();
     this.manuallyCompletedSceneIds.clear();
@@ -883,7 +908,7 @@ export class StreamEngine extends EventEmitter {
     this.orphanedVisualSubCues = [];
     this.streamPlayReferenceSceneId = referenceSceneId;
     this.streamPlaybackAnchorMs = timeMs;
-    this.streamPlayUsedSceneRowIntent = sceneRowRunFromHereIntent;
+    this.streamPlayIsolatedToReferenceThread = options.isolateToReferenceThread === true;
     this.scheduleConsumedSceneIds.clear();
     const stream = this.playbackStream;
     const refIdx = referenceSceneId !== undefined ? stream.sceneOrder.indexOf(referenceSceneId) : -1;
@@ -894,11 +919,11 @@ export class StreamEngine extends EventEmitter {
         if (stream.scenes[id]?.disabled) {
           continue;
         }
-        if (sceneRowRunFromHereIntent && this.playbackTimeline.threadPlan?.threadBySceneId[id] !== refThreadId) {
+        if (this.streamPlayIsolatedToReferenceThread && this.playbackTimeline.threadPlan?.threadBySceneId[id] !== refThreadId) {
           continue;
         }
         const e = schedule.entries[id];
-        if (e?.endMs !== undefined && (sceneRowRunFromHereIntent ? e.endMs < timeMs : e.endMs <= timeMs)) {
+        if (e?.endMs !== undefined && (this.streamPlayIsolatedToReferenceThread ? e.endMs < timeMs : e.endMs <= timeMs)) {
           this.scheduleConsumedSceneIds.add(id);
         }
       }
@@ -913,9 +938,9 @@ export class StreamEngine extends EventEmitter {
     ) {
       this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
     }
-    if (referenceSceneId && sceneRowRunFromHereIntent && referenceScene?.trigger.type === 'at-timecode') {
+    if (referenceSceneId && options.forceReferenceStart === true && referenceScene?.trigger.type === 'at-timecode') {
       this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
-    } else if (referenceSceneId && sceneRowRunFromHereIntent && referenceScene?.trigger.type !== 'manual') {
+    } else if (referenceSceneId && options.forceReferenceStart === true && referenceScene?.trigger.type !== 'manual') {
       const launchLocalMs = this.threadLocalStartForScene(referenceSceneId) ?? 0;
       if (launchLocalMs > 0) {
         this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
@@ -1052,7 +1077,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlayReferenceSceneId = undefined;
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
-    this.streamPlayUsedSceneRowIntent = false;
+    this.streamPlayIsolatedToReferenceThread = false;
     this.skippedByThreadLaunchSceneIds.clear();
     this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
@@ -1258,7 +1283,7 @@ export class StreamEngine extends EventEmitter {
     this.streamPlayReferenceSceneId = undefined;
     this.streamPlaybackAnchorMs = undefined;
     this.scheduleConsumedSceneIds.clear();
-    this.streamPlayUsedSceneRowIntent = false;
+    this.streamPlayIsolatedToReferenceThread = false;
     this.skippedByThreadLaunchSceneIds.clear();
     this.manualTailResumeIdleHold = false;
     this.clearControlSceneOverrides();
@@ -1418,7 +1443,7 @@ export class StreamEngine extends EventEmitter {
       const refIdx = stream.sceneOrder.indexOf(ref);
       const sIdx = stream.sceneOrder.indexOf(sceneId);
       if (refIdx >= 0 && sIdx >= 0 && sIdx < refIdx) {
-        if (this.streamPlayUsedSceneRowIntent) {
+        if (this.streamPlayIsolatedToReferenceThread) {
           if (anchor > ent.startMs && anchor < ent.endMs) {
             return true;
           }
@@ -1793,8 +1818,19 @@ export class StreamEngine extends EventEmitter {
         };
         continue;
       }
-      const manualStart = this.manualSceneStartOverrides.get(sceneId);
       const previous = this.runtime.sceneStates[sceneId];
+      if (this.skippedByThreadLaunchSceneIds.has(sceneId)) {
+        sceneStates[sceneId] = {
+          sceneId,
+          status: 'skipped',
+          scheduledStartMs: entry?.startMs,
+          startedAtStreamMs: previous?.startedAtStreamMs,
+          endedAtStreamMs: previous?.endedAtStreamMs,
+          error: previous?.error,
+        };
+        continue;
+      }
+      const manualStart = this.manualSceneStartOverrides.get(sceneId);
 
       let start: number | undefined;
       let end: number | undefined;
@@ -1974,6 +2010,9 @@ export class StreamEngine extends EventEmitter {
       } else {
         this.runtime.cursorSceneId = candidateSceneId;
       }
+      if (this.runtime.cursorSceneId && this.runtime.cursorSceneId !== prevCursor) {
+        this.runtime.playbackFocusSceneId = this.runtime.cursorSceneId;
+      }
     }
     if (this.runtime.status === 'running' && this.allEnabledScenesTerminal(sceneStates, stream)) {
       this.runtime.status = 'complete';
@@ -2015,6 +2054,7 @@ export class StreamEngine extends EventEmitter {
         });
         if (firstAwaitingAnchor) {
           this.runtime.cursorSceneId = firstAwaitingAnchor;
+          this.runtime.playbackFocusSceneId = firstAwaitingAnchor;
         }
         this.applyStreamAutoPauseAfterManualTail(currentMs);
       }
@@ -2079,6 +2119,14 @@ export class StreamEngine extends EventEmitter {
     return this.playbackStream.sceneOrder.find((id) => !this.playbackStream.scenes[id]?.disabled);
   }
 
+  private firstMainTimelineSceneId(): SceneId | undefined {
+    const firstSegment = this.playbackTimeline.mainSegments?.[0];
+    if (firstSegment && !this.playbackStream.scenes[firstSegment.rootSceneId]?.disabled) {
+      return firstSegment.rootSceneId;
+    }
+    return undefined;
+  }
+
   /** First enabled scene strictly after `afterSceneId` in `sceneOrder`, or `undefined` if none. */
   private firstEnabledSceneAfter(stream: PersistedStreamConfig, afterSceneId: SceneId): SceneId | undefined {
     const idx = stream.sceneOrder.indexOf(afterSceneId);
@@ -2090,6 +2138,14 @@ export class StreamEngine extends EventEmitter {
 
   private sceneStartMs(sceneId: SceneId): number | undefined {
     return this.playbackTimeline.entries[sceneId]?.startMs;
+  }
+
+  private explicitLaunchStreamMs(sceneId: SceneId, sideThreadFallbackMs: number): number {
+    const resolved = this.resolveThreadForScene(sceneId);
+    if (resolved?.thread.rootTriggerType === 'at-timecode') {
+      return sideThreadFallbackMs;
+    }
+    return this.sceneStartMs(sceneId) ?? sideThreadFallbackMs;
   }
 
   private buildSchedule(stream: PersistedStreamConfig = this.stream): StreamSchedule {

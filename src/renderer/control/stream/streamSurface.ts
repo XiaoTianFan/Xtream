@@ -445,7 +445,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   function applyStreamState(state: StreamEnginePublicState): void {
     const previous = streamState;
     streamState = state;
-    syncSelectedScene();
+    syncSelectedScene(previous);
     if (!mounted || !currentState) {
       return;
     }
@@ -571,7 +571,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     renderBottomPaneIfNeeded();
   }
 
-  function syncSelectedScene(): void {
+  function syncSelectedScene(previousStreamState?: StreamEnginePublicState): void {
     const stream = streamState?.stream;
     if (!stream) {
       sceneEditSceneId = undefined;
@@ -586,9 +586,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     syncSceneEditSelection(stream);
 
-    const cursor = streamState?.runtime?.cursorSceneId;
-    if (cursor && stream.scenes[cursor]) {
-      playbackFocusSceneId = cursor;
+    const runtimeFocus = streamState?.runtime?.playbackFocusSceneId;
+    const previousRuntimeFocus = previousStreamState?.runtime?.playbackFocusSceneId;
+    if (
+      runtimeFocus &&
+      stream.scenes[runtimeFocus] &&
+      (runtimeFocus !== previousRuntimeFocus || !playbackFocusSceneId || !stream.scenes[playbackFocusSceneId])
+    ) {
+      playbackFocusSceneId = runtimeFocus;
     } else if (!playbackFocusSceneId || !stream.scenes[playbackFocusSceneId]) {
       playbackFocusSceneId = sceneEditSceneId ?? fallback;
     }
@@ -1169,9 +1174,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       applyStreamLayoutPrefs(refs, readStreamLayoutPrefs());
       layoutCtl.syncSplitterAria();
     }
-    const pcursor = streamPublic.runtime?.cursorSceneId;
-    if (pcursor && streamCfg.scenes[pcursor]) {
-      playbackFocusSceneId = pcursor;
+    const runtimeFocus = streamPublic.runtime?.playbackFocusSceneId;
+    if (runtimeFocus && streamCfg.scenes[runtimeFocus]) {
+      playbackFocusSceneId = runtimeFocus;
     } else if (!playbackFocusSceneId || !streamCfg.scenes[playbackFocusSceneId]) {
       playbackFocusSceneId =
         sceneEditSceneId ?? streamCfg.sceneOrder.find((id) => !streamCfg.scenes[id]?.disabled) ?? streamCfg.sceneOrder[0];
