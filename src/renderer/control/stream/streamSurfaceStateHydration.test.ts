@@ -186,6 +186,7 @@ describe('createStreamSurfaceController state hydration', () => {
       getAudioDevices: () => [],
       getDisplayMonitors: () => [],
       getPresentationState: () => undefined,
+      getLatestStreamState: () => undefined,
       getEngineSoloOutputIds: () => [],
       renderState: vi.fn(),
       setShowStatus: vi.fn(),
@@ -194,6 +195,29 @@ describe('createStreamSurfaceController state hydration', () => {
     });
 
     controller.applyStreamState(streamPublic());
+    controller.render(director());
+
+    expect(elements.surfacePanel.textContent).toContain('STREAM HEADER');
+    expect(elements.surfacePanel.textContent).toContain('STREAM WORKSPACE');
+    expect(elements.surfacePanel.textContent).toContain('STREAM BOTTOM');
+  });
+
+  it('renders dynamic panes from the cached latest stream state during surface render', async () => {
+    const { elements } = await import('../shell/elements');
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const latest = streamPublic();
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => latest,
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
     controller.render(director());
 
     expect(elements.surfacePanel.textContent).toContain('STREAM HEADER');

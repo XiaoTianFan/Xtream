@@ -257,6 +257,56 @@ describe('createGlobalStreamPlayCommand', () => {
 });
 
 describe('createStreamRailSegmentStyles', () => {
+  it('falls back to playback timeline segments before a runtime exists', () => {
+    const styles = createStreamRailSegmentStyles({
+      playbackTimeline: {
+        ...playableTimeline,
+        expectedDurationMs: 3000,
+        mainSegments: [
+          { threadId: 'thread:a', rootSceneId: 'a', startMs: 0, durationMs: 1000, endMs: 1000, proportion: 1 / 3 },
+          { threadId: 'thread:b', rootSceneId: 'b', startMs: 1000, durationMs: 2000, endMs: 3000, proportion: 2 / 3 },
+        ],
+        threadPlan: {
+          threads: [
+            {
+              threadId: 'thread:a',
+              rootSceneId: 'a',
+              rootTriggerType: 'manual',
+              sceneIds: ['a'],
+              edges: [],
+              branches: [{ sceneIds: ['a'], durationMs: 1000 }],
+              longestBranchSceneIds: ['a'],
+              sceneTimings: { a: { sceneId: 'a', threadLocalStartMs: 0, threadLocalEndMs: 1000 } },
+              durationMs: 1000,
+              temporarilyDisabledSceneIds: [],
+            },
+            {
+              threadId: 'thread:b',
+              rootSceneId: 'b',
+              rootTriggerType: 'manual',
+              sceneIds: ['b'],
+              edges: [],
+              branches: [{ sceneIds: ['b'], durationMs: 2000 }],
+              longestBranchSceneIds: ['b'],
+              sceneTimings: { b: { sceneId: 'b', threadLocalStartMs: 0, threadLocalEndMs: 2000 } },
+              durationMs: 2000,
+              temporarilyDisabledSceneIds: [],
+            },
+          ],
+          threadBySceneId: { a: 'thread:a', b: 'thread:b' },
+          temporarilyDisabledSceneIds: [],
+          issues: [],
+        },
+      },
+      runtime: null,
+    });
+
+    expect(styles?.background).toContain('0.000% 33.333%');
+    expect(styles?.background).toContain('33.333% 100.000%');
+    expect(styles?.foreground).toContain('#a6b8a2');
+    expect(styles?.foreground).toContain('#86bfcb');
+  });
+
   it('builds segmented rail gradients from latest runtime main order proportions', () => {
     const playbackTimeline: CalculatedStreamTimeline = {
       ...playableTimeline,

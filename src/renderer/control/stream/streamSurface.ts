@@ -427,6 +427,10 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function render(state: DirectorState): void {
     currentState = state;
+    const latest = options.getLatestStreamState();
+    if (latest && latest !== streamState) {
+      streamState = latest;
+    }
     if (!mounted) {
       mount();
     }

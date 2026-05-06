@@ -293,6 +293,7 @@ const streamSurface = createStreamSurfaceController({
   getAudioDevices: () => audioDevices,
   getDisplayMonitors: () => displayMonitors,
   getPresentationState,
+  getLatestStreamState: () => latestStreamState,
   getEngineSoloOutputIds: () => engineSoloOutputIds,
   renderState,
   setShowStatus,

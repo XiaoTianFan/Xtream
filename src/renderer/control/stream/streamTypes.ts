@@ -32,6 +32,7 @@ export type StreamSurfaceOptions = {
   getAudioDevices: () => MediaDeviceInfo[];
   getDisplayMonitors: () => DisplayMonitorInfo[];
   getPresentationState: () => DirectorState | undefined;
+  getLatestStreamState: () => StreamEnginePublicState | undefined;
   getEngineSoloOutputIds: () => VirtualOutputId[];
   renderState: (state: DirectorState) => void;
   setShowStatus: (message: string) => void;

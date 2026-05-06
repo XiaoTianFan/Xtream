@@ -158,12 +158,12 @@ export function createStreamRailSegmentStyles(args: {
 }): { background: string; foreground: string } | undefined {
   const colorMaps = deriveStreamThreadColorMaps(args.playbackTimeline);
   const runtimeMain = args.runtime?.mainTimelineId ? args.runtime.timelineInstances?.[args.runtime.mainTimelineId] : undefined;
-  const runtimeSegments = runtimeMain?.orderedThreadInstanceIds
-    .map((id) => {
+  const runtimeSegments = (runtimeMain?.orderedThreadInstanceIds
+    ?.map((id) => {
       const instance = args.runtime?.threadInstances?.[id];
       return instance ? { threadId: instance.canonicalThreadId, durationMs: instance.durationMs ?? 0 } : undefined;
     })
-    .filter(Boolean) as Array<{ threadId: StreamThreadId; durationMs: number }>;
+    .filter(Boolean) ?? []) as Array<{ threadId: StreamThreadId; durationMs: number }>;
   const timelineSegments =
     runtimeSegments.length > 0
       ? runtimeSegments
