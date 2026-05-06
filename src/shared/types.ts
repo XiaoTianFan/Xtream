@@ -714,6 +714,7 @@ export type CalculatedStreamTimeline = {
 };
 
 export type StreamRuntimeAudioSubCue = {
+  runtimeInstanceId?: string;
   sceneId: SceneId;
   subCueId: SubCueId;
   audioSourceId: AudioSourceId;
@@ -733,6 +734,7 @@ export type StreamRuntimeAudioSubCue = {
 };
 
 export type StreamRuntimeVisualSubCue = {
+  runtimeInstanceId?: string;
   sceneId: SceneId;
   subCueId: SubCueId;
   visualId: VisualId;
@@ -803,8 +805,8 @@ export type StreamCommand =
   | { type: 'seek'; timeMs: number };
 
 export type StreamEditCommand =
-  | { type: 'update-stream'; label?: string; playbackSettings?: Partial<StreamPlaybackSettings> }
-  | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger }
+  | { type: 'update-stream'; label?: string; playbackSettings?: Partial<StreamPlaybackSettings>; flowViewport?: PersistedStreamConfig['flowViewport'] }
+  | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger; flow?: PersistedSceneConfig['flow'] }
   | { type: 'update-scene'; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
   | { type: 'duplicate-scene'; sceneId: SceneId }
   | { type: 'remove-scene'; sceneId: SceneId }

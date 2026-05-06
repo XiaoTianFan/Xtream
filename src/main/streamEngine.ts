@@ -172,6 +172,9 @@ export class StreamEngine extends EventEmitter {
         if (command.label !== undefined) {
           this.stream.label = command.label;
         }
+        if (command.flowViewport !== undefined) {
+          this.stream.flowViewport = command.flowViewport;
+        }
         if (command.playbackSettings !== undefined) {
           this.stream = normalizeStreamPersistence({
             ...this.stream,
@@ -185,6 +188,9 @@ export class StreamEngine extends EventEmitter {
         const scene = createEmptyUserScene(sceneId, `Scene ${this.stream.sceneOrder.length + 1}`);
         if (command.trigger) {
           scene.trigger = command.trigger;
+        }
+        if (command.flow) {
+          scene.flow = command.flow;
         }
         if (command.afterSceneId !== undefined) {
           const idx = this.stream.sceneOrder.indexOf(command.afterSceneId);
@@ -2014,6 +2020,7 @@ export class StreamEngine extends EventEmitter {
       }
     }
     this.pruneExpiredOrphans(currentMs);
+    this.collectTimelineInstanceActiveSubCues(currentMs, activeAudio, activeVisual);
     this.applyAuthoringErrorOverlay(sceneStates);
     this.runtime.sceneStates = sceneStates;
     this.runtime.activeAudioSubCues = [...activeAudio, ...this.orphanedAudioSubCues];
@@ -2167,11 +2174,19 @@ export class StreamEngine extends EventEmitter {
   }
 
   private audioCueKey(cue: StreamRuntimeAudioSubCue): string {
-    return `${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
   }
 
   private visualCueKey(cue: StreamRuntimeVisualSubCue): string {
-    return `${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
+  }
+
+  private audioProjectionKey(cue: StreamRuntimeAudioSubCue): string {
+    return `${cue.sceneId}:${cue.subCueId}:${cue.outputId}:${cue.streamStartMs}:${cue.localStartMs}`;
+  }
+
+  private visualProjectionKey(cue: StreamRuntimeVisualSubCue): string {
+    return `${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}:${cue.streamStartMs}:${cue.localStartMs}`;
   }
 
   private collectActiveSubCues(
@@ -2180,6 +2195,7 @@ export class StreamEngine extends EventEmitter {
     currentMs: number,
     activeAudio: StreamRuntimeAudioSubCue[],
     activeVisual: StreamRuntimeVisualSubCue[],
+    runtimeInstanceId?: string,
   ): void {
     const scenePhase = this.getSceneLoopPhase(scene, sceneStartMs, currentMs);
     for (const subCueId of scene.subCueOrder) {
@@ -2205,6 +2221,7 @@ export class StreamEngine extends EventEmitter {
       if (sub.kind === 'audio') {
         for (const outputId of sub.outputIds) {
           activeAudio.push({
+            runtimeInstanceId,
             sceneId: scene.id,
             subCueId,
             audioSourceId: sub.audioSourceId,
@@ -2223,6 +2240,7 @@ export class StreamEngine extends EventEmitter {
       } else {
         for (const target of sub.targets) {
           activeVisual.push({
+            runtimeInstanceId,
             sceneId: scene.id,
             subCueId,
             visualId: sub.visualId,
@@ -2233,6 +2251,72 @@ export class StreamEngine extends EventEmitter {
             playbackRate: sub.playbackRate ?? 1,
             mediaLoop,
           });
+        }
+      }
+    }
+  }
+
+  private collectTimelineInstanceActiveSubCues(
+    currentMs: number,
+    activeAudio: StreamRuntimeAudioSubCue[],
+    activeVisual: StreamRuntimeVisualSubCue[],
+  ): void {
+    if (!this.runtime?.timelineInstances || !this.runtime.threadInstances || !this.playbackTimeline.threadPlan) {
+      return;
+    }
+    const audioKeys = new Set(activeAudio.map((cue) => this.audioProjectionKey(cue)));
+    const visualKeys = new Set(activeVisual.map((cue) => this.visualProjectionKey(cue)));
+    const timelineIds = this.runtime.timelineOrder ?? Object.keys(this.runtime.timelineInstances);
+    for (const timelineId of timelineIds) {
+      const timeline = this.runtime.timelineInstances[timelineId];
+      if (!timeline || (timeline.status !== 'running' && timeline.status !== 'paused')) {
+        continue;
+      }
+      const timelineGlobalZeroMs = currentMs - timeline.cursorMs;
+      for (const instanceId of timeline.orderedThreadInstanceIds) {
+        const instance = this.runtime.threadInstances[instanceId];
+        const thread = instance
+          ? this.playbackTimeline.threadPlan.threads.find((candidate) => candidate.threadId === instance.canonicalThreadId)
+          : undefined;
+        if (!instance || !thread) {
+          continue;
+        }
+        const localCursorMs = timeline.cursorMs - instance.timelineStartMs;
+        if (localCursorMs < instance.launchLocalMs) {
+          continue;
+        }
+        for (const sceneId of thread.sceneIds) {
+          const scene = this.playbackStream.scenes[sceneId];
+          const entry = this.playbackTimeline.entries[sceneId];
+          const timing =
+            sceneId === thread.rootSceneId
+              ? { sceneId, threadLocalStartMs: 0, threadLocalEndMs: entry?.durationMs }
+              : thread.sceneTimings[sceneId];
+          const localStartMs = timing?.threadLocalStartMs;
+          if (!scene || scene.disabled || localStartMs === undefined || instance.launchLocalMs > localStartMs) {
+            continue;
+          }
+          const localEndMs = entry?.durationMs === undefined ? timing?.threadLocalEndMs : localStartMs + entry.durationMs;
+          if (localCursorMs < localStartMs || (localEndMs !== undefined && localCursorMs >= localEndMs)) {
+            continue;
+          }
+          const nextAudio: StreamRuntimeAudioSubCue[] = [];
+          const nextVisual: StreamRuntimeVisualSubCue[] = [];
+          this.collectActiveSubCues(scene, timelineGlobalZeroMs + instance.timelineStartMs + localStartMs, currentMs, nextAudio, nextVisual, instance.id);
+          for (const cue of nextAudio) {
+            const key = this.audioProjectionKey(cue);
+            if (!audioKeys.has(key)) {
+              audioKeys.add(key);
+              activeAudio.push(cue);
+            }
+          }
+          for (const cue of nextVisual) {
+            const key = this.visualProjectionKey(cue);
+            if (!visualKeys.has(key)) {
+              visualKeys.add(key);
+              activeVisual.push(cue);
+            }
+          }
         }
       }
     }

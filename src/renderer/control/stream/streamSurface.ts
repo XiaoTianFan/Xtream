@@ -36,6 +36,7 @@ import { createStreamMediaPoolElements, createStreamShellLayout } from './shell'
 import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { formatSceneStateLabelForSceneList, sceneListRowRuntimeStatus } from './formatting';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
+import { syncStreamFlowModeRuntimeChrome } from './flowMode';
 import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
@@ -462,6 +463,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     }
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
     syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
+    syncStreamFlowModeRuntimeChrome(requireRef('workspace'), streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }

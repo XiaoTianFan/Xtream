@@ -1773,6 +1773,27 @@ describe('StreamEngine', () => {
     expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:b')).toBe(true);
   });
 
+  it('projects both active cue copies when a running scene is relaunched backward', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'global' });
+    vi.advanceTimersByTime(5_000);
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const activeB = (state.runtime?.activeVisualSubCues ?? []).filter((cue) => cue.sceneId === 'b');
+
+    expect(activeB).toHaveLength(2);
+    expect(activeB.map((cue) => cue.streamStartMs).sort((a, b) => a - b)).toEqual([10_000, 15_000]);
+    expect(activeB.some((cue) => cue.runtimeInstanceId)).toBe(true);
+  });
+
   it('completed thread relaunch creates a copied parallel instance', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

@@ -94,7 +94,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       continue;
     }
     const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
-    const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
+    const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}${cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''}`;
     derived.audioSources[cloneId] = {
       ...source,
       id: cloneId,
@@ -130,7 +130,9 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       continue;
     }
     const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
-    const cloneId = `stream-visual:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
+    const cloneId = `stream-visual:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}${
+      cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''
+    }`;
     derived.visuals[cloneId] = {
       ...visual,
       id: cloneId,

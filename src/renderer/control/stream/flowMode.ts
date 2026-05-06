@@ -1,7 +1,13 @@
 import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicState } from '../../../shared/types';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
-import { formatSceneDuration, formatTriggerSummary } from './formatting';
+import { createButton } from '../shared/dom';
+import { decorateIconButton } from '../shared/icons';
+import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
+import { createFlowSceneCard } from './flowCards';
+import { renderFlowLinks } from './flowLinks';
+import { deriveStreamFlowProjection, moveFlowRect, type FlowProjection, type FlowRect } from './flowProjection';
+import { FlowReteCanvas } from './flowReteCanvas';
 import type { BottomTab } from './streamTypes';
 
 export type StreamFlowModeContext = {
@@ -17,52 +23,430 @@ export type StreamFlowModeContext = {
   refreshSceneSelectionUi: () => void;
 };
 
-export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): HTMLElement {
-  const flow = document.createElement('div');
-  flow.className = 'stream-flow-canvas';
+let activeFlowContextMenu: HTMLElement | undefined;
+
+function dismissFlowContextMenu(): void {
+  activeFlowContextMenu?.remove();
+  activeFlowContextMenu = undefined;
+}
+
+function positionMenu(menu: HTMLElement, clientX: number, clientY: number): void {
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(clientX, window.innerWidth - bounds.width - 4)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - bounds.height - 4)}px`;
+}
+
+function ensureMenuDismissListeners(): void {
+  document.addEventListener('click', dismissFlowContextMenu, { once: true });
+  window.addEventListener('blur', dismissFlowContextMenu, { once: true });
+}
+
+function getRuntimeMainCursorMs(streamState: StreamEnginePublicState | undefined): number | undefined {
+  const runtime = streamState?.runtime;
+  if (!runtime) {
+    return undefined;
+  }
+  const main = runtime.mainTimelineId ? runtime.timelineInstances?.[runtime.mainTimelineId] : undefined;
+  return main?.cursorMs ?? runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs;
+}
+
+function createProjection(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): FlowProjection {
   const highlights = getStreamAuthoringErrorHighlights(
     stream,
     validateStreamContextFromDirector(ctx.currentState),
     ctx.streamState?.playbackTimeline,
   );
-  stream.sceneOrder.forEach((sceneId, index) => {
-    const scene = stream.scenes[sceneId];
-    if (!scene) {
+  return deriveStreamFlowProjection({
+    stream,
+    timeline: ctx.streamState?.playbackTimeline,
+    directorState: ctx.currentState,
+    runtimeSceneStates: ctx.streamState?.runtime?.sceneStates,
+    runtimeMainCursorMs: getRuntimeMainCursorMs(ctx.streamState),
+    authoringErrorSceneIds: highlights.scenesWithErrors,
+  });
+}
+
+function flowRectPatch(rect: FlowRect): FlowRect {
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjection): HTMLElement {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'stream-flow-toolbar';
+  const zoomOut = createButton('', 'icon-button', () => void canvas.zoomBy(0.85));
+  decorateIconButton(zoomOut, 'Rewind', 'Zoom out');
+  const zoomIn = createButton('', 'icon-button', () => void canvas.zoomBy(1.15));
+  decorateIconButton(zoomIn, 'FastForward', 'Zoom in');
+  const fit = createButton('', 'icon-button', () => void canvas.fitToProjection(getProjection()));
+  decorateIconButton(fit, 'Maximize2', 'Fit to content');
+  const reset = createButton('', 'icon-button', () => void canvas.resetView());
+  decorateIconButton(reset, 'RefreshCcw', 'Reset view');
+  toolbar.append(zoomOut, zoomIn, fit, reset);
+  return toolbar;
+}
+
+function syncFocusClasses(root: HTMLElement, playbackId: SceneId | undefined, editId: SceneId | undefined): void {
+  for (const card of root.querySelectorAll<HTMLElement>('.stream-flow-card[data-scene-id]')) {
+    const id = card.dataset.sceneId as SceneId | undefined;
+    if (!id) {
+      continue;
+    }
+    const { playback, edit } = sceneWorkspaceFocusFlags(id, playbackId, editId);
+    card.classList.toggle('stream-playback-focus', playback);
+    card.classList.toggle('stream-edit-focus', edit);
+  }
+}
+
+function applyRectToCard(root: HTMLElement, sceneId: SceneId, rect: FlowRect): void {
+  const card = root.querySelector<HTMLElement>(`.stream-flow-card[data-scene-id="${CSS.escape(sceneId)}"]`);
+  if (!card) {
+    return;
+  }
+  card.style.left = `${rect.x}px`;
+  card.style.top = `${rect.y}px`;
+  card.style.width = `${rect.width}px`;
+  card.style.height = `${rect.height}px`;
+}
+
+async function duplicateScene(stream: PersistedStreamConfig, sceneId: SceneId, ctx: StreamFlowModeContext): Promise<void> {
+  const source = stream.scenes[sceneId];
+  const sourceFlow = source?.flow;
+  const state = await window.xtream.stream.edit({ type: 'duplicate-scene', sceneId });
+  const idx = state.stream.sceneOrder.indexOf(sceneId);
+  const newId = idx >= 0 ? state.stream.sceneOrder[idx + 1] : undefined;
+  if (newId) {
+    if (sourceFlow) {
+      await window.xtream.stream.edit({
+        type: 'update-scene',
+        sceneId: newId,
+        update: { flow: { ...sourceFlow, x: sourceFlow.x + 34, y: sourceFlow.y + 34 } },
+      });
+    }
+    ctx.setPlaybackAndEditFocus(newId);
+  }
+  ctx.requestRender();
+}
+
+function showSceneContextMenu(event: MouseEvent, stream: PersistedStreamConfig, sceneId: SceneId, ctx: StreamFlowModeContext): void {
+  event.preventDefault();
+  event.stopPropagation();
+  dismissFlowContextMenu();
+  ensureMenuDismissListeners();
+  const scene = stream.scenes[sceneId];
+  if (!scene) {
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.className = 'context-menu audio-source-menu stream-flow-menu';
+  menu.setAttribute('role', 'menu');
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  const duplicateBtn = createButton('Duplicate', 'secondary context-menu-item', () => {
+    dismissFlowContextMenu();
+    void duplicateScene(stream, sceneId, ctx);
+  });
+  const toggleBtn = createButton(scene.disabled ? 'Enable' : 'Disable', 'secondary context-menu-item', () => {
+    dismissFlowContextMenu();
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { disabled: !scene.disabled } }).then(() => ctx.requestRender());
+  });
+  const removeBtn = createButton('Remove', 'secondary context-menu-item', () => {
+    if (stream.sceneOrder.length <= 1) {
       return;
     }
-    const { playback: pbFlag, edit: ebFlag } = sceneWorkspaceFocusFlags(sceneId, ctx.playbackFocusSceneId, ctx.sceneEditSceneId);
-    const pb = pbFlag ? ' stream-playback-focus' : '';
-    const eb = ebFlag ? ' stream-edit-focus' : '';
-    const authoringErr = highlights.scenesWithErrors.has(sceneId);
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = `stream-flow-card${pb}${eb}${authoringErr ? ' stream-flow-card--authoring-error' : ''}`;
-    card.dataset.sceneId = sceneId;
-    card.style.left = `${scene.flow?.x ?? 32 + index * 220}px`;
-    card.style.top = `${scene.flow?.y ?? 42 + (index % 2) * 110}px`;
-    card.style.width = `${scene.flow?.width ?? 180}px`;
-    card.style.height = `${scene.flow?.height ?? 88}px`;
-    const number = document.createElement('span');
-    number.className = 'stream-flow-number';
-    number.textContent = String(index + 1).padStart(2, '0');
-    const title = document.createElement('strong');
-    title.textContent = scene.title ?? `Scene ${index + 1}`;
-    const meta = document.createElement('small');
-    meta.textContent = `${formatTriggerSummary(stream, scene)} | ${formatSceneDuration(ctx.currentState, scene)}`;
-    card.append(number, title, meta);
-    card.addEventListener('click', () => {
-      ctx.setSceneEditFocus(sceneId);
-      ctx.setBottomTab('scene');
-      ctx.clearDetailPane();
-      ctx.refreshSceneSelectionUi();
-    });
-    card.addEventListener('dblclick', () => {
-      ctx.setPlaybackAndEditFocus(sceneId);
-      ctx.setBottomTab('scene');
-      ctx.clearDetailPane();
-      ctx.refreshSceneSelectionUi();
-    });
-    flow.append(card);
+    dismissFlowContextMenu();
+    const label = scene.title?.trim() || scene.id;
+    void (async () => {
+      if (!(await shellShowConfirm('Remove scene?', `Remove "${label}" from the stream?`))) {
+        return;
+      }
+      void window.xtream.stream.edit({ type: 'remove-scene', sceneId }).then((state) => {
+        ctx.setPlaybackAndEditFocus(state.stream.sceneOrder[0]);
+        ctx.requestRender();
+      });
+    })();
   });
-  return flow;
+  removeBtn.disabled = stream.sceneOrder.length <= 1;
+  menu.append(duplicateBtn, toggleBtn, removeBtn);
+  document.body.append(menu);
+  positionMenu(menu, event.clientX, event.clientY);
+  activeFlowContextMenu = menu;
 }
+
+function showRootContextMenu(event: MouseEvent, canvas: FlowReteCanvas, ctx: StreamFlowModeContext): void {
+  event.preventDefault();
+  event.stopPropagation();
+  dismissFlowContextMenu();
+  ensureMenuDismissListeners();
+  const point = canvas.screenToFlow(event);
+  const menu = document.createElement('div');
+  menu.className = 'context-menu audio-source-menu stream-flow-menu';
+  menu.setAttribute('role', 'menu');
+  const add = createButton('Add Scene', 'secondary context-menu-item', () => {
+    dismissFlowContextMenu();
+    void window.xtream.stream
+      .edit({
+        type: 'create-scene',
+        trigger: { type: 'manual' },
+        flow: { x: point.x, y: point.y, width: 214, height: 136 },
+      })
+      .then((state) => {
+        const id = state.stream.sceneOrder[state.stream.sceneOrder.length - 1];
+        ctx.setPlaybackAndEditFocus(id);
+        ctx.requestRender();
+      });
+  });
+  menu.append(add);
+  document.body.append(menu);
+  positionMenu(menu, event.clientX, event.clientY);
+  activeFlowContextMenu = menu;
+}
+
+function renderCards(args: {
+  stream: PersistedStreamConfig;
+  ctx: StreamFlowModeContext;
+  projection: FlowProjection;
+  canvas: FlowReteCanvas;
+  root: HTMLElement;
+}): void {
+  const { stream, ctx, projection, canvas, root } = args;
+  const cards = root.querySelector('.stream-flow-card-layer') ?? document.createElement('div');
+  cards.className = 'stream-flow-card-layer';
+  cards.replaceChildren();
+  if (!cards.parentElement) {
+    canvas.content.append(cards);
+  }
+
+  const beginDrag = (event: PointerEvent, sceneId: SceneId) => {
+    const start = canvas.screenToFlow(event);
+    const node = projection.nodesBySceneId[sceneId];
+    if (!node) {
+      return;
+    }
+    const movedIds =
+      node.rootSceneId === sceneId && node.threadId
+        ? projection.nodes.filter((candidate) => candidate.threadId === node.threadId).map((candidate) => candidate.sceneId)
+        : [sceneId];
+    const initial = Object.fromEntries(movedIds.map((id) => [id, { ...projection.nodesBySceneId[id].rect }]));
+    const target = event.currentTarget as HTMLElement;
+    target.setPointerCapture(event.pointerId);
+    const move = (moveEvent: PointerEvent) => {
+      const next = canvas.screenToFlow(moveEvent);
+      const dx = next.x - start.x;
+      const dy = next.y - start.y;
+      for (const id of movedIds) {
+        const candidate = projection.nodesBySceneId[id];
+        if (!candidate) {
+          continue;
+        }
+        candidate.rect = moveFlowRect(initial[id], dx, dy);
+        applyRectToCard(root, id, candidate.rect);
+      }
+      renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+    };
+    const up = (upEvent: PointerEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      void Promise.all(
+        movedIds.map((id) =>
+          window.xtream.stream.edit({
+            type: 'update-scene',
+            sceneId: id,
+            update: { flow: flowRectPatch(projection.nodesBySceneId[id].rect) },
+          }),
+        ),
+      ).then(() => ctx.requestRender());
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up, { once: true });
+  };
+
+  const beginResize = (event: PointerEvent, sceneId: SceneId) => {
+    const start = canvas.screenToFlow(event);
+    const node = projection.nodesBySceneId[sceneId];
+    if (!node) {
+      return;
+    }
+    const initial = { ...node.rect };
+    const target = event.currentTarget as HTMLElement;
+    target.setPointerCapture(event.pointerId);
+    const move = (moveEvent: PointerEvent) => {
+      const next = canvas.screenToFlow(moveEvent);
+      node.rect = {
+        ...initial,
+        width: Math.max(170, initial.width + next.x - start.x),
+        height: Math.max(104, initial.height + next.y - start.y),
+      };
+      applyRectToCard(root, sceneId, node.rect);
+      renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+    };
+    const up = (upEvent: PointerEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(node.rect) } }).then(() => ctx.requestRender());
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up, { once: true });
+  };
+
+  for (const node of projection.nodes) {
+    const scene = stream.scenes[node.sceneId];
+    if (!scene) {
+      continue;
+    }
+    cards.append(
+      createFlowSceneCard({
+        stream,
+        scene,
+        node,
+        directorState: ctx.currentState,
+        playbackFocusSceneId: ctx.playbackFocusSceneId,
+        sceneEditSceneId: ctx.sceneEditSceneId,
+        handlers: {
+          selectScene: (id) => {
+            ctx.setSceneEditFocus(id);
+            ctx.setBottomTab('scene');
+            ctx.clearDetailPane();
+            ctx.refreshSceneSelectionUi();
+          },
+          editScene: (id) => {
+            ctx.setPlaybackAndEditFocus(id);
+            ctx.setBottomTab('scene');
+            ctx.clearDetailPane();
+            ctx.refreshSceneSelectionUi();
+          },
+          runScene: (id) => {
+            const status = ctx.streamState?.runtime?.sceneStates[id]?.status;
+            if (status === 'running') {
+              void window.xtream.stream.transport({ type: 'pause' });
+              return;
+            }
+            ctx.setPlaybackAndEditFocus(id);
+            ctx.setBottomTab('scene');
+            ctx.clearDetailPane();
+            ctx.refreshSceneSelectionUi();
+            void window.xtream.stream.transport({ type: 'play', sceneId: id, source: 'flow-card' });
+          },
+          addFollower: (id, anchor) => {
+            void window.xtream.stream
+              .edit({
+                type: 'create-scene',
+                afterSceneId: id,
+                trigger: { type: 'follow-end', followsSceneId: id },
+                flow: { x: anchor.x, y: anchor.y, width: 214, height: 136 },
+              })
+              .then((state) => {
+                const idx = state.stream.sceneOrder.indexOf(id);
+                const newId = idx >= 0 ? state.stream.sceneOrder[idx + 1] : state.stream.sceneOrder.at(-1);
+                ctx.setPlaybackAndEditFocus(newId);
+                ctx.requestRender();
+              });
+          },
+          showContextMenu: (event, id) => showSceneContextMenu(event, stream, id, ctx),
+          beginDrag,
+          beginResize,
+        },
+      }),
+    );
+  }
+}
+
+export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): HTMLElement {
+  const root = document.createElement('div');
+  root.className = 'stream-flow-root';
+  const canvasHost = document.createElement('div');
+  canvasHost.className = 'stream-flow-canvas';
+  root.append(canvasHost);
+
+  let projection = createProjection(stream, ctx);
+  const canvas = new FlowReteCanvas(canvasHost, {
+    initialViewport: stream.flowViewport,
+    onViewportChange: (flowViewport) => {
+      void window.xtream.stream.edit({ type: 'update-stream', flowViewport });
+    },
+  });
+  root.prepend(createToolbar(canvas, () => projection));
+  canvas.setOverlayBounds(projection.bounds);
+  renderCards({ stream, ctx, projection, canvas, root });
+  renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+  canvasHost.addEventListener('contextmenu', (event) => {
+    if ((event.target as HTMLElement).closest('.stream-flow-card, .stream-flow-toolbar')) {
+      return;
+    }
+    showRootContextMenu(event, canvas, ctx);
+  });
+  const destroyObserver = new MutationObserver(() => {
+    if (!root.isConnected) {
+      canvas.destroy();
+      dismissFlowContextMenu();
+      destroyObserver.disconnect();
+    }
+  });
+  destroyObserver.observe(document.body, { childList: true, subtree: true });
+  projection = createProjection(stream, ctx);
+  return root;
+}
+
+export function syncStreamFlowModeRuntimeChrome(
+  root: HTMLElement,
+  streamState: StreamEnginePublicState,
+  directorState: DirectorState | undefined,
+  playbackFocusSceneId: SceneId | undefined,
+  sceneEditSceneId: SceneId | undefined,
+): void {
+  const canvas = root.querySelector<HTMLElement>('.stream-flow-canvas');
+  const overlay = root.querySelector<SVGSVGElement>('.stream-flow-link-layer');
+  if (!canvas || !overlay) {
+    return;
+  }
+  syncFocusClasses(root, playbackFocusSceneId, sceneEditSceneId);
+  const projection = deriveStreamFlowProjection({
+    stream: streamState.stream,
+    timeline: streamState.playbackTimeline,
+    directorState,
+    runtimeSceneStates: streamState.runtime?.sceneStates,
+    runtimeMainCursorMs: getRuntimeMainCursorMs(streamState),
+    authoringErrorSceneIds: getStreamAuthoringErrorHighlights(
+      streamState.stream,
+      validateStreamContextFromDirector(directorState),
+      streamState.playbackTimeline,
+    ).scenesWithErrors,
+  });
+  for (const node of projection.nodes) {
+    const card = root.querySelector<HTMLElement>(`.stream-flow-card[data-scene-id="${CSS.escape(node.sceneId)}"]`);
+    if (!card) {
+      continue;
+    }
+    for (const cl of [...card.classList]) {
+      if (cl.startsWith('status-')) {
+        card.classList.remove(cl);
+      }
+    }
+    card.classList.add(`status-${node.status}`);
+    card.classList.toggle('stream-flow-card--temporary-disabled', node.temporarilyDisabled);
+    let bar = card.querySelector<HTMLElement>('.stream-flow-card-progress');
+    if (node.status === 'running') {
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'stream-flow-card-progress';
+        card.prepend(bar);
+      }
+      if (node.progress !== undefined && Number.isFinite(node.progress)) {
+        bar.classList.remove('stream-flow-card-progress--indeterminate');
+        bar.style.setProperty('--stream-flow-progress', `${Math.min(100, Math.max(0, node.progress * 100))}%`);
+      } else {
+        bar.classList.add('stream-flow-card-progress--indeterminate');
+        bar.style.removeProperty('--stream-flow-progress');
+      }
+    } else {
+      bar?.remove();
+    }
+  }
+  renderFlowLinks(overlay, projection, streamState.runtime?.status === 'running');
+}
+
