@@ -37,6 +37,7 @@ import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { formatSceneStateLabelForSceneList, sceneListRowRuntimeStatus } from './formatting';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { syncStreamFlowModeRuntimeChrome } from './flowMode';
+import { syncStreamGanttRuntimeChrome } from './ganttMode';
 import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
@@ -278,6 +279,39 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
           },
         ]),
       ),
+      timelineInstances: Object.fromEntries(
+        Object.entries(runtime.timelineInstances ?? {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, timeline]) => [
+            id,
+            {
+              kind: timeline.kind,
+              status: timeline.status,
+              orderedThreadInstanceIds: [...timeline.orderedThreadInstanceIds],
+              durationMs: timeline.durationMs,
+            },
+          ]),
+      ),
+      threadInstances: Object.fromEntries(
+        Object.entries(runtime.threadInstances ?? {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, instance]) => [
+            id,
+            {
+              canonicalThreadId: instance.canonicalThreadId,
+              timelineId: instance.timelineId,
+              rootSceneId: instance.rootSceneId,
+              launchSceneId: instance.launchSceneId,
+              launchLocalMs: instance.launchLocalMs,
+              state: instance.state,
+              timelineStartMs: instance.timelineStartMs,
+              durationMs: instance.durationMs,
+              copiedFromThreadInstanceId: instance.copiedFromThreadInstanceId,
+            },
+          ]),
+      ),
+      mainTimelineId: runtime.mainTimelineId,
+      timelineOrder: runtime.timelineOrder,
       activeAudioSubCues: [...(runtime.activeAudioSubCues ?? [])]
         .slice()
         .sort((a, b) => {
@@ -440,6 +474,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       syncWorkspaceSceneSelection(workspace, playbackFocusSceneId, sceneEditSceneId);
       syncListRuntimeChrome(workspace, streamState, currentState);
       syncListDragAppearance(workspace, listDragSceneId);
+      syncStreamGanttRuntimeChrome(workspace, streamState);
     }
     renderBottomPaneIfNeeded();
     mixerPanel?.syncOutputMeters(currentState);
@@ -464,6 +499,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
     syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
     syncStreamFlowModeRuntimeChrome(requireRef('workspace'), streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
+    syncStreamGanttRuntimeChrome(requireRef('workspace'), streamState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }
@@ -1075,7 +1111,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     const streamCfg = streamPublic.stream;
-    if (snapshot.mode === 'list' || snapshot.mode === 'flow') {
+    if (snapshot.mode === 'list' || snapshot.mode === 'flow' || snapshot.mode === 'gantt') {
       mode = snapshot.mode;
     }
     if (snapshot.bottomTab === 'scene' || snapshot.bottomTab === 'mixer' || snapshot.bottomTab === 'displays') {

@@ -49,7 +49,7 @@ describe('createStreamWorkspacePaneSignature', () => {
     expect(a).toBe(b);
   });
 
-  it('changes when list/flow mode changes', () => {
+  it('changes when stream workspace mode changes', () => {
     const { stream } = getDefaultStreamPersistence();
     const dir = minimalDirector({ visuals: {}, audioSources: {} });
     const listSig = createStreamWorkspacePaneSignature({
@@ -64,7 +64,14 @@ describe('createStreamWorkspacePaneSignature', () => {
       expandedListSceneIds: [],
       directorState: dir,
     });
+    const ganttSig = createStreamWorkspacePaneSignature({
+      mode: 'gantt',
+      stream,
+      expandedListSceneIds: [],
+      directorState: dir,
+    });
     expect(listSig).not.toBe(flowSig);
+    expect(ganttSig).not.toBe(flowSig);
   });
 
   it('changes when expanded scene set changes', () => {

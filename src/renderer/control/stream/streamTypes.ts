@@ -16,7 +16,7 @@ export type SceneEditSelection =
   | { kind: 'scene' }
   | { kind: 'subcue'; sceneId: SceneId; subCueId: SubCueId };
 
-export type StreamMode = 'list' | 'flow';
+export type StreamMode = 'list' | 'flow' | 'gantt';
 
 export type BottomTab = 'scene' | 'mixer' | 'displays';
 

@@ -1094,7 +1094,7 @@ export type ControlProjectUiStreamDetail =
   | { type: 'audio-source'; id: string; returnTab: 'scene' | 'mixer' | 'displays' };
 
 export type ControlProjectUiStreamState = {
-  mode?: 'list' | 'flow';
+  mode?: 'list' | 'flow' | 'gantt';
   bottomTab?: 'scene' | 'mixer' | 'displays';
   selectedSceneId?: string;
   /** Selected panel in Scene Edit: scene-level form vs a specific sub-cue (sceneId aligns with selectedSceneId). */
