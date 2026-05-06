@@ -1,6 +1,7 @@
 import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneId } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
+import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
 import type { BottomTab } from './streamTypes';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { createButton, createHint } from '../shared/dom';
@@ -226,8 +227,9 @@ export function createStreamListMode(stream: PersistedStreamConfig, ctx: StreamL
     validateStreamContextFromDirector(ctx.currentState),
     ctx.streamState?.playbackTimeline,
   );
+  const threadColors = deriveStreamThreadColorMaps(ctx.streamState?.playbackTimeline);
   scenes.forEach((scene, index) =>
-    list.append(createSceneRowWrap(stream, scene, index + 1, ctx, dragUi, highlights)),
+    list.append(createSceneRowWrap(stream, scene, index + 1, ctx, dragUi, highlights, threadColors.bySceneId[scene.id])),
   );
 
   const endDropTarget = document.createElement('div');
@@ -294,6 +296,7 @@ function createSceneRowWrap(
   ctx: StreamListModeContext,
   dragUi: SceneListDragUi,
   highlights: ReturnType<typeof getStreamAuthoringErrorHighlights>,
+  threadColor: ReturnType<typeof deriveStreamThreadColorMaps>['bySceneId'][SceneId] | undefined,
 ): HTMLElement {
   const runtimeState = ctx.streamState?.runtime?.sceneStates[scene.id];
   const sceneAuthoringError = highlights.scenesWithErrors.has(scene.id);
@@ -305,6 +308,13 @@ function createSceneRowWrap(
   const wrap = document.createElement('div');
   wrap.className = `stream-scene-row-wrap status-${statusClass}${pb}${eb}${sceneAuthoringError ? ' stream-scene-row-wrap--authoring-error' : ''}`;
   wrap.dataset.sceneId = scene.id;
+  if (threadColor) {
+    wrap.classList.add('stream-scene-row-wrap--threaded');
+    wrap.dataset.threadColor = threadColor.token;
+    wrap.style.setProperty('--stream-thread-base', threadColor.base);
+    wrap.style.setProperty('--stream-thread-bright', threadColor.bright);
+    wrap.style.setProperty('--stream-thread-dim', threadColor.dim);
+  }
 
   const row = document.createElement('div');
   row.className = `stream-scene-row${pb}${eb} ${statusClass}${sceneAuthoringError ? ' stream-scene-row--authoring-error' : ''}${
@@ -409,10 +419,16 @@ function createSceneRowWrap(
     const bar = document.createElement('div');
     bar.className = 'stream-scene-row-progress';
     bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
+    if (threadColor) {
+      bar.style.setProperty('--stream-row-progress-color', threadColor.bright);
+    }
     wrap.append(bar);
   } else if (runtimeState?.status === 'running') {
     const bar = document.createElement('div');
     bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
+    if (threadColor) {
+      bar.style.setProperty('--stream-row-progress-color', threadColor.bright);
+    }
     wrap.append(bar);
   }
 

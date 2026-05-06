@@ -4,7 +4,10 @@ import type {
   DirectorState,
   DisplayWindowState,
   MediaValidationIssue,
+  StreamCanonicalSceneStateSummary,
+  StreamMultiTimelineResumeBehavior,
   StreamPausedPlayBehavior,
+  StreamParallelTimelineSeekBehavior,
   StreamPlaybackSettings,
 } from '../../../shared/types';
 import type { SurfaceController } from '../app/surfaceRouter';
@@ -445,6 +448,9 @@ async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSu
   const streamState = await window.xtream.stream.getState();
   const settings: StreamPlaybackSettings = streamState.stream.playbackSettings ?? {
     pausedPlayBehavior: 'selection-aware',
+    multiTimelineResumeBehavior: 'resume-all-clocks',
+    parallelTimelineSeekBehavior: 'leave-running',
+    canonicalSceneStateSummary: 'last-instance',
     runningEditOrphanPolicy: 'fade-out',
     runningEditOrphanFadeOutMs: 500,
   };
@@ -471,8 +477,43 @@ async function renderStreamPlaybackSettings(card: HTMLElement, options: ConfigSu
     (runningEditOrphanPolicy) =>
       void commit({ runningEditOrphanPolicy: runningEditOrphanPolicy as StreamPlaybackSettings['runningEditOrphanPolicy'] }),
   );
+  const multiTimelineResume = createSelect(
+    'Multi-timeline Play',
+    [
+      ['resume-all-clocks', 'Resume all clocks'],
+      ['launch-focused-cue-only', 'Launch focused cue only'],
+    ],
+    settings.multiTimelineResumeBehavior,
+    (multiTimelineResumeBehavior) =>
+      void commit({ multiTimelineResumeBehavior: multiTimelineResumeBehavior as StreamMultiTimelineResumeBehavior }),
+  );
+  const parallelSeek = createSelect(
+    'Parallel seek behavior',
+    [
+      ['leave-running', 'Leave parallel timelines running'],
+      ['follow-relative-seek', 'Follow relative seek'],
+      ['pause-parallel', 'Pause parallel timelines'],
+      ['clear-parallel', 'Clear parallel timelines'],
+    ],
+    settings.parallelTimelineSeekBehavior,
+    (parallelTimelineSeekBehavior) =>
+      void commit({ parallelTimelineSeekBehavior: parallelTimelineSeekBehavior as StreamParallelTimelineSeekBehavior }),
+  );
+  const sceneStateSummary = createSelect(
+    'Scene state summary',
+    [
+      ['last-instance', 'Last instance'],
+      ['first-instance', 'First instance'],
+    ],
+    settings.canonicalSceneStateSummary,
+    (canonicalSceneStateSummary) =>
+      void commit({ canonicalSceneStateSummary: canonicalSceneStateSummary as StreamCanonicalSceneStateSummary }),
+  );
   card.append(
     pausedPlay,
+    multiTimelineResume,
+    parallelSeek,
+    sceneStateSummary,
     orphanPolicy,
     createNumberDetailControl(
       'Removed content fade (s)',

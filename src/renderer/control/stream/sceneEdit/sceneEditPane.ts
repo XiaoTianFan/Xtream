@@ -5,6 +5,7 @@ import type {
   StreamEnginePublicState,
   SubCueId,
 } from '../../../../shared/types';
+import { deriveStreamThreadColorMaps } from '../../../../shared/streamThreadColors';
 import { createHint } from '../../shared/dom';
 import type { SceneEditSelection } from '../streamTypes';
 import { createAudioSubCueForm } from './audioSubCueForm';
@@ -45,6 +46,14 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
   wrap.className = 'stream-scene-edit';
   wrap.classList.toggle('is-locked', isSceneRunning);
   wrap.classList.toggle('stream-scene-edit--authoring-error', authoringSceneHasError);
+  const threadColor = deriveStreamThreadColorMaps(streamPublic.playbackTimeline).bySceneId[scene.id];
+  if (threadColor) {
+    wrap.classList.add('stream-scene-edit--threaded');
+    wrap.dataset.threadColor = threadColor.token;
+    wrap.style.setProperty('--stream-thread-base', threadColor.base);
+    wrap.style.setProperty('--stream-thread-bright', threadColor.bright);
+    wrap.style.setProperty('--stream-thread-dim', threadColor.dim);
+  }
 
   const rail = createSubCueRail({
     stream,

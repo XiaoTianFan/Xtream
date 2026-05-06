@@ -26,6 +26,9 @@ export const PATCH_COMPAT_SCENE_ID: SceneId = 'patch-compat-scene';
 
 export const DEFAULT_STREAM_PLAYBACK_SETTINGS: StreamPlaybackSettings = {
   pausedPlayBehavior: 'selection-aware',
+  multiTimelineResumeBehavior: 'resume-all-clocks',
+  parallelTimelineSeekBehavior: 'leave-running',
+  canonicalSceneStateSummary: 'last-instance',
   runningEditOrphanPolicy: 'fade-out',
   runningEditOrphanFadeOutMs: 500,
 };
@@ -37,6 +40,21 @@ export function normalizeStreamPlaybackSettings(settings: Partial<StreamPlayback
       settings?.pausedPlayBehavior === 'preserve-paused-cursor' || settings?.pausedPlayBehavior === 'selection-aware'
         ? settings.pausedPlayBehavior
         : DEFAULT_STREAM_PLAYBACK_SETTINGS.pausedPlayBehavior,
+    multiTimelineResumeBehavior:
+      settings?.multiTimelineResumeBehavior === 'resume-all-clocks' || settings?.multiTimelineResumeBehavior === 'launch-focused-cue-only'
+        ? settings.multiTimelineResumeBehavior
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.multiTimelineResumeBehavior,
+    parallelTimelineSeekBehavior:
+      settings?.parallelTimelineSeekBehavior === 'leave-running' ||
+      settings?.parallelTimelineSeekBehavior === 'follow-relative-seek' ||
+      settings?.parallelTimelineSeekBehavior === 'pause-parallel' ||
+      settings?.parallelTimelineSeekBehavior === 'clear-parallel'
+        ? settings.parallelTimelineSeekBehavior
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.parallelTimelineSeekBehavior,
+    canonicalSceneStateSummary:
+      settings?.canonicalSceneStateSummary === 'last-instance' || settings?.canonicalSceneStateSummary === 'first-instance'
+        ? settings.canonicalSceneStateSummary
+        : DEFAULT_STREAM_PLAYBACK_SETTINGS.canonicalSceneStateSummary,
     runningEditOrphanPolicy:
       settings?.runningEditOrphanPolicy === 'let-finish' || settings?.runningEditOrphanPolicy === 'fade-out'
         ? settings.runningEditOrphanPolicy

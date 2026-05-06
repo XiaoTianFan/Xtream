@@ -121,7 +121,40 @@
 }
 
 .stream-timeline-row .timeline-control {
+  position: relative;
   width: 100%;
+}
+
+.stream-timeline-segment-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  overflow: hidden;
+  background: var(--stream-rail-segments, var(--outline-variant));
+  pointer-events: none;
+}
+
+.stream-timeline-segment-progress {
+  width: var(--progress, 0%);
+  height: 100%;
+  background: var(--stream-rail-progress-segments, var(--accent-teal));
+}
+
+.stream-timeline-slider.stream-timeline-slider {
+  position: relative;
+  z-index: 1;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-moz-range-track,
+.stream-timeline-slider.stream-timeline-slider::-moz-range-progress {
+  background: transparent;
 }
 
 .stream-scene-title-stack {
@@ -382,6 +415,10 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.stream-scene-row-wrap--threaded .stream-scene-row:not(.stream-scene-row--header) {
+  background: var(--stream-thread-dim);
+}
+
 .stream-scene-row-wrap.focused .stream-scene-row,
 .stream-scene-row-wrap.stream-playback-focus .stream-scene-row {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 65%, transparent);
@@ -434,15 +471,15 @@
 .stream-scene-row:not(.stream-scene-row--header):hover,
 .stream-scene-row.stream-playback-focus,
 .stream-scene-row.stream-edit-focus {
-  background: color-mix(in srgb, var(--accent-teal) 10%, transparent);
+  background: color-mix(in srgb, var(--stream-thread-base, var(--accent-teal)) 18%, var(--stream-thread-dim, transparent));
 }
 
 .stream-scene-row.running {
-  background: color-mix(in srgb, var(--accent-teal) 50%, transparent);
+  background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 50%, var(--stream-thread-dim, transparent));
 }
 
 .stream-scene-row.preloading {
-  background: color-mix(in srgb, var(--accent-teal) 22%, transparent);
+  background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 22%, var(--stream-thread-dim, transparent));
 }
 
 .stream-scene-row.paused {
@@ -451,6 +488,7 @@
 
 .stream-scene-row.disabled {
   color: var(--text-secondary);
+  background: color-mix(in srgb, var(--stream-thread-dim, transparent) 55%, transparent);
 }
 
 .stream-scene-row.disabled .stream-scene-expand.icon-button,
@@ -558,7 +596,7 @@
 .stream-scene-row-progress {
   height: 3px;
   width: var(--stream-row-progress, 0%);
-  background: var(--accent-teal);
+  background: var(--stream-row-progress-color, var(--accent-teal));
   pointer-events: none;
 }
 
@@ -576,7 +614,7 @@
   width: 35%;
   height: 100%;
   animation: stream-row-progress-indeterminate 1.1s ease-in-out infinite;
-  background: var(--accent-teal);
+  background: var(--stream-row-progress-color, var(--accent-teal));
   content: "";
 }
 
@@ -626,6 +664,11 @@
 
 .stream-scene-form .stream-scene-form-row {
   margin-top: 0.35rem;
+}
+
+.stream-at-timecode-reminder.hint {
+  margin: 6px 0 0;
+  line-height: 1.35;
 }
 
 .stream-scene-form .stream-subcue-field-grid > .stream-scene-form-row {
@@ -713,6 +756,15 @@
   min-height: 0;
   overflow: hidden;
   padding: var(--gutter) 0 0;
+}
+
+.stream-scene-edit--threaded .stream-section-pill {
+  background: var(--stream-thread-dim);
+}
+
+.stream-scene-edit--threaded .stream-section-pill.active {
+  border-color: var(--stream-thread-bright);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--stream-thread-bright) 36%, transparent);
 }
 
 .stream-subcue-rail {

@@ -6,7 +6,7 @@ import type {
   SceneLoopPolicy,
   SceneTrigger,
 } from '../../../../shared/types';
-import { createButton, createSelect } from '../../shared/dom';
+import { createButton, createHint, createSelect } from '../../shared/dom';
 import { createStreamDetailField, createStreamDetailLine } from '../streamDom';
 import {
   createSubCueFieldGrid,
@@ -218,7 +218,11 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     const ms = Math.max(0, Number(tcInput.value) || 0);
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { trigger: { type: 'at-timecode', timecodeMs: ms } } });
   });
-  tcWrap.append(createStreamDetailField('Timecode (ms)', tcInput));
+  const tcReminder = createHint(
+    'This trigger follows the Stream main timeline. The main timeline can be recalculated or reordered during Pro playback by operator interaction, so this timecode may not be stable until an external timecode source is added.',
+  );
+  tcReminder.classList.add('stream-at-timecode-reminder');
+  tcWrap.append(createStreamDetailField('Timecode (ms)', tcInput), tcReminder);
   form.append(
     createSubCueSection(
       'Trigger',

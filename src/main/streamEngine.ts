@@ -43,6 +43,11 @@ function clampNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+function clampToDuration(value: number, durationMs: number | undefined): number {
+  const next = clampNonNegative(value);
+  return durationMs === undefined ? next : Math.min(durationMs, next);
+}
+
 function isRunningStatus(status: StreamRuntimeState['status']): boolean {
   return status === 'running' || status === 'preloading';
 }
@@ -457,9 +462,14 @@ export class StreamEngine extends EventEmitter {
       return undefined;
     }
     return Object.values(instances).find(
-      (instance) =>
-        instance.canonicalThreadId === threadId &&
-        (instance.state === 'running' || instance.state === 'paused' || instance.state === 'ready'),
+      (instance) => {
+        const timeline = this.runtime?.timelineInstances?.[instance.timelineId];
+        return (
+          instance.canonicalThreadId === threadId &&
+          timeline?.orderedThreadInstanceIds.includes(instance.id) === true &&
+          (instance.state === 'running' || instance.state === 'paused' || instance.state === 'ready')
+        );
+      },
     );
   }
 
@@ -572,14 +582,17 @@ export class StreamEngine extends EventEmitter {
     this.runtime.playbackFocusSceneId = sceneId;
 
     const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances[this.runtime.mainTimelineId] : undefined;
-    if (mainTimeline) {
+    if (mainTimeline && copiedFromThreadInstanceId === undefined) {
       mainTimeline.orderedThreadInstanceIds = mainTimeline.orderedThreadInstanceIds.filter(
         (id) => this.runtime?.threadInstances?.[id]?.canonicalThreadId !== resolved.thread.threadId,
       );
       this.recalculateMainTimelineInstanceLayout();
     }
 
-    if (this.playbackStream.scenes[resolved.thread.rootSceneId]?.trigger.type === 'manual') {
+    if (
+      this.playbackStream.scenes[resolved.thread.rootSceneId]?.trigger.type === 'manual' ||
+      this.playbackStream.scenes[resolved.thread.rootSceneId]?.trigger.type === 'at-timecode'
+    ) {
       this.manualSceneStartOverrides.set(resolved.thread.rootSceneId, currentMs - launchLocalMs);
     } else if (this.playbackStream.scenes[sceneId]?.trigger.type === 'manual') {
       this.manualSceneStartOverrides.set(sceneId, currentMs);
@@ -744,6 +757,14 @@ export class StreamEngine extends EventEmitter {
       const pauseSelection = this.runtime.selectedSceneIdAtPause ?? this.runtime.cursorSceneId;
       const pausedClock = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
       const pausedPlayBehavior = stream.playbackSettings?.pausedPlayBehavior ?? 'selection-aware';
+      const focusedTarget =
+        target ??
+        (this.runtime.cursorSceneId && stream.scenes[this.runtime.cursorSceneId] && !stream.scenes[this.runtime.cursorSceneId].disabled
+          ? this.runtime.cursorSceneId
+          : undefined) ??
+        (this.runtime.playbackFocusSceneId && stream.scenes[this.runtime.playbackFocusSceneId] && !stream.scenes[this.runtime.playbackFocusSceneId].disabled
+          ? this.runtime.playbackFocusSceneId
+          : undefined);
 
       if (pausedPlayBehavior === 'preserve-paused-cursor') {
         this.resumeFromPausedCursor();
@@ -755,6 +776,15 @@ export class StreamEngine extends EventEmitter {
           return;
         }
         this.startFromStreamTime(this.sceneStartMs(target) ?? 0, target, false);
+        return;
+      }
+
+      if (
+        this.pausedTimelineCount() > 1 &&
+        stream.playbackSettings?.multiTimelineResumeBehavior === 'launch-focused-cue-only' &&
+        focusedTarget
+      ) {
+        this.routeFocusedCueFromPausedMultiTimeline(focusedTarget);
         return;
       }
 
@@ -877,7 +907,9 @@ export class StreamEngine extends EventEmitter {
     ) {
       this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
     }
-    if (referenceSceneId && sceneRowRunFromHereIntent && referenceScene?.trigger.type !== 'manual') {
+    if (referenceSceneId && sceneRowRunFromHereIntent && referenceScene?.trigger.type === 'at-timecode') {
+      this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
+    } else if (referenceSceneId && sceneRowRunFromHereIntent && referenceScene?.trigger.type !== 'manual') {
       const launchLocalMs = this.threadLocalStartForScene(referenceSceneId) ?? 0;
       if (launchLocalMs > 0) {
         this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
@@ -894,6 +926,7 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     this.manualTailResumeIdleHold = false;
+    this.recomputeRuntime();
     const current = this.getRuntimeStreamMs();
     this.runtime.status = 'paused';
     this.runtime.pausedAtStreamMs = current;
@@ -957,6 +990,52 @@ export class StreamEngine extends EventEmitter {
     }
   }
 
+  private pausedTimelineCount(): number {
+    return Object.values(this.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.status === 'paused').length;
+  }
+
+  private routeFocusedCueFromPausedMultiTimeline(sceneId: SceneId): void {
+    if (!this.runtime || this.runtime.status !== 'paused') {
+      return;
+    }
+    const pausedClock = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+    const now = Date.now();
+    this.runtime.status = 'running';
+    this.runtime.originWallTimeMs = now;
+    this.runtime.startedWallTimeMs = now;
+    this.runtime.offsetStreamMs = pausedClock;
+    this.runtime.currentStreamMs = pausedClock;
+    this.runtime.pausedAtStreamMs = undefined;
+    this.runtime.pausedCursorMs = undefined;
+    this.runtime.selectedSceneIdAtPause = undefined;
+    const resolved = this.resolveThreadForScene(sceneId);
+    const activeInstance = resolved ? this.activeThreadInstanceFor(resolved.thread.threadId) : undefined;
+    if (activeInstance) {
+      const timeline = this.runtime.timelineInstances?.[activeInstance.timelineId];
+      if (timeline?.status === 'paused') {
+        const launchLocalMs = this.threadLocalStartForScene(sceneId) ?? 0;
+        const nextCursor = activeInstance.timelineStartMs + launchLocalMs;
+        timeline.status = 'running';
+        timeline.cursorMs = nextCursor;
+        timeline.offsetMs = nextCursor;
+        timeline.originWallTimeMs = now;
+        timeline.pausedAtMs = undefined;
+        activeInstance.state = 'running';
+        this.runtime.cursorSceneId = sceneId;
+        this.runtime.playbackFocusSceneId = sceneId;
+        this.recomputeRuntime();
+        if (this.runtime.status === 'running') {
+          this.startTicking();
+        }
+        return;
+      }
+    }
+    this.routeRunningSceneLaunch(sceneId);
+    if (this.runtime?.status === 'running') {
+      this.startTicking();
+    }
+  }
+
   private stop(): void {
     this.stopTicking();
     this.runtime = null;
@@ -993,19 +1072,23 @@ export class StreamEngine extends EventEmitter {
       return;
     }
     const schedule = this.playbackTimeline;
-    const max = schedule.expectedDurationMs;
-    const nextMs = max === undefined ? clampNonNegative(timeMs) : Math.min(max, clampNonNegative(timeMs));
+    const max = this.runtimeMainDurationMs();
+    const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances?.[this.runtime.mainTimelineId] : undefined;
+    const previousMainMs = mainTimeline?.cursorMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+    const nextMs = clampToDuration(timeMs, max);
+    const seekDeltaMs = nextMs - previousMainMs;
+    const parallelManualStartRestores = this.captureParallelManualStartRestores(seekDeltaMs);
     this.runtime.offsetStreamMs = nextMs;
     this.runtime.currentStreamMs = nextMs;
     this.runtime.pausedAtStreamMs = this.runtime.status === 'paused' ? nextMs : undefined;
     this.runtime.pausedCursorMs = this.runtime.status === 'paused' ? nextMs : undefined;
-    const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances?.[this.runtime.mainTimelineId] : undefined;
     if (mainTimeline) {
       mainTimeline.cursorMs = nextMs;
       mainTimeline.offsetMs = nextMs;
       mainTimeline.pausedAtMs = this.runtime.status === 'paused' ? nextMs : undefined;
       mainTimeline.originWallTimeMs = isRunningStatus(this.runtime.status) ? Date.now() : undefined;
     }
+    this.applyParallelTimelineSeekBehavior(seekDeltaMs);
     if (isRunningStatus(this.runtime.status)) {
       const now = Date.now();
       this.runtime.originWallTimeMs = now;
@@ -1016,6 +1099,9 @@ export class StreamEngine extends EventEmitter {
     this.manuallyCompletedSceneIds.clear();
     this.skippedAtTimecodeSceneIds.clear();
     this.manualSceneStartOverrides.clear();
+    for (const [sceneId, startMs] of parallelManualStartRestores) {
+      this.manualSceneStartOverrides.set(sceneId, startMs);
+    }
     this.clearControlSceneOverrides();
     for (const sceneId of this.playbackStream.sceneOrder) {
       const scene = this.playbackStream.scenes[sceneId];
@@ -1025,6 +1111,109 @@ export class StreamEngine extends EventEmitter {
     }
     this.refreshScheduleConsumedIdsAfterSeek(nextMs);
     this.recomputeRuntime();
+  }
+
+  private captureParallelManualStartRestores(seekDeltaMs: number): Map<SceneId, number> {
+    const out = new Map<SceneId, number>();
+    if (!this.runtime) {
+      return out;
+    }
+    const behavior = this.playbackStream.playbackSettings?.parallelTimelineSeekBehavior ?? 'leave-running';
+    if (behavior === 'clear-parallel') {
+      return out;
+    }
+    const parallelThreadIds = new Set<StreamThreadId>();
+    for (const instance of Object.values(this.runtime.threadInstances ?? {})) {
+      const timeline = this.runtime.timelineInstances?.[instance.timelineId];
+      if (timeline?.kind === 'parallel') {
+        parallelThreadIds.add(instance.canonicalThreadId);
+      }
+    }
+    for (const [sceneId, threadId] of Object.entries(this.playbackTimeline.threadPlan?.threadBySceneId ?? {}) as Array<[SceneId, StreamThreadId]>) {
+      if (!parallelThreadIds.has(threadId)) {
+        continue;
+      }
+      const existing = this.manualSceneStartOverrides.get(sceneId);
+      if (existing === undefined) {
+        continue;
+      }
+      out.set(sceneId, behavior === 'follow-relative-seek' ? existing : existing + seekDeltaMs);
+    }
+    return out;
+  }
+
+  private applyParallelTimelineSeekBehavior(seekDeltaMs: number): void {
+    if (!this.runtime) {
+      return;
+    }
+    const behavior = this.playbackStream.playbackSettings?.parallelTimelineSeekBehavior ?? 'leave-running';
+    if (behavior === 'leave-running') {
+      return;
+    }
+    if (behavior === 'clear-parallel') {
+      this.clearParallelTimelines();
+      return;
+    }
+    const now = Date.now();
+    for (const timeline of Object.values(this.runtime.timelineInstances ?? {})) {
+      if (timeline.kind !== 'parallel') {
+        continue;
+      }
+      if (behavior === 'pause-parallel') {
+        if (timeline.status === 'running') {
+          timeline.status = 'paused';
+          timeline.pausedAtMs = timeline.cursorMs;
+          timeline.offsetMs = timeline.cursorMs;
+          timeline.originWallTimeMs = undefined;
+        }
+        continue;
+      }
+      if (behavior === 'follow-relative-seek') {
+        const nextCursor = clampToDuration(timeline.cursorMs + seekDeltaMs, timeline.durationMs);
+        timeline.cursorMs = nextCursor;
+        timeline.offsetMs = nextCursor;
+        timeline.pausedAtMs = timeline.status === 'paused' ? nextCursor : undefined;
+        timeline.originWallTimeMs = timeline.status === 'running' ? now : undefined;
+      }
+    }
+    if (behavior === 'pause-parallel') {
+      for (const instance of Object.values(this.runtime.threadInstances ?? {})) {
+        const timeline = this.runtime.timelineInstances?.[instance.timelineId];
+        if (timeline?.kind === 'parallel' && instance.state === 'running') {
+          instance.state = 'paused';
+        }
+      }
+    }
+  }
+
+  private clearParallelTimelines(): void {
+    if (!this.runtime?.timelineInstances || !this.runtime.threadInstances) {
+      return;
+    }
+    const parallelTimelineIds = new Set(
+      Object.values(this.runtime.timelineInstances)
+        .filter((timeline) => timeline.kind === 'parallel')
+        .map((timeline) => timeline.id),
+    );
+    if (parallelTimelineIds.size === 0) {
+      return;
+    }
+    const removedThreadIds = new Set<StreamThreadId>();
+    for (const [instanceId, instance] of Object.entries(this.runtime.threadInstances)) {
+      if (parallelTimelineIds.has(instance.timelineId)) {
+        removedThreadIds.add(instance.canonicalThreadId);
+        delete this.runtime.threadInstances[instanceId];
+      }
+    }
+    for (const timelineId of parallelTimelineIds) {
+      delete this.runtime.timelineInstances[timelineId];
+    }
+    this.runtime.timelineOrder = (this.runtime.timelineOrder ?? []).filter((timelineId) => !parallelTimelineIds.has(timelineId));
+    for (const [sceneId, threadId] of Object.entries(this.playbackTimeline.threadPlan?.threadBySceneId ?? {}) as Array<[SceneId, StreamThreadId]>) {
+      if (removedThreadIds.has(threadId)) {
+        this.manualSceneStartOverrides.delete(sceneId);
+      }
+    }
   }
 
   private handleBackToFirst(): void {
@@ -1413,6 +1602,106 @@ export class StreamEngine extends EventEmitter {
     return true;
   }
 
+  private orderedThreadInstancesFor(threadId: StreamThreadId): StreamRuntimeThreadInstance[] {
+    if (!this.runtime?.threadInstances || !this.runtime.timelineInstances) {
+      return [];
+    }
+    const ordered: StreamRuntimeThreadInstance[] = [];
+    for (const timelineId of this.runtime.timelineOrder ?? Object.keys(this.runtime.timelineInstances)) {
+      const timeline = this.runtime.timelineInstances[timelineId];
+      if (!timeline) {
+        continue;
+      }
+      for (const instanceId of timeline.orderedThreadInstanceIds) {
+        const instance = this.runtime.threadInstances[instanceId];
+        if (instance?.canonicalThreadId === threadId) {
+          ordered.push(instance);
+        }
+      }
+    }
+    return ordered;
+  }
+
+  private sceneStateForThreadInstance(
+    sceneId: SceneId,
+    instance: StreamRuntimeThreadInstance,
+    previous: SceneRuntimeState | undefined,
+  ): SceneRuntimeState | undefined {
+    const thread = this.playbackTimeline.threadPlan?.threads.find((candidate) => candidate.threadId === instance.canonicalThreadId);
+    const scene = this.playbackStream.scenes[sceneId];
+    const timeline = this.runtime?.timelineInstances?.[instance.timelineId];
+    if (!thread || !scene || !timeline) {
+      return undefined;
+    }
+    const entry = this.playbackTimeline.entries[sceneId];
+    const timing = sceneId === thread.rootSceneId
+      ? { sceneId, threadLocalStartMs: 0, threadLocalEndMs: entry?.durationMs }
+      : thread.sceneTimings[sceneId];
+    const localStartMs = timing?.threadLocalStartMs;
+    if (localStartMs === undefined) {
+      return undefined;
+    }
+    const durationMs = entry?.durationMs;
+    const localEndMs = durationMs === undefined ? timing?.threadLocalEndMs : localStartMs + durationMs;
+    const localCursorMs = Math.max(0, timeline.cursorMs - instance.timelineStartMs);
+    let status: SceneRuntimeState['status'];
+    let progress: number | undefined;
+    if (instance.launchLocalMs > localStartMs) {
+      status = 'skipped';
+    } else if (timeline.cursorMs < instance.timelineStartMs || localCursorMs < localStartMs) {
+      status = 'ready';
+    } else if (localEndMs !== undefined && localCursorMs >= localEndMs) {
+      status = 'complete';
+      progress = 1;
+    } else if (timeline.status === 'paused' || instance.state === 'paused') {
+      status = 'paused';
+    } else if (timeline.status === 'running' && instance.state === 'running') {
+      status = 'running';
+    } else if (instance.state === 'complete') {
+      status = 'complete';
+      progress = 1;
+    } else {
+      status = 'ready';
+    }
+    const scheduledStartMs = instance.timelineStartMs + localStartMs;
+    return {
+      sceneId,
+      status,
+      scheduledStartMs,
+      startedAtStreamMs: status === 'ready' ? previous?.startedAtStreamMs : scheduledStartMs,
+      endedAtStreamMs: status === 'complete' ? instance.timelineStartMs + (localEndMs ?? localStartMs) : previous?.endedAtStreamMs,
+      progress,
+      error: previous?.error,
+    };
+  }
+
+  private applyCanonicalSceneStateSummary(sceneStates: Record<SceneId, SceneRuntimeState>): void {
+    if (this.playbackStream.playbackSettings?.canonicalSceneStateSummary !== 'first-instance') {
+      return;
+    }
+    const threadPlan = this.playbackTimeline.threadPlan;
+    if (!threadPlan) {
+      return;
+    }
+    for (const thread of threadPlan.threads) {
+      const instances = this.orderedThreadInstancesFor(thread.threadId);
+      if (instances.length <= 1) {
+        continue;
+      }
+      const firstInstance = instances[0];
+      for (const sceneId of thread.sceneIds) {
+        const existing = sceneStates[sceneId];
+        if (!existing || existing.status === 'disabled' || existing.status === 'error') {
+          continue;
+        }
+        const firstState = this.sceneStateForThreadInstance(sceneId, firstInstance, existing);
+        if (firstState) {
+          sceneStates[sceneId] = firstState;
+        }
+      }
+    }
+  }
+
   private recomputeRuntime(depth = 0): void {
     if (!this.runtime) {
       return;
@@ -1426,6 +1715,12 @@ export class StreamEngine extends EventEmitter {
     this.runtime.playbackFocusSceneId = this.runtime.playbackFocusSceneId ?? this.runtime.cursorSceneId;
     for (const timeline of Object.values(this.runtime.timelineInstances ?? {})) {
       if (timeline.kind === 'main') {
+        if (this.runtime.status === 'running' && timeline.status === 'paused') {
+          timeline.cursorMs = timeline.pausedAtMs ?? timeline.cursorMs;
+          timeline.durationMs = this.runtimeMainDurationMs();
+          timeline.originWallTimeMs = undefined;
+          continue;
+        }
         timeline.cursorMs = currentMs;
         timeline.durationMs = this.runtimeMainDurationMs();
         if (this.runtime.status === 'running') {
@@ -1635,6 +1930,8 @@ export class StreamEngine extends EventEmitter {
         instance.state = 'ready';
       }
     }
+
+    this.applyCanonicalSceneStateSummary(sceneStates);
 
     const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
     if (runningEntries.length > 0) {

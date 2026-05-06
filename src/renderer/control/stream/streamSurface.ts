@@ -11,6 +11,7 @@ import type {
   VirtualOutputId,
 } from '../../../shared/types';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
+import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
 import { createEmbeddedAudioImportController } from '../patch/embeddedAudioImport';
@@ -331,6 +332,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       validateStreamContextFromDirector(directorState),
       state.playbackTimeline,
     );
+    const threadColors = deriveStreamThreadColorMaps(state.playbackTimeline);
     const runtime = state.runtime;
     for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
       const sceneId = wrap.dataset.sceneId as SceneId | undefined;
@@ -342,6 +344,14 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         continue;
       }
       const runtimeState = runtime?.sceneStates[sceneId];
+      const threadColor = threadColors.bySceneId[sceneId];
+      if (threadColor) {
+        wrap.classList.add('stream-scene-row-wrap--threaded');
+        wrap.dataset.threadColor = threadColor.token;
+        wrap.style.setProperty('--stream-thread-base', threadColor.base);
+        wrap.style.setProperty('--stream-thread-bright', threadColor.bright);
+        wrap.style.setProperty('--stream-thread-dim', threadColor.dim);
+      }
       const authoringErr = highlights.scenesWithErrors.has(sceneId);
       const statusClass = sceneListRowRuntimeStatus(runtimeState, scene, authoringErr);
       replaceWrapListRuntimeStatus(wrap, statusClass);
@@ -368,6 +378,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         } else {
           bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
           bar.style.removeProperty('--stream-row-progress');
+        }
+        if (threadColor) {
+          bar.style.setProperty('--stream-row-progress-color', threadColor.bright);
         }
       } else {
         bar?.remove();

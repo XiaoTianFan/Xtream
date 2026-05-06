@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getDefaultStreamPersistence } from '../../../shared/streamWorkspace';
 import type { CalculatedStreamTimeline, StreamEnginePublicState } from '../../../shared/types';
-import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, deriveStreamWorkspaceLiveStateLabel } from './streamHeader';
+import { createGlobalStreamPlayCommand, createStreamRailSegmentStyles, deriveStreamTransportUiState, deriveStreamWorkspaceLiveStateLabel } from './streamHeader';
 
 function timeline(
   status: CalculatedStreamTimeline['status'],
@@ -213,9 +213,8 @@ describe('createGlobalStreamPlayCommand', () => {
     const { stream } = getDefaultStreamPersistence();
     addSecondScene(stream);
     stream.playbackSettings = {
+      ...stream.playbackSettings!,
       pausedPlayBehavior: 'preserve-paused-cursor',
-      runningEditOrphanPolicy: 'fade-out',
-      runningEditOrphanFadeOutMs: 500,
     };
     const runtime: StreamEnginePublicState['runtime'] = {
       status: 'paused',
@@ -254,5 +253,96 @@ describe('createGlobalStreamPlayCommand', () => {
         playbackFocusSceneId: 'scene-2',
       }),
     ).toEqual({ type: 'play', sceneId: 'scene-2', source: 'global' });
+  });
+});
+
+describe('createStreamRailSegmentStyles', () => {
+  it('builds segmented rail gradients from latest runtime main order proportions', () => {
+    const playbackTimeline: CalculatedStreamTimeline = {
+      ...playableTimeline,
+      expectedDurationMs: 3000,
+      mainSegments: [
+        { threadId: 'thread:a', rootSceneId: 'a', startMs: 0, durationMs: 1000, endMs: 1000, proportion: 1 / 3 },
+        { threadId: 'thread:b', rootSceneId: 'b', startMs: 1000, durationMs: 2000, endMs: 3000, proportion: 2 / 3 },
+      ],
+      threadPlan: {
+        threads: [
+          {
+            threadId: 'thread:a',
+            rootSceneId: 'a',
+            rootTriggerType: 'manual',
+            sceneIds: ['a'],
+            edges: [],
+            branches: [{ sceneIds: ['a'], durationMs: 1000 }],
+            longestBranchSceneIds: ['a'],
+            sceneTimings: { a: { sceneId: 'a', threadLocalStartMs: 0, threadLocalEndMs: 1000 } },
+            durationMs: 1000,
+            temporarilyDisabledSceneIds: [],
+          },
+          {
+            threadId: 'thread:b',
+            rootSceneId: 'b',
+            rootTriggerType: 'manual',
+            sceneIds: ['b'],
+            edges: [],
+            branches: [{ sceneIds: ['b'], durationMs: 2000 }],
+            longestBranchSceneIds: ['b'],
+            sceneTimings: { b: { sceneId: 'b', threadLocalStartMs: 0, threadLocalEndMs: 2000 } },
+            durationMs: 2000,
+            temporarilyDisabledSceneIds: [],
+          },
+        ],
+        threadBySceneId: { a: 'thread:a', b: 'thread:b' },
+        temporarilyDisabledSceneIds: [],
+        issues: [],
+      },
+    };
+    const styles = createStreamRailSegmentStyles({
+      playbackTimeline,
+      runtime: {
+        status: 'running',
+        sceneStates: {},
+        mainTimelineId: 'main',
+        timelineInstances: {
+          main: {
+            id: 'main',
+            kind: 'main',
+            status: 'running',
+            orderedThreadInstanceIds: ['b-inst', 'a-inst'],
+            cursorMs: 0,
+            durationMs: 3000,
+          },
+        },
+        threadInstances: {
+          'b-inst': {
+            id: 'b-inst',
+            canonicalThreadId: 'thread:b',
+            timelineId: 'main',
+            rootSceneId: 'b',
+            launchSceneId: 'b',
+            launchLocalMs: 0,
+            state: 'running',
+            timelineStartMs: 0,
+            durationMs: 2000,
+          },
+          'a-inst': {
+            id: 'a-inst',
+            canonicalThreadId: 'thread:a',
+            timelineId: 'main',
+            rootSceneId: 'a',
+            launchSceneId: 'a',
+            launchLocalMs: 0,
+            state: 'ready',
+            timelineStartMs: 2000,
+            durationMs: 1000,
+          },
+        },
+      },
+    });
+
+    expect(styles?.background).toContain('0.000% 66.667%');
+    expect(styles?.background).toContain('66.667% 100.000%');
+    expect(styles?.foreground).toContain('#86bfcb');
+    expect(styles?.foreground).toContain('#a6b8a2');
   });
 });

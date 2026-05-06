@@ -1,5 +1,6 @@
 import { formatTimecode } from '../../../shared/timeline';
-import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamCommand } from '../../../shared/types';
+import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
+import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamCommand, StreamThreadId } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { createButton, syncSliderProgress } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -141,13 +142,68 @@ function getStreamCurrentMs(runtime: StreamEnginePublicState['runtime'], state: 
   return runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs ?? 0;
 }
 
-function formatStreamDuration(playbackTimeline: StreamEnginePublicState['playbackTimeline']): string {
+function formatStreamDuration(playbackTimeline: StreamEnginePublicState['playbackTimeline'], runtime?: StreamEnginePublicState['runtime']): string {
   if (playbackTimeline.status !== 'valid') {
     return '/ timeline error';
   }
-  return playbackTimeline.expectedDurationMs !== undefined
-    ? `/ ${formatTimecode(playbackTimeline.expectedDurationMs / 1000)}`
+  const durationMs = runtime?.expectedDurationMs ?? playbackTimeline.expectedDurationMs;
+  return durationMs !== undefined
+    ? `/ ${formatTimecode(durationMs / 1000)}`
     : '/ --:--:--';
+}
+
+export function createStreamRailSegmentStyles(args: {
+  runtime: StreamEnginePublicState['runtime'];
+  playbackTimeline: StreamEnginePublicState['playbackTimeline'];
+}): { background: string; foreground: string } | undefined {
+  const colorMaps = deriveStreamThreadColorMaps(args.playbackTimeline);
+  const runtimeMain = args.runtime?.mainTimelineId ? args.runtime.timelineInstances?.[args.runtime.mainTimelineId] : undefined;
+  const runtimeSegments = runtimeMain?.orderedThreadInstanceIds
+    .map((id) => {
+      const instance = args.runtime?.threadInstances?.[id];
+      return instance ? { threadId: instance.canonicalThreadId, durationMs: instance.durationMs ?? 0 } : undefined;
+    })
+    .filter(Boolean) as Array<{ threadId: StreamThreadId; durationMs: number }>;
+  const timelineSegments =
+    runtimeSegments.length > 0
+      ? runtimeSegments
+      : (args.playbackTimeline.mainSegments ?? []).map((segment) => ({ threadId: segment.threadId, durationMs: segment.durationMs }));
+  const positive = timelineSegments.filter((segment) => segment.durationMs > 0);
+  const total = positive.reduce((sum, segment) => sum + segment.durationMs, 0);
+  if (total <= 0) {
+    return undefined;
+  }
+  let cursor = 0;
+  const dimStops: string[] = [];
+  const brightStops: string[] = [];
+  for (const segment of positive) {
+    const start = cursor;
+    cursor += (segment.durationMs / total) * 100;
+    const end = Math.min(100, cursor);
+    const color = colorMaps.byThreadId[segment.threadId];
+    dimStops.push(`${color?.dim ?? 'var(--outline-variant)'} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
+    brightStops.push(`${color?.bright ?? 'var(--accent-teal)'} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
+  }
+  return {
+    background: `linear-gradient(90deg, ${dimStops.join(', ')})`,
+    foreground: `linear-gradient(90deg, ${brightStops.join(', ')})`,
+  };
+}
+
+function applyStreamRailSegmentStyles(sliderWrap: HTMLElement, args: Parameters<typeof createStreamRailSegmentStyles>[0]): void {
+  const styles = createStreamRailSegmentStyles(args);
+  if (!styles) {
+    sliderWrap.style.removeProperty('--stream-rail-segments');
+    sliderWrap.style.removeProperty('--stream-rail-progress-segments');
+    return;
+  }
+  sliderWrap.style.setProperty('--stream-rail-segments', styles.background);
+  sliderWrap.style.setProperty('--stream-rail-progress-segments', styles.foreground);
+}
+
+function syncStreamRailProgress(slider: HTMLInputElement): void {
+  syncSliderProgress(slider);
+  slider.closest<HTMLElement>('.timeline-control')?.style.setProperty('--progress', slider.style.getPropertyValue('--progress') || '0%');
 }
 
 function createRateButton(ctx: StreamHeaderRenderContext): HTMLButtonElement {
@@ -223,6 +279,12 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   wrapper.className = 'stream-timeline-row';
   const sliderWrap = document.createElement('div');
   sliderWrap.className = 'timeline-control';
+  applyStreamRailSegmentStyles(sliderWrap, { runtime, playbackTimeline: ctx.playbackTimeline });
+  const segmentTrack = document.createElement('div');
+  segmentTrack.className = 'stream-timeline-segment-track';
+  const segmentProgress = document.createElement('div');
+  segmentProgress.className = 'stream-timeline-segment-progress';
+  segmentTrack.append(segmentProgress);
   const slider = document.createElement('input');
   slider.type = 'range';
   slider.className = 'mini-slider timeline-slider stream-timeline-slider';
@@ -230,13 +292,14 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   slider.min = '0';
   slider.step = '0.01';
   slider.setAttribute('aria-label', 'Stream timeline scrubber');
-  const durationMs = ctx.playbackTimeline.expectedDurationMs ?? runtime?.expectedDurationMs;
+  const durationMs = runtime?.expectedDurationMs ?? ctx.playbackTimeline.expectedDurationMs;
   const currentMs = getStreamCurrentMs(runtime, currentState);
   if (durationMs === undefined || durationMs <= 0) {
     slider.disabled = true;
     slider.max = '0';
     slider.value = '0';
     slider.style.setProperty('--progress', '0%');
+    sliderWrap.style.setProperty('--progress', '0%');
     slider.title = runtime?.timelineNotice ?? 'Stream timeline unavailable';
   } else {
     slider.max = String(durationMs / 1000);
@@ -246,7 +309,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
     } else if (timelineScrubDraftValueSeconds !== undefined) {
       slider.value = String(Math.min(durationMs / 1000, Math.max(0, timelineScrubDraftValueSeconds)));
     }
-    syncSliderProgress(slider);
+    syncStreamRailProgress(slider);
     slider.title = `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
   }
   slider.addEventListener('pointerdown', () => {
@@ -263,7 +326,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   slider.addEventListener('input', () => {
     timelineScrubDraftUntil = performance.now() + 300;
     timelineScrubDraftValueSeconds = Number(slider.value) || 0;
-    syncSliderProgress(slider);
+    syncStreamRailProgress(slider);
     slider.title =
       durationMs === undefined ? 'Stream timeline unavailable' : `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
   });
@@ -274,7 +337,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
       timelineScrubPointerActive = false;
     });
   });
-  sliderWrap.append(slider);
+  sliderWrap.append(segmentTrack, slider);
   wrapper.append(sliderWrap);
   return wrapper;
 }
@@ -292,7 +355,7 @@ export function syncStreamHeaderRuntime(
   }
   const duration = headerEl.querySelector<HTMLElement>('[data-stream-duration="true"]');
   if (duration) {
-    duration.textContent = formatStreamDuration(playbackTimeline);
+    duration.textContent = formatStreamDuration(playbackTimeline, runtime);
   }
   const liveChip = headerEl.querySelector<HTMLElement>('[data-stream-live-state="true"]');
   if (liveChip) {
@@ -301,7 +364,11 @@ export function syncStreamHeaderRuntime(
     liveChip.dataset.state = label.toLowerCase();
   }
   const slider = headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]');
-  const durationMs = playbackTimeline.expectedDurationMs ?? runtime?.expectedDurationMs;
+  const sliderWrap = slider?.closest<HTMLElement>('.timeline-control');
+  if (sliderWrap) {
+    applyStreamRailSegmentStyles(sliderWrap, { runtime, playbackTimeline });
+  }
+  const durationMs = runtime?.expectedDurationMs ?? playbackTimeline.expectedDurationMs;
   if (!slider) {
     return;
   }
@@ -310,6 +377,7 @@ export function syncStreamHeaderRuntime(
     slider.max = '0';
     slider.value = '0';
     slider.style.setProperty('--progress', '0%');
+    slider.closest<HTMLElement>('.timeline-control')?.style.setProperty('--progress', '0%');
     slider.title = runtime?.timelineNotice ?? 'Stream timeline unavailable';
     return;
   }
@@ -321,7 +389,7 @@ export function syncStreamHeaderRuntime(
   } else if (timelineScrubDraftValueSeconds !== undefined) {
     slider.value = String(Math.min(durationMs / 1000, Math.max(0, timelineScrubDraftValueSeconds)));
   }
-  syncSliderProgress(slider);
+  syncStreamRailProgress(slider);
   slider.title = `Stream ${formatTimecode(Number(slider.value) || 0)} / ${formatTimecode(durationMs / 1000)}`;
 }
 
@@ -421,7 +489,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   const duration = document.createElement('span');
   duration.className = 'stream-duration-total';
   duration.dataset.streamDuration = 'true';
-  duration.textContent = formatStreamDuration(ctx.playbackTimeline);
+  duration.textContent = formatStreamDuration(ctx.playbackTimeline, runtime);
   timecode.append(currentTimecode, duration);
 
   const transport = document.createElement('div');

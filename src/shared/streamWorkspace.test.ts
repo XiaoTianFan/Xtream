@@ -207,4 +207,27 @@ describe('Trigger migration', () => {
     const next = normalizeStreamPersistence(raw);
     expect(next.scenes.b.trigger).toEqual({ type: 'follow-start', followsSceneId: 'a', delayMs: 900 });
   });
+
+  it('normalizes missing Stream playback settings to milestone 5 defaults', () => {
+    const raw = {
+      id: STREAM_MAIN_ID,
+      label: 'Main',
+      sceneOrder: ['a'],
+      scenes: { a: createEmptyUserScene('a', 'A') },
+      playbackSettings: {
+        pausedPlayBehavior: 'preserve-paused-cursor',
+        runningEditOrphanPolicy: 'let-finish',
+        runningEditOrphanFadeOutMs: 25,
+      },
+    } as unknown as PersistedStreamConfig;
+
+    expect(normalizeStreamPersistence(raw).playbackSettings).toEqual({
+      pausedPlayBehavior: 'preserve-paused-cursor',
+      multiTimelineResumeBehavior: 'resume-all-clocks',
+      parallelTimelineSeekBehavior: 'leave-running',
+      canonicalSceneStateSummary: 'last-instance',
+      runningEditOrphanPolicy: 'let-finish',
+      runningEditOrphanFadeOutMs: 50,
+    });
+  });
 });

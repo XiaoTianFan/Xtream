@@ -942,9 +942,8 @@ describe('StreamEngine', () => {
     const engine = new StreamEngine(director);
     const { stream } = getDefaultStreamPersistence();
     stream.playbackSettings = {
+      ...stream.playbackSettings!,
       pausedPlayBehavior: 'preserve-paused-cursor',
-      runningEditOrphanPolicy: 'fade-out',
-      runningEditOrphanFadeOutMs: 500,
     };
     stream.sceneOrder = ['scene-1', 'scene-2'];
     stream.scenes['scene-1'].subCueOrder = ['vis'];
@@ -1173,9 +1172,9 @@ describe('StreamEngine', () => {
     const engine = new StreamEngine(director);
     const { stream } = getDefaultStreamPersistence();
     stream.playbackSettings = {
+      ...stream.playbackSettings!,
       pausedPlayBehavior: 'selection-aware',
       runningEditOrphanPolicy: 'let-finish',
-      runningEditOrphanFadeOutMs: 500,
     };
     stream.sceneOrder = ['scene-1', 'scene-2'];
     stream.scenes['scene-1'].subCueOrder = ['vis'];
@@ -1767,9 +1766,11 @@ describe('StreamEngine', () => {
     engine.applyTransport({ type: 'play', sceneId: 'b2', source: 'scene-row' });
 
     const state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
 
     expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
     expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.copiedFromThreadInstanceId)).toBe(true);
+    expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:b')).toBe(true);
   });
 
   it('completed thread relaunch creates a copied parallel instance', () => {
@@ -1787,8 +1788,34 @@ describe('StreamEngine', () => {
     engine.applyTransport({ type: 'back-to-first' });
 
     const state = engine.applyTransport({ type: 'play', sceneId: 'a', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
 
     expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:a' && instance.copiedFromThreadInstanceId)).toBe(true);
+    expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:a')).toBe(true);
+  });
+
+  it('can summarize canonical scene state from the first instance when copies exist', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 1 }, v3: { id: 'v3', durationSeconds: 1 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.playbackSettings = { ...stream.playbackSettings!, canonicalSceneStateSummary: 'first-instance' };
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_200);
+    engine.applyTransport({ type: 'back-to-first' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'a', source: 'scene-row' });
+
+    expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:a' && instance.copiedFromThreadInstanceId)).toBe(true);
+    expect(state.runtime?.sceneStates.a?.status).toBe('complete');
+    expect(state.runtime?.activeVisualSubCues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sceneId: 'a', visualId: 'v1' })]),
+    );
   });
 
   it('at-timecode root launch creates a side timeline outside main duration', () => {
@@ -1823,5 +1850,212 @@ describe('StreamEngine', () => {
     expect(state.playbackTimeline.expectedDurationMs).toBe(5_000);
     expect(Object.values(state.runtime?.timelineInstances ?? {})).toMatchObject([{ kind: 'parallel' }]);
     expect(state.runtime?.mainTimelineId).toBeUndefined();
+    expect(state.runtime?.sceneStates.side?.status).toBe('running');
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'side', visualId: 'v2', streamStartMs: 20_000 }]);
+  });
+
+  it('running launch of an at-timecode root starts the side thread immediately', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.sceneOrder = ['main', 'side'];
+    stream.scenes = {
+      main: {
+        id: 'main',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] } },
+      },
+      side: {
+        id: 'side',
+        trigger: { type: 'at-timecode', timecodeMs: 20_000 },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: ['vis'],
+        subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v2', targets: [{ displayId: 'd1' }] } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'main', source: 'global' });
+    vi.setSystemTime(2_500);
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'side', source: 'scene-row' });
+
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+    expect(state.runtime?.sceneStates.side?.status).toBe('running');
+    expect(state.runtime?.activeVisualSubCues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sceneId: 'side', visualId: 'v2', streamStartMs: 1500 })]),
+    );
+  });
+
+  it('global pause freezes main and parallel timeline cursors independently', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    vi.setSystemTime(3_500);
+
+    const paused = engine.applyTransport({ type: 'pause' });
+    const timelines = Object.values(paused.runtime?.timelineInstances ?? {});
+    const main = timelines.find((timeline) => timeline.kind === 'main');
+    const parallel = timelines.find((timeline) => timeline.kind === 'parallel');
+
+    expect(paused.runtime?.status).toBe('paused');
+    expect(main?.status).toBe('paused');
+    expect(parallel?.status).toBe('paused');
+    expect(main?.pausedAtMs).toBe(2500);
+    expect(parallel?.pausedAtMs).toBe(1500);
+  });
+
+  it('multi-timeline Play resumes all paused clocks by default', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    vi.setSystemTime(3_000);
+    engine.applyTransport({ type: 'pause' });
+
+    const resumed = engine.applyTransport({ type: 'play', source: 'global' });
+
+    expect(Object.values(resumed.runtime?.timelineInstances ?? {}).every((timeline) => timeline.status === 'running')).toBe(true);
+  });
+
+  it('focused-only multi-timeline Play leaves unrelated paused timelines paused', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.playbackSettings = { ...stream.playbackSettings!, multiTimelineResumeBehavior: 'launch-focused-cue-only' };
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    vi.setSystemTime(3_000);
+    engine.applyTransport({ type: 'pause' });
+
+    const resumed = engine.applyTransport({ type: 'play', source: 'global' });
+    const timelines = Object.values(resumed.runtime?.timelineInstances ?? {});
+
+    expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toMatchObject([{ status: 'running' }]);
+    expect(timelines.filter((timeline) => timeline.kind === 'main')).toMatchObject([{ status: 'paused' }]);
+  });
+
+  it('Back to first clears parallel timelines and restores default main order', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    engine.applyTransport({ type: 'pause' });
+
+    const reset = engine.applyTransport({ type: 'back-to-first' });
+    const timelines = Object.values(reset.runtime?.timelineInstances ?? {});
+    const main = reset.runtime?.mainTimelineId ? reset.runtime.timelineInstances?.[reset.runtime.mainTimelineId] : undefined;
+    const orderedThreadIds = main?.orderedThreadInstanceIds.map((id) => reset.runtime?.threadInstances?.[id]?.canonicalThreadId);
+
+    expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toHaveLength(0);
+    expect(orderedThreadIds).toEqual(['thread:a', 'thread:b', 'thread:c']);
+    expect(reset.runtime?.playbackFocusSceneId).toBe('a');
+  });
+
+  it('main rail seek uses reordered runtime main duration and leaves parallel timelines running by default', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+
+    const seeked = engine.applyTransport({ type: 'seek', timeMs: 25_000 });
+    const parallel = Object.values(seeked.runtime?.timelineInstances ?? {}).find((timeline) => timeline.kind === 'parallel');
+
+    expect(seeked.runtime?.currentStreamMs).toBe(20_000);
+    expect(seeked.runtime?.expectedDurationMs).toBe(20_000);
+    expect(parallel?.status).toBe('running');
+  });
+
+  it('follow-relative seek applies the main seek delta to parallel timelines with clamping', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.playbackSettings = { ...stream.playbackSettings!, parallelTimelineSeekBehavior: 'follow-relative-seek' };
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+
+    const seeked = engine.applyTransport({ type: 'seek', timeMs: 15_000 });
+    const parallel = Object.values(seeked.runtime?.timelineInstances ?? {}).find((timeline) => timeline.kind === 'parallel');
+
+    expect(parallel?.cursorMs).toBe(14_000);
+  });
+
+  it('seek can pause or clear parallel timelines by policy', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const pauseEngine = new StreamEngine(director);
+    const { stream: pauseStream } = getDefaultStreamPersistence();
+    pauseStream.playbackSettings = { ...pauseStream.playbackSettings!, parallelTimelineSeekBehavior: 'pause-parallel' };
+    installThreeThreadStream(pauseStream);
+    pauseEngine.loadFromShow({ stream: pauseStream });
+    pauseEngine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    pauseEngine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const paused = pauseEngine.applyTransport({ type: 'seek', timeMs: 5000 });
+    expect(Object.values(paused.runtime?.timelineInstances ?? {}).find((timeline) => timeline.kind === 'parallel')?.status).toBe('paused');
+
+    const clearEngine = new StreamEngine(director);
+    const { stream: clearStream } = getDefaultStreamPersistence();
+    clearStream.playbackSettings = { ...clearStream.playbackSettings!, parallelTimelineSeekBehavior: 'clear-parallel' };
+    installThreeThreadStream(clearStream);
+    clearEngine.loadFromShow({ stream: clearStream });
+    clearEngine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    clearEngine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const cleared = clearEngine.applyTransport({ type: 'seek', timeMs: 5000 });
+    expect(Object.values(cleared.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(0);
   });
 });

@@ -545,9 +545,15 @@ export type PersistedStreamConfig = {
 };
 
 export type StreamPausedPlayBehavior = 'selection-aware' | 'preserve-paused-cursor';
+export type StreamMultiTimelineResumeBehavior = 'resume-all-clocks' | 'launch-focused-cue-only';
+export type StreamParallelTimelineSeekBehavior = 'leave-running' | 'follow-relative-seek' | 'pause-parallel' | 'clear-parallel';
+export type StreamCanonicalSceneStateSummary = 'last-instance' | 'first-instance';
 
 export type StreamPlaybackSettings = {
   pausedPlayBehavior: StreamPausedPlayBehavior;
+  multiTimelineResumeBehavior: StreamMultiTimelineResumeBehavior;
+  parallelTimelineSeekBehavior: StreamParallelTimelineSeekBehavior;
+  canonicalSceneStateSummary: StreamCanonicalSceneStateSummary;
   runningEditOrphanPolicy: 'fade-out' | 'let-finish';
   runningEditOrphanFadeOutMs: number;
 };
