@@ -439,6 +439,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       );
       sourceRuntime.sourcePanner.pan.value = clampAudioPan(evaluateAudioSubCuePan(selection.pan, selection.runtimePanAutomation, localMs));
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
+      sourceRuntime.element.loop = canUseNativeAudioLoop(source);
       updatePitchShiftNode(sourceRuntime.pitchNode, source.runtimePitchShiftSemitones);
       if (transportMode === 'fading-out') {
         void runtime.context.resume();
@@ -941,6 +942,23 @@ export function getRuntimeAudioTarget(source: AudioSourceState, directorSeconds:
     seconds: Math.max(sourceStartSeconds, limited.seconds),
     audible: limited.audible && playTimeAudible && rangeAudible,
   };
+}
+
+function canUseNativeAudioLoop(source: AudioSourceState): boolean {
+  const runtimeSource = source as AudioSourceState & {
+    runtimeLoop?: LoopState;
+    runtimeSourceStartSeconds?: number;
+    runtimeSourceEndSeconds?: number;
+  };
+  const loop = runtimeSource.runtimeLoop;
+  if (!loop?.enabled || runtimeSource.runtimeSourceStartSeconds !== undefined || runtimeSource.runtimeSourceEndSeconds !== undefined) {
+    return false;
+  }
+  const duration = source.durationSeconds;
+  if (duration === undefined || !Number.isFinite(duration) || duration <= 0) {
+    return false;
+  }
+  return Math.abs(loop.startSeconds) < 0.001 && loop.endSeconds !== undefined && Math.abs(loop.endSeconds - duration) < 0.02;
 }
 
 function updatePitchShiftNode(node: AudioNode | undefined, semitones: number | undefined): void {

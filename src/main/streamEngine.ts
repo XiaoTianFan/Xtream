@@ -2016,6 +2016,7 @@ export class StreamEngine extends EventEmitter {
     const schedule = this.playbackTimeline;
     const stream = this.playbackStream;
     const currentMs = this.getRuntimeStreamMs(now);
+    const projectionMs = this.getRuntimeProjectionMs(now);
     this.runtime.currentStreamMs = currentMs;
     this.runtime.expectedDurationMs = this.runtimeMainDurationMs();
     this.runtime.timelineNotice = schedule.notice;
@@ -2367,8 +2368,8 @@ export class StreamEngine extends EventEmitter {
         this.applyStreamAutoPauseAfterManualTail(currentMs);
       }
     }
-    this.pruneExpiredOrphans(currentMs);
-    this.collectTimelineInstanceActiveSubCues(currentMs, activeAudio, activeVisual);
+    this.pruneExpiredOrphans(projectionMs);
+    this.collectTimelineInstanceActiveSubCues(projectionMs, activeAudio, activeVisual);
     this.applyAuthoringErrorOverlay(sceneStates);
     this.runtime.sceneStates = sceneStates;
     this.runtime.activeAudioSubCues = [...activeAudio, ...this.orphanedAudioSubCues];
@@ -2416,6 +2417,21 @@ export class StreamEngine extends EventEmitter {
     const detachedClock = this.detachedMainCursorFallback(Number.NaN, atWallTimeMs);
     if (Number.isFinite(detachedClock)) {
       return detachedClock;
+    }
+    if (this.runtime.status === 'running' || this.runtime.status === 'preloading') {
+      if (this.manualTailResumeIdleHold) {
+        return this.runtime.offsetStreamMs ?? this.runtime.currentStreamMs ?? 0;
+      }
+      const rate = this.getGlobalRate();
+      const anchor = this.runtime.originWallTimeMs ?? atWallTimeMs;
+      return (this.runtime.offsetStreamMs ?? 0) + (atWallTimeMs - anchor) * rate;
+    }
+    return this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+  }
+
+  private getRuntimeProjectionMs(atWallTimeMs = Date.now()): number {
+    if (!this.runtime) {
+      return 0;
     }
     if (this.runtime.status === 'running' || this.runtime.status === 'preloading') {
       if (this.manualTailResumeIdleHold) {
@@ -2583,6 +2599,8 @@ export class StreamEngine extends EventEmitter {
     runtimeInstanceId?: string,
   ): void {
     const scenePhase = this.getSceneLoopPhase(scene, sceneStartMs, currentMs);
+    const scenePassDurationMs = this.getScenePassDurationMs(scene);
+    const sceneLoopTiming = scenePassDurationMs === undefined ? undefined : resolveLoopTiming(scene.loop, scenePassDurationMs);
     for (const subCueId of scene.subCueOrder) {
       const sub = scene.subCues[subCueId];
       if (!sub || sub.kind === 'control') {
@@ -2602,7 +2620,16 @@ export class StreamEngine extends EventEmitter {
         continue;
       }
       const localEndMs = subTiming.totalDurationMs;
-      const mediaLoop = this.createSubCueMediaLoop(sub, baseDurationMs);
+      const sceneLoopAudio =
+        sub.kind === 'audio' &&
+        sceneLoopTiming?.enabled === true &&
+        sceneLoopTiming.loopStartMs === 0 &&
+        scenePassDurationMs !== undefined &&
+        localStartMs === 0 &&
+        localEndMs !== undefined &&
+        Math.abs(localEndMs - sceneLoopTiming.loopEndMs) < 1;
+      const cueStreamStartMs = sceneLoopAudio ? sceneStartMs : scenePhase.phaseZeroStreamMs;
+      const mediaLoop = this.createSubCueMediaLoop(sub, baseDurationMs) ?? (sceneLoopAudio ? this.createFullAudioSubCueMediaLoop(sub, localEndMs) : undefined);
       if (sub.kind === 'audio') {
         for (const outputId of sub.outputIds) {
           activeAudio.push({
@@ -2611,7 +2638,7 @@ export class StreamEngine extends EventEmitter {
             subCueId,
             audioSourceId: sub.audioSourceId,
             outputId,
-            streamStartMs: scenePhase.phaseZeroStreamMs,
+            streamStartMs: cueStreamStartMs,
             localStartMs,
             localEndMs,
             sourceStartMs: sub.sourceStartMs,
@@ -2958,6 +2985,22 @@ export class StreamEngine extends EventEmitter {
       enabled: true,
       startSeconds: (sourceStartMs + loopStartMs * rate) / 1000,
       endSeconds: (sourceStartMs + loopEndMs * rate) / 1000,
+    };
+  }
+
+  private createFullAudioSubCueMediaLoop(sub: PersistedSubCueConfig, durationMs: number): LoopState | undefined {
+    if (sub.kind !== 'audio' || durationMs <= 0) {
+      return undefined;
+    }
+    const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
+    const sourceStartMs = normalizeAudioSourceRange({
+      sourceStartMs: sub.sourceStartMs,
+      sourceEndMs: sub.sourceEndMs,
+    }).startMs;
+    return {
+      enabled: true,
+      startSeconds: sourceStartMs / 1000,
+      endSeconds: (sourceStartMs + durationMs * rate) / 1000,
     };
   }
 

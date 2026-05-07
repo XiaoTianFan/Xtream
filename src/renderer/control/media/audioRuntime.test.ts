@@ -270,6 +270,21 @@ describe('computeAudioGraphSignature', () => {
   });
 });
 
+describe('syncVirtualAudioGraph', () => {
+  it('enables native looping for full-range runtime audio loops', () => {
+    const state = graphTestState();
+    state.audioSources.s1 = {
+      ...state.audioSources.s1,
+      durationSeconds: 4,
+      runtimeLoop: { enabled: true, startSeconds: 0, endSeconds: 4 },
+    } as unknown as DirectorState['audioSources'][string];
+
+    syncVirtualAudioGraph(state);
+
+    expect(document.querySelector('audio')?.loop).toBe(true);
+  });
+});
+
 describe('getRuntimeAudioTarget', () => {
   it('uses selected Stream source range for target time and audible gating', () => {
     const source = {

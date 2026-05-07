@@ -2396,6 +2396,39 @@ describe('StreamEngine', () => {
     expect(state.runtime?.activeAudioSubCues?.find((cue) => cue.sceneId === 'loop')?.runtimeInstanceId).toBeDefined();
   });
 
+  it('keeps a full-pass audio cue anchored across infinite scene loop iterations', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      audioSources: { 'a-loop': { id: 'a-loop', durationSeconds: 5 } } as DirectorState['audioSources'],
+      visuals: { 'v-b': { id: 'v-b', durationSeconds: 5 }, 'v-c': { id: 'v-c', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopWithTwoMainThreads(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.advanceTimersByTime(2_500);
+
+    const firstPassCue = engine.getPublicState().runtime?.activeAudioSubCues?.find((cue) => cue.sceneId === 'loop');
+    expect(firstPassCue).toMatchObject({
+      streamStartMs: 0,
+      localStartMs: 0,
+      localEndMs: 5_000,
+      mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 5 },
+    });
+
+    vi.advanceTimersByTime(3_000);
+
+    const secondPassCue = engine.getPublicState().runtime?.activeAudioSubCues?.find((cue) => cue.sceneId === 'loop');
+    expect(secondPassCue).toMatchObject({
+      streamStartMs: 0,
+      localStartMs: 0,
+      localEndMs: 5_000,
+      mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 5 },
+    });
+  });
+
   it('continues from B to C while preserving a single detached infinite loop instance and frozen main pause clock', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
