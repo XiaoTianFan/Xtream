@@ -183,6 +183,13 @@ export class StreamEngine extends EventEmitter {
         }
         break;
       }
+      case 'reset-flow-layout': {
+        delete this.stream.flowViewport;
+        for (const scene of Object.values(this.stream.scenes)) {
+          delete scene.flow;
+        }
+        break;
+      }
       case 'create-scene': {
         const sceneId = newId('scene') as SceneId;
         const scene = createEmptyUserScene(sceneId, `Scene ${this.stream.sceneOrder.length + 1}`);

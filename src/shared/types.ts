@@ -806,6 +806,7 @@ export type StreamCommand =
 
 export type StreamEditCommand =
   | { type: 'update-stream'; label?: string; playbackSettings?: Partial<StreamPlaybackSettings>; flowViewport?: PersistedStreamConfig['flowViewport'] }
+  | { type: 'reset-flow-layout' }
   | { type: 'create-scene'; afterSceneId?: SceneId; trigger?: SceneTrigger; flow?: PersistedSceneConfig['flow'] }
   | { type: 'update-scene'; sceneId: SceneId; update: Partial<PersistedSceneConfig> }
   | { type: 'duplicate-scene'; sceneId: SceneId }

@@ -3,6 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
+import type { StreamWorkspacePaneContext } from './workspacePane';
 
 vi.mock('../shell/elements', () => ({
   elements: {
@@ -78,20 +79,13 @@ vi.mock('./streamHeader', () => ({
   syncStreamHeaderRuntime: vi.fn(),
 }));
 
-vi.mock('./workspacePane', () => ({
-  renderStreamWorkspacePane: vi.fn((panel, _stream, ctx) => {
-    const label = document.createElement('span');
-    label.textContent = 'STREAM WORKSPACE';
-    const flow = document.createElement('button');
-    flow.type = 'button';
-    flow.dataset.testModeFlow = 'true';
-    flow.addEventListener('click', () => {
-      ctx.setMode('flow');
-      ctx.requestRender();
-    });
-    panel.replaceChildren(label, flow);
-  }),
-}));
+vi.mock('./workspacePane', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./workspacePane')>();
+  return {
+    ...actual,
+    renderStreamWorkspacePane: vi.fn(actual.renderStreamWorkspacePane),
+  };
+});
 
 vi.mock('./workspacePaneSignature', () => ({
   createStreamWorkspacePaneSignature: vi.fn(() => 'workspace'),
@@ -107,11 +101,33 @@ vi.mock('./streamMixerBottomRedrawDefer', () => ({
   shouldDeferStreamMixerBottomPaneRedraw: vi.fn(() => false),
 }));
 
+vi.mock('./listMode', () => ({
+  scenesExplicitlyFollowing: vi.fn(() => []),
+  createStreamListMode: vi.fn((_stream, ctx) => {
+    const root = document.createElement('div');
+    root.dataset.testMode = ctx.mode;
+    root.textContent = 'STREAM WORKSPACE list';
+    return root;
+  }),
+}));
+
 vi.mock('./flowMode', () => ({
+  createStreamFlowMode: vi.fn((_stream, ctx) => {
+    const root = document.createElement('div');
+    root.dataset.testMode = ctx.mode;
+    root.textContent = 'STREAM WORKSPACE flow';
+    return root;
+  }),
   syncStreamFlowModeRuntimeChrome: vi.fn(),
 }));
 
 vi.mock('./ganttMode', () => ({
+  createStreamGanttMode: vi.fn((_stream, ctx) => {
+    const root = document.createElement('div');
+    root.dataset.testMode = ctx.mode;
+    root.textContent = 'STREAM WORKSPACE gantt';
+    return root;
+  }),
   syncStreamGanttRuntimeChrome: vi.fn(),
 }));
 
@@ -217,6 +233,7 @@ describe('createStreamSurfaceController state hydration', () => {
       stream: {
         onState: vi.fn(() => () => undefined),
         getState: vi.fn(() => Promise.resolve(streamPublic())),
+        transport: vi.fn(),
       },
     } as unknown as typeof window.xtream;
   });
@@ -324,6 +341,7 @@ describe('createStreamSurfaceController state hydration', () => {
     const { elements } = await import('../shell/elements');
     const { createStreamSurfaceController } = await import('./streamSurface');
     const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { createStreamFlowMode } = await import('./flowMode');
     const controller = createStreamSurfaceController({
       getAudioDevices: () => [],
       getDisplayMonitors: () => [],
@@ -338,8 +356,69 @@ describe('createStreamSurfaceController state hydration', () => {
 
     controller.render(director());
     vi.mocked(renderStreamWorkspacePane).mockClear();
-    elements.surfacePanel.querySelector<HTMLButtonElement>('[data-test-mode-flow="true"]')?.click();
+    vi.mocked(createStreamFlowMode).mockClear();
+    [...elements.surfacePanel.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === 'Flow')
+      ?.click();
 
     expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+    expect(createStreamFlowMode).toHaveBeenCalledTimes(1);
+    expect(elements.surfacePanel.querySelector<HTMLElement>('[data-test-mode]')?.dataset.testMode).toBe('flow');
+    expect(window.xtream.stream.transport).not.toHaveBeenCalled();
+  });
+
+  it('does not let a runtime-only update bypass an invalidated workspace mode switch', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    const firstContext = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    firstContext?.setMode('flow');
+    controller.applyStreamState(runningStreamPublic(500));
+
+    expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the workspace invalidated if Flow rendering is interrupted during running playback', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { createStreamFlowMode } = await import('./flowMode');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    const firstContext = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    vi.mocked(createStreamFlowMode).mockImplementationOnce(() => {
+      throw new Error('flow render interrupted');
+    });
+
+    expect(() => firstContext?.setMode('flow')).toThrow('flow render interrupted');
+
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    controller.applyStreamState(runningStreamPublic(500));
+
+    expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createStreamFlowMode).mock.calls.at(-1)?.[1].mode).toBe('flow');
   });
 });

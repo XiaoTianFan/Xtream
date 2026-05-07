@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+
+import { describe, expect, it, vi } from 'vitest';
 import { getDefaultStreamPersistence } from '../../../shared/streamWorkspace';
 import type { CalculatedStreamTimeline, StreamEnginePublicState } from '../../../shared/types';
-import { createGlobalStreamPlayCommand, createStreamRailSegmentStyles, deriveStreamTransportUiState, deriveStreamWorkspaceLiveStateLabel } from './streamHeader';
+import {
+  createGlobalStreamPlayCommand,
+  createStreamRailSegmentStyles,
+  deriveStreamTransportUiState,
+  deriveStreamWorkspaceLiveStateLabel,
+  renderStreamHeader,
+  syncStreamHeaderRuntime,
+} from './streamHeader';
 
 function timeline(
   status: CalculatedStreamTimeline['status'],
@@ -182,6 +191,63 @@ describe('deriveStreamTransportUiState', () => {
 
     expect(state.playDisabled).toBe(true);
     expect(state.playDisabledReason).toContain('Patch');
+  });
+});
+
+describe('syncStreamHeaderRuntime', () => {
+  it('refreshes transport disabled states during runtime-only updates', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const headerEl = document.createElement('header');
+    const runningRuntime: StreamEnginePublicState['runtime'] = {
+      status: 'running',
+      sceneStates: {},
+      originWallTimeMs: 0,
+      offsetStreamMs: 0,
+    };
+
+    renderStreamHeader({
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: runningRuntime,
+      playbackTimeline: playableTimeline,
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const back = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="back"]')!;
+    const pause = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="pause"]')!;
+    expect(back.disabled).toBe(true);
+    expect(pause.disabled).toBe(false);
+
+    syncStreamHeaderRuntime(
+      headerEl,
+      { status: 'paused', sceneStates: {}, currentStreamMs: 1000 },
+      stream,
+      playableTimeline,
+      'scene-1',
+      undefined,
+    );
+
+    expect(back.disabled).toBe(false);
+    expect(pause.disabled).toBe(true);
+    expect(headerEl.querySelector<HTMLElement>('[data-stream-live-state="true"]')?.textContent).toBe('PAUSED');
   });
 });
 

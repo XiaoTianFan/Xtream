@@ -397,7 +397,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (!mounted || !currentState) {
       return;
     }
-    if (canSyncRuntimeOnly(previous, state)) {
+    if (canSyncRuntimeOnly(previous, state) && lastWorkspacePaneSignature !== '') {
       syncRuntimeDom();
     } else {
       renderCurrent();
@@ -424,8 +424,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       playbackTimelineStatus: streamState.playbackTimeline.status,
     });
     if (lastWorkspacePaneSignature !== nextWorkspaceSig) {
-      lastWorkspacePaneSignature = nextWorkspaceSig;
       renderWorkspacePane();
+      lastWorkspacePaneSignature = nextWorkspaceSig;
     } else {
       const workspace = requireRef('workspace');
       syncWorkspaceSceneSelection(workspace, playbackFocusSceneId, sceneEditSceneId);
@@ -707,10 +707,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       refreshSceneSelectionUi,
       mode,
       setMode: (m) => {
-        if (mode !== m) {
-          lastWorkspacePaneSignature = '';
+        if (mode === m) {
+          return;
         }
         mode = m;
+        lastWorkspacePaneSignature = '';
+        renderCurrent();
       },
     };
     renderStreamWorkspacePane(panel, stream, ctx);

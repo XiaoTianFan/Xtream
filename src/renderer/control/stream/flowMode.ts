@@ -75,7 +75,7 @@ function flowRectPatch(rect: FlowRect): FlowRect {
   };
 }
 
-function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjection): HTMLElement {
+function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjection, ctx: StreamFlowModeContext): HTMLElement {
   const toolbar = document.createElement('div');
   toolbar.className = 'stream-flow-toolbar';
   const zoomOut = createButton('', 'icon-button', () => void canvas.zoomBy(0.85));
@@ -84,8 +84,10 @@ function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjecti
   decorateIconButton(zoomIn, 'FastForward', 'Zoom in');
   const fit = createButton('', 'icon-button', () => void canvas.fitToProjection(getProjection()));
   decorateIconButton(fit, 'Maximize2', 'Fit to content');
-  const reset = createButton('', 'icon-button', () => void canvas.resetView());
-  decorateIconButton(reset, 'RefreshCcw', 'Reset view');
+  const reset = createButton('', 'icon-button', () => {
+    void window.xtream.stream.edit({ type: 'reset-flow-layout' }).then(() => ctx.requestRender());
+  });
+  decorateIconButton(reset, 'RefreshCcw', 'Reset layout');
   toolbar.append(zoomOut, zoomIn, fit, reset);
   return toolbar;
 }
@@ -390,7 +392,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
       void window.xtream.stream.edit({ type: 'update-stream', flowViewport });
     },
   });
-  root.prepend(createToolbar(canvas, () => projection));
+  root.prepend(createToolbar(canvas, () => projection, ctx));
   canvas.setOverlayBounds(projection.bounds);
   renderCards({ stream, ctx, projection, canvas, root });
   renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');

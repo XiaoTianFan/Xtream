@@ -153,6 +153,26 @@ describe('StreamEngine', () => {
     expect(engine.isStreamPlaybackActive()).toBe(false);
   });
 
+  it('resets persisted Flow layout and viewport', () => {
+    const director = createDirector();
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.flowViewport = { x: -120, y: 64, zoom: 0.75 };
+    stream.scenes['scene-1'].flow = { x: 320, y: 180, width: 240, height: 150 };
+    engine.loadFromShow({ stream });
+    const afterCreate = engine.applyEdit({
+      type: 'create-scene',
+      flow: { x: 620, y: 260, width: 260, height: 160 },
+    });
+    const secondSceneId = afterCreate.stream.sceneOrder[1]!;
+
+    const reset = engine.applyEdit({ type: 'reset-flow-layout' });
+
+    expect(reset.stream.flowViewport).toBeUndefined();
+    expect(reset.stream.scenes['scene-1'].flow).toBeUndefined();
+    expect(reset.stream.scenes[secondSceneId].flow).toBeUndefined();
+  });
+
   it('jump-next completes current scene and runs the next', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],

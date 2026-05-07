@@ -1101,11 +1101,33 @@
 }
 
 .stream-gantt-root {
+  position: relative;
   display: grid;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--surface-low);
+}
+
+.stream-gantt-toolbar {
+  position: absolute;
+  z-index: 6;
+  top: var(--compact);
+  right: var(--compact);
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-low);
+}
+
+.stream-gantt-toolbar .icon-button {
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
 }
 
 .stream-gantt-body {
@@ -1114,7 +1136,7 @@
   gap: 0.45rem;
   min-height: 0;
   overflow: auto;
-  padding: var(--pane-padding);
+  padding: calc(var(--pane-padding) + 1.9rem) var(--pane-padding) var(--pane-padding);
 }
 
 .stream-gantt-body--centered {

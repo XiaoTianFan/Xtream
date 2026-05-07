@@ -1,13 +1,35 @@
 import { formatTimecode } from '../../../shared/timeline';
 import type { PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
+import { createButton } from '../shared/dom';
+import { decorateIconButton } from '../shared/icons';
 import { deriveStreamGanttProjection, type StreamGanttBarProjection, type StreamGanttLaneProjection } from './ganttProjection';
 
 export type StreamGanttModeContext = {
   streamState: StreamEnginePublicState | undefined;
 };
 
+const DEFAULT_GANTT_ZOOM = 1;
+const MIN_GANTT_ZOOM = 0.02;
+const MAX_GANTT_ZOOM = 4;
+const GANTT_WHEEL_ZOOM_FACTOR = 1.12;
+
 function statusLabel(status: string): string {
   return status.replace('-', ' ');
+}
+
+function clampZoom(value: number, minZoom = MIN_GANTT_ZOOM): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GANTT_ZOOM;
+  }
+  return Math.max(minZoom, Math.min(MAX_GANTT_ZOOM, value));
+}
+
+function getRootZoom(root: HTMLElement): number {
+  return clampZoom(Number(root.dataset.ganttZoom ?? DEFAULT_GANTT_ZOOM), getMinimumGanttZoom(root));
+}
+
+function px(value: number): string {
+  return `${Math.round(value)}px`;
 }
 
 function createEmptyState(): HTMLElement {
@@ -65,6 +87,8 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
   const row = document.createElement('section');
   row.className = `stream-gantt-lane is-${lane.kind} status-${lane.status}`;
   row.dataset.timelineId = lane.id;
+  row.dataset.baseMinWidthPx = String(lane.minWidthPx);
+  row.dataset.baseTrackWidthPx = String(lane.trackMinWidthPx);
   row.style.minWidth = `${lane.minWidthPx}px`;
 
   const header = document.createElement('div');
@@ -81,6 +105,7 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
 
   const track = document.createElement('div');
   track.className = 'stream-gantt-track';
+  track.dataset.baseTrackWidthPx = String(lane.trackMinWidthPx);
   track.style.minWidth = `${lane.trackMinWidthPx}px`;
   track.style.setProperty('--stream-gantt-cursor', `${lane.cursorPercent.toFixed(3)}%`);
   for (const bar of lane.bars) {
@@ -94,6 +119,112 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
   return row;
 }
 
+function measureGanttFit(root: HTMLElement): { zoom: number; fixedLaneWidth: number } | undefined {
+  const body = root.querySelector<HTMLElement>('.stream-gantt-body');
+  if (!body) {
+    return undefined;
+  }
+  let longestBaseTrackWidth = 0;
+  let fixedLaneWidth = 0;
+  for (const lane of root.querySelectorAll<HTMLElement>('.stream-gantt-lane')) {
+    const baseMinWidth = Number(lane.dataset.baseMinWidthPx);
+    const baseTrackWidth = Number(lane.dataset.baseTrackWidthPx);
+    if (!Number.isFinite(baseMinWidth) || !Number.isFinite(baseTrackWidth)) {
+      continue;
+    }
+    longestBaseTrackWidth = Math.max(longestBaseTrackWidth, baseTrackWidth);
+    fixedLaneWidth = Math.max(fixedLaneWidth, baseMinWidth - baseTrackWidth);
+  }
+  if (longestBaseTrackWidth <= 0) {
+    return undefined;
+  }
+  const availableTrackWidth = Math.max(1, body.clientWidth - fixedLaneWidth);
+  return {
+    zoom: availableTrackWidth / longestBaseTrackWidth,
+    fixedLaneWidth,
+  };
+}
+
+function getMinimumGanttZoom(root: HTMLElement): number {
+  const fit = measureGanttFit(root);
+  if (!fit) {
+    return MIN_GANTT_ZOOM;
+  }
+  return Math.max(MIN_GANTT_ZOOM, Math.min(DEFAULT_GANTT_ZOOM, fit.zoom));
+}
+
+function applyGanttZoom(root: HTMLElement, zoom = getRootZoom(root)): void {
+  const nextZoom = clampZoom(zoom, getMinimumGanttZoom(root));
+  root.dataset.ganttZoom = String(nextZoom);
+  for (const lane of root.querySelectorAll<HTMLElement>('.stream-gantt-lane')) {
+    const baseMinWidth = Number(lane.dataset.baseMinWidthPx);
+    const baseTrackWidth = Number(lane.dataset.baseTrackWidthPx);
+    if (!Number.isFinite(baseMinWidth) || !Number.isFinite(baseTrackWidth)) {
+      continue;
+    }
+    const fixedLaneWidth = Math.max(0, baseMinWidth - baseTrackWidth);
+    const zoomedTrackWidth = baseTrackWidth * nextZoom;
+    lane.style.minWidth = px(fixedLaneWidth + zoomedTrackWidth);
+    const track = lane.querySelector<HTMLElement>('.stream-gantt-track');
+    if (track) {
+      track.style.minWidth = px(zoomedTrackWidth);
+    }
+  }
+}
+
+function setFitButtonEnabled(root: HTMLElement): void {
+  const fit = root.querySelector<HTMLButtonElement>('.stream-gantt-fit-button');
+  if (fit) {
+    fit.disabled = root.querySelector('.stream-gantt-lane') === null;
+  }
+}
+
+function fitGanttToContent(root: HTMLElement): void {
+  const body = root.querySelector<HTMLElement>('.stream-gantt-body');
+  if (!body) {
+    return;
+  }
+  const fit = measureGanttFit(root);
+  if (!fit) {
+    return;
+  }
+  applyGanttZoom(root, fit.zoom);
+  body.scrollLeft = 0;
+}
+
+function createToolbar(root: HTMLElement): HTMLElement {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'stream-gantt-toolbar';
+  const fit = createButton('', 'icon-button stream-gantt-fit-button', () => fitGanttToContent(root));
+  decorateIconButton(fit, 'Maximize2', 'Fit to content');
+  toolbar.append(fit);
+  return toolbar;
+}
+
+function handleGanttWheel(root: HTMLElement, event: WheelEvent): void {
+  if (!event.ctrlKey) {
+    return;
+  }
+  event.preventDefault();
+  const body = event.currentTarget instanceof HTMLElement ? event.currentTarget : root.querySelector<HTMLElement>('.stream-gantt-body');
+  if (!body) {
+    return;
+  }
+  const previousZoom = getRootZoom(root);
+  const nextZoom = clampZoom(
+    previousZoom * (event.deltaY < 0 ? GANTT_WHEEL_ZOOM_FACTOR : 1 / GANTT_WHEEL_ZOOM_FACTOR),
+    getMinimumGanttZoom(root),
+  );
+  if (nextZoom === previousZoom) {
+    return;
+  }
+  const bounds = body.getBoundingClientRect();
+  const pointerX = Math.max(0, Math.min(body.clientWidth || bounds.width, event.clientX - bounds.left));
+  const logicalX = (body.scrollLeft + pointerX) / previousZoom;
+  applyGanttZoom(root, nextZoom);
+  body.scrollLeft = Math.max(0, logicalX * nextZoom - pointerX);
+}
+
 function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState | undefined): void {
   const body = root.querySelector<HTMLElement>('.stream-gantt-body');
   if (!body) {
@@ -102,6 +233,7 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
   if (!streamState) {
     body.classList.add('stream-gantt-body--centered');
     body.replaceChildren(createEmptyState());
+    setFitButtonEnabled(root);
     return;
   }
   const projection = deriveStreamGanttProjection({
@@ -112,18 +244,23 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
   if (!projection.hasRuntime || projection.lanes.length === 0) {
     body.classList.add('stream-gantt-body--centered');
     body.replaceChildren(createEmptyState());
+    setFitButtonEnabled(root);
     return;
   }
   body.classList.toggle('stream-gantt-body--centered', projection.lanes.length <= 4);
   body.replaceChildren(...projection.lanes.map(createLane));
+  applyGanttZoom(root);
+  setFitButtonEnabled(root);
 }
 
 export function createStreamGanttMode(_stream: PersistedStreamConfig, ctx: StreamGanttModeContext): HTMLElement {
   const root = document.createElement('div');
   root.className = 'stream-gantt-root';
+  root.dataset.ganttZoom = String(DEFAULT_GANTT_ZOOM);
   const body = document.createElement('div');
   body.className = 'stream-gantt-body';
-  root.append(body);
+  body.addEventListener('wheel', (event) => handleGanttWheel(root, event), { passive: false });
+  root.append(createToolbar(root), body);
   renderGanttBody(root, ctx.streamState);
   return root;
 }
