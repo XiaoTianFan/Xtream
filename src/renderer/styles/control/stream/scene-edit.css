@@ -483,13 +483,47 @@
 }
 
 .stream-audio-waveform-stage {
+  --waveform-bg: rgba(11, 18, 27, 0.74);
+  --waveform-grid: rgba(255, 255, 255, 0.08);
+  --waveform-placeholder: rgba(174, 196, 215, 0.32);
+  --waveform-text: rgba(226, 235, 242, 0.72);
+  --waveform-peak: rgba(130, 166, 194, 0.72);
+  --waveform-range-fill: rgba(29, 201, 183, 0.11);
+  --waveform-range-line: rgba(29, 201, 183, 0.92);
+  --waveform-fade-fill: rgba(214, 164, 73, 0.19);
+  --waveform-fade-line: rgba(236, 185, 83, 0.95);
+  --waveform-fade-envelope: rgba(236, 185, 83, 0.98);
+  --waveform-level-active: rgba(64, 216, 182, 0.96);
+  --waveform-pan-active: rgba(228, 121, 164, 0.96);
+  --waveform-automation-muted: rgb(210, 220, 226);
+  --waveform-playhead: rgba(255, 255, 255, 0.96);
+  --waveform-label-shadow: rgba(0, 0, 0, 0.65);
+
   position: relative;
   min-width: 0;
   height: 164px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-low) 80%, black);
+  background: var(--waveform-bg);
+}
+
+html[data-theme="light"] .stream-audio-waveform-stage {
+  --waveform-bg: rgba(227, 224, 219, 0.92);
+  --waveform-grid: rgba(70, 77, 82, 0.16);
+  --waveform-placeholder: rgba(88, 104, 112, 0.28);
+  --waveform-text: rgba(61, 58, 54, 0.74);
+  --waveform-peak: rgba(71, 105, 128, 0.62);
+  --waveform-range-fill: rgba(74, 124, 133, 0.13);
+  --waveform-range-line: rgba(42, 105, 116, 0.9);
+  --waveform-fade-fill: rgba(154, 122, 74, 0.18);
+  --waveform-fade-line: rgba(134, 99, 42, 0.92);
+  --waveform-fade-envelope: rgba(134, 99, 42, 0.96);
+  --waveform-level-active: rgba(22, 132, 109, 0.94);
+  --waveform-pan-active: rgba(166, 67, 111, 0.94);
+  --waveform-automation-muted: rgb(70, 77, 82);
+  --waveform-playhead: rgba(33, 31, 29, 0.92);
+  --waveform-label-shadow: rgba(255, 255, 255, 0.75);
 }
 
 .stream-audio-waveform-canvas {
@@ -511,6 +545,11 @@
   padding: 0;
   background: color-mix(in srgb, var(--surface-deep) 76%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, black 20%, transparent);
+}
+
+html[data-theme="light"] .stream-audio-waveform-clear-automation.stream-audio-waveform-button {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-subtle) 72%, transparent);
 }
 
 .stream-audio-waveform-controls {

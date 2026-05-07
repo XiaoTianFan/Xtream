@@ -78,6 +78,50 @@ describe('deriveStreamFlowProjection', () => {
     expect(projection.nodesBySceneId.side.rect.y).toBeLessThan(projection.nodesBySceneId.main.rect.y);
   });
 
+  it('places manual infinite-loop detached roots below the main lane at the first main root x position', () => {
+    const stream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['loop', 'main', 'side'],
+      scenes: {
+        loop: { ...scene('loop', { type: 'manual' }), loop: { enabled: true, iterations: { type: 'infinite' } } },
+        main: visualScene('main', { type: 'manual' }, 'main-visual' as VisualId),
+        side: scene('side', { type: 'at-timecode', timecodeMs: 500 }),
+      },
+    };
+
+    const projection = deriveStreamFlowProjection({ stream, timeline: timeline(stream, { 'main-visual': 1 } as Record<VisualId, number>), directorState: undefined });
+
+    expect(projection.nodesBySceneId.loop.detachedReason).toBe('infinite-loop');
+    expect(projection.nodesBySceneId.loop.rect.x).toBe(projection.nodesBySceneId.main.rect.x);
+    expect(projection.nodesBySceneId.loop.rect.y).toBeGreaterThan(projection.nodesBySceneId.main.rect.y);
+    expect(projection.nodesBySceneId.side.rect.y).toBeLessThan(projection.nodesBySceneId.main.rect.y);
+    expect(projection.mainCurve.points).toHaveLength(1);
+    expect(projection.mainCurve.points[0]).toMatchObject({
+      x: projection.nodesBySceneId.main.rect.x + projection.nodesBySceneId.main.rect.width / 2,
+      y: projection.nodesBySceneId.main.rect.y + projection.nodesBySceneId.main.rect.height / 2,
+    });
+  });
+
+  it('stacks multiple manual infinite-loop detached threads below the main lane', () => {
+    const stream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['loop-a', 'loop-b', 'main'],
+      scenes: {
+        'loop-a': { ...scene('loop-a', { type: 'manual' }), loop: { enabled: true, iterations: { type: 'infinite' } } },
+        'loop-b': { ...scene('loop-b', { type: 'manual' }), loop: { enabled: true, iterations: { type: 'infinite' } } },
+        main: visualScene('main', { type: 'manual' }, 'main-visual' as VisualId),
+      },
+    };
+
+    const projection = deriveStreamFlowProjection({ stream, timeline: timeline(stream, { 'main-visual': 1 } as Record<VisualId, number>), directorState: undefined });
+
+    expect(projection.nodesBySceneId['loop-a'].rect.x).toBe(projection.nodesBySceneId.main.rect.x);
+    expect(projection.nodesBySceneId['loop-b'].rect.x).toBe(projection.nodesBySceneId.main.rect.x);
+    expect(projection.nodesBySceneId['loop-b'].rect.y).toBeGreaterThan(projection.nodesBySceneId['loop-a'].rect.y);
+  });
+
   it('renders warning stubs for explicit missing predecessor references', () => {
     const stream: PersistedStreamConfig = {
       id: 'stream',

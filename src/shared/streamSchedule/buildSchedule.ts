@@ -1,6 +1,6 @@
 import type { AudioSourceId, PersistedSceneConfig, PersistedStreamConfig, SceneId, StreamMainTimelineSegment, VisualId } from '../types';
 import { deriveStreamThreadPlan } from '../streamThreadPlan';
-import { estimateSceneDurationMs } from './durations';
+import { classifySceneDurationMs } from './durations';
 import { resolveFollowsSceneId } from './triggerGraph';
 import type { StreamSchedule, StreamScheduleEntry, StreamScheduleIssue } from './types';
 
@@ -41,22 +41,27 @@ export function buildStreamSchedule(
   const issues: StreamScheduleIssue[] = [];
   const seenIssues = new Set<string>();
   const sceneDurations: Record<SceneId, number | undefined> = {};
+  const indefiniteLoopSceneIds = new Set<SceneId>();
 
   for (const id of stream.sceneOrder) {
     const scene = stream.scenes[id];
-    const durationMs = scene && !scene.disabled ? estimateSceneDurationMs(scene, durations.visualDurations, durations.audioDurations) : undefined;
+    const classified = scene && !scene.disabled ? classifySceneDurationMs(scene, durations.visualDurations, durations.audioDurations) : undefined;
+    const durationMs = classified?.classification === 'finite' ? classified.durationMs : undefined;
+    if (classified?.classification === 'indefinite-loop') {
+      indefiniteLoopSceneIds.add(id);
+    }
     sceneDurations[id] = durationMs;
     entries[id] = {
       sceneId: id,
       durationMs,
       triggerKnown: false,
     };
-    if (scene && !scene.disabled && durationMs === undefined) {
+    if (scene && !scene.disabled && classified?.classification === 'unknown-error') {
       pushIssueOnce(issues, seenIssues, createUnknownDurationIssue(id, scene));
     }
   }
 
-  const threadPlan = deriveStreamThreadPlan(stream, sceneDurations);
+  const threadPlan = deriveStreamThreadPlan(stream, sceneDurations, { indefiniteLoopSceneIds });
   for (const issue of threadPlan.issues) {
     pushIssueOnce(issues, seenIssues, issue);
   }
@@ -64,7 +69,7 @@ export function buildStreamSchedule(
   let mainCursorMs = 0;
   const mainSegments: StreamMainTimelineSegment[] = [];
   for (const thread of threadPlan.threads) {
-    if (thread.rootTriggerType !== 'manual') {
+    if (thread.rootTriggerType !== 'manual' || thread.detachedReason === 'infinite-loop') {
       continue;
     }
     if (thread.durationMs === undefined) {
@@ -128,6 +133,11 @@ export function buildStreamSchedule(
       continue;
     }
     if (entry.startMs !== undefined) {
+      continue;
+    }
+    const threadId = threadPlan.threadBySceneId[id];
+    const thread = threadId ? threadPlan.threads.find((candidate) => candidate.threadId === threadId) : undefined;
+    if (thread?.detachedReason === 'infinite-loop') {
       continue;
     }
     if (scene.trigger.type === 'follow-end') {

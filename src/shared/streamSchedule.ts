@@ -27,6 +27,7 @@ export {
   validateStreamContextFromDirector,
 } from './streamSchedule/contentValidation';
 export {
+  classifySceneDurationMs,
   estimateLinearManualStreamDurationMs,
   estimateSceneDurationMs,
 } from './streamSchedule/durations';

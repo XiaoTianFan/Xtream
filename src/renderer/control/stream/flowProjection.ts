@@ -40,6 +40,7 @@ export type FlowSceneNode = {
   threadId?: StreamThreadId;
   rootSceneId?: SceneId;
   rootTriggerType?: 'manual' | 'at-timecode';
+  detachedReason?: StreamCanonicalThreadPlan['detachedReason'];
   threadColor?: StreamThreadColor;
   temporarilyDisabled: boolean;
   authoringError: boolean;
@@ -91,7 +92,16 @@ const ORPHAN_BASELINE_Y = 470;
 
 type FlowLayoutThread = Pick<
   StreamCanonicalThreadPlan,
-  'threadId' | 'rootSceneId' | 'rootTriggerType' | 'sceneIds' | 'edges' | 'branches' | 'longestBranchSceneIds' | 'sceneTimings' | 'durationMs'
+  | 'threadId'
+  | 'rootSceneId'
+  | 'rootTriggerType'
+  | 'detachedReason'
+  | 'sceneIds'
+  | 'edges'
+  | 'branches'
+  | 'longestBranchSceneIds'
+  | 'sceneTimings'
+  | 'durationMs'
 >;
 
 function defaultRect(width = CARD_WIDTH, height = CARD_HEIGHT): FlowRect {
@@ -260,6 +270,7 @@ function createAuthoringLayoutThreads(stream: PersistedStreamConfig, timeline: C
       threadId: runtimeThread?.threadId ?? (`thread:${rootSceneId}` as StreamThreadId),
       rootSceneId,
       rootTriggerType,
+      detachedReason: runtimeThread?.detachedReason,
       sceneIds,
       edges,
       branches,
@@ -334,6 +345,14 @@ function branchLaneOffset(thread: FlowLayoutThread, branchIndex: number): number
   return rank % 2 === 0 ? -distance : distance;
 }
 
+function branchLaneExtents(thread: FlowLayoutThread): { min: number; max: number } {
+  const offsets = thread.branches.map((_, index) => branchLaneOffset(thread, index));
+  return {
+    min: Math.min(0, ...offsets),
+    max: Math.max(0, ...offsets),
+  };
+}
+
 function branchDepthForScene(thread: FlowLayoutThread, sceneId: SceneId): number {
   const branch = thread.branches.find((candidate) => candidate.sceneIds.includes(sceneId));
   const idx = branch?.sceneIds.indexOf(sceneId) ?? -1;
@@ -402,16 +421,18 @@ function calculateDefaultRects(stream: PersistedStreamConfig, timeline: Calculat
   const mainDurationMs = mainSegments.at(-1)?.endMs ?? 0;
   const mainThreadBaseX = new Map<StreamThreadId, number>();
   let nextMainThreadX = 56;
-  for (const thread of orderedThreads.filter((candidate) => candidate.rootTriggerType === 'manual')) {
+  for (const thread of orderedThreads.filter((candidate) => candidate.rootTriggerType === 'manual' && candidate.detachedReason !== 'infinite-loop')) {
     mainThreadBaseX.set(thread.threadId, nextMainThreadX);
     nextMainThreadX += threadFlowWidth(stream, thread) + THREAD_CARD_GAP_X;
   }
+  const firstMainRootX = mainSegments[0] ? mainThreadBaseX.get(mainSegments[0].threadId) ?? 56 : 56;
   let nextFallbackX = 56;
+  let nextInfiniteThreadY = MAIN_BASELINE_Y + CARD_HEIGHT + 104;
   for (const thread of orderedThreads) {
     const localX = createThreadSceneLocalX(stream, thread);
     let baseX: number;
     let baseY: number;
-    if (thread.rootTriggerType === 'manual') {
+    if (thread.rootTriggerType === 'manual' && thread.detachedReason !== 'infinite-loop') {
       baseX = mainThreadBaseX.get(thread.threadId) ?? 56;
       baseY = MAIN_BASELINE_Y;
     } else if (thread.rootTriggerType === 'at-timecode') {
@@ -420,6 +441,11 @@ function calculateDefaultRects(stream: PersistedStreamConfig, timeline: Calculat
         root?.trigger.type === 'at-timecode' && mainDurationMs > 0 ? Math.max(0, Math.min(1, root.trigger.timecodeMs / mainDurationMs)) : 0;
       baseX = 56 + ratio * Math.max(THREAD_GAP_X, Math.max(0, nextMainThreadX - 56 - CARD_WIDTH));
       baseY = SIDE_THREAD_Y;
+    } else if (thread.detachedReason === 'infinite-loop') {
+      const extents = branchLaneExtents(thread);
+      baseX = firstMainRootX;
+      baseY = nextInfiniteThreadY - extents.min * BRANCH_GAP_Y;
+      nextInfiniteThreadY += (extents.max - extents.min) * BRANCH_GAP_Y + CARD_HEIGHT + 72;
     } else {
       baseX = nextFallbackX;
       baseY = ORPHAN_BASELINE_Y;
@@ -568,6 +594,7 @@ export function deriveStreamFlowProjection(args: {
       threadId,
       rootSceneId: thread?.rootSceneId,
       rootTriggerType: thread?.rootTriggerType,
+      detachedReason: thread?.detachedReason,
       threadColor: threadId ? threadColors.byThreadId[threadId] : undefined,
       temporarilyDisabled: temporarilyDisabled.has(sceneId),
       authoringError: args.authoringErrorSceneIds?.has(sceneId) ?? false,

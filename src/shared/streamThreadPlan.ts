@@ -12,6 +12,10 @@ import { resolveFollowsSceneId } from './streamSchedule';
 
 type SceneDurationMap = Record<SceneId, number | undefined>;
 
+type StreamThreadPlanOptions = {
+  indefiniteLoopSceneIds?: ReadonlySet<SceneId>;
+};
+
 function threadIdForRoot(rootSceneId: SceneId): string {
   return `thread:${rootSceneId}`;
 }
@@ -234,7 +238,7 @@ function compareBranchLength(left: StreamThreadBranch, right: StreamThreadBranch
   return left.sceneIds.length - right.sceneIds.length;
 }
 
-export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations: SceneDurationMap): StreamThreadPlan {
+export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations: SceneDurationMap, options: StreamThreadPlanOptions = {}): StreamThreadPlan {
   const issues: StreamTimelineIssue[] = [];
   const seenIssues = new Set<string>();
   const childrenByPredecessor = collectAutoChildren(stream);
@@ -317,7 +321,8 @@ export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations:
     const sceneTimings = computeSceneTimings(stream, rootSceneId, edgesByPredecessor, durations, nonRunnableInThread);
     const branches = enumerateBranches(rootSceneId, edgesByPredecessor, sceneTimings);
     const knownBranchDurations = branches.map((branch) => branch.durationMs).filter((duration): duration is number => duration !== undefined);
-    const durationMs = knownBranchDurations.length === branches.length ? Math.max(0, ...knownBranchDurations) : undefined;
+    const hasIndefiniteLoop = sceneIds.some((id) => options.indefiniteLoopSceneIds?.has(id));
+    const durationMs = !hasIndefiniteLoop && knownBranchDurations.length === branches.length ? Math.max(0, ...knownBranchDurations) : undefined;
     const longestBranch =
       branches.reduce<StreamThreadBranch | undefined>((best, branch) => {
         if (!best) {
@@ -335,6 +340,7 @@ export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations:
       threadId,
       rootSceneId,
       rootTriggerType: root.trigger.type,
+      detachedReason: root.trigger.type === 'at-timecode' ? 'at-timecode' : hasIndefiniteLoop ? 'infinite-loop' : undefined,
       sceneIds,
       edges,
       branches,

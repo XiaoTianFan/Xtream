@@ -369,6 +369,10 @@ export class StreamEngine extends EventEmitter {
     };
   }
 
+  private isDetachedSideThread(thread: NonNullable<CalculatedStreamTimeline['threadPlan']>['threads'][number]): boolean {
+    return thread.rootTriggerType === 'at-timecode' || thread.detachedReason === 'infinite-loop';
+  }
+
   private threadLocalStartForScene(sceneId: SceneId): number | undefined {
     const resolved = this.resolveThreadForScene(sceneId);
     if (!resolved) {
@@ -398,7 +402,7 @@ export class StreamEngine extends EventEmitter {
       }
     }
 
-    if (resolved?.thread.rootTriggerType === 'at-timecode') {
+    if (resolved && this.isDetachedSideThread(resolved.thread)) {
       const timelineId = newId('timeline');
       const threadInstanceId = newId('threadinst');
       threadInstances[threadInstanceId] = {
@@ -760,7 +764,7 @@ export class StreamEngine extends EventEmitter {
     }
     const pausedClock = this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
     const resolved = this.resolveThreadForScene(sceneId);
-    if (!resolved || resolved.thread.rootTriggerType === 'at-timecode') {
+    if (!resolved || this.isDetachedSideThread(resolved.thread)) {
       this.startFromStreamTime(this.explicitLaunchStreamMs(sceneId, pausedClock), sceneId, {
         isolateToReferenceThread: true,
         markEarlierSameThreadSkipped: true,
@@ -994,6 +998,7 @@ export class StreamEngine extends EventEmitter {
     }
     const referenceScene = referenceSceneId ? stream.scenes[referenceSceneId] : undefined;
     const referenceEntry = referenceSceneId ? schedule.entries[referenceSceneId] : undefined;
+    const referenceThread = referenceSceneId ? this.resolveThreadForScene(referenceSceneId) : undefined;
     if (
       referenceSceneId &&
       referenceScene?.trigger.type === 'manual' &&
@@ -1004,6 +1009,9 @@ export class StreamEngine extends EventEmitter {
     }
     if (referenceSceneId && options.forceReferenceStart === true && referenceScene?.trigger.type === 'at-timecode') {
       this.manualSceneStartOverrides.set(referenceSceneId, timeMs);
+    } else if (referenceSceneId && options.forceReferenceStart === true && referenceThread?.thread.detachedReason === 'infinite-loop') {
+      const launchLocalMs = this.threadLocalStartForScene(referenceSceneId) ?? 0;
+      this.manualSceneStartOverrides.set(referenceThread.thread.rootSceneId, timeMs - launchLocalMs);
     } else if (referenceSceneId && options.forceReferenceStart === true && referenceScene?.trigger.type !== 'manual') {
       const launchLocalMs = this.threadLocalStartForScene(referenceSceneId) ?? 0;
       if (launchLocalMs > 0) {
@@ -2268,7 +2276,7 @@ export class StreamEngine extends EventEmitter {
 
   private explicitLaunchStreamMs(sceneId: SceneId, sideThreadFallbackMs: number): number {
     const resolved = this.resolveThreadForScene(sceneId);
-    if (resolved?.thread.rootTriggerType === 'at-timecode') {
+    if (resolved && this.isDetachedSideThread(resolved.thread)) {
       return sideThreadFallbackMs;
     }
     return this.sceneStartMs(sceneId) ?? sideThreadFallbackMs;

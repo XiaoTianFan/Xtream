@@ -2,6 +2,17 @@ import type { AudioSourceId, PersistedSceneConfig, PersistedStreamConfig, Visual
 import { resolveLoopTiming } from '../streamLoopTiming';
 import { getAudioSubCueBaseDurationMs } from '../audioSubCueAutomation';
 
+export type StreamDurationClassification = 'finite' | 'indefinite-loop' | 'unknown-error';
+
+export type SceneDurationEstimate = {
+  classification: StreamDurationClassification;
+  durationMs?: number;
+};
+
+function isInfiniteLoop(policy: PersistedSceneConfig['loop'] | undefined): boolean {
+  return Boolean(policy?.enabled && policy.iterations.type === 'infinite');
+}
+
 function subCueBaseDurationMs(
   sub: PersistedSceneConfig['subCues'][string],
   visualDurations: Record<VisualId, number>,
@@ -33,17 +44,57 @@ function subCueBaseDurationMs(
   return base;
 }
 
-function subCueEffectiveDurationMs(
+function classifySubCueEffectiveDurationMs(
   sub: PersistedSceneConfig['subCues'][string],
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
-): number | undefined {
+): SceneDurationEstimate {
   const base = subCueBaseDurationMs(sub, visualDurations, audioDurations);
   if (base === undefined) {
-    return undefined;
+    return { classification: 'unknown-error' };
+  }
+  if (sub.kind !== 'control' && isInfiniteLoop(sub.loop)) {
+    return { classification: 'indefinite-loop' };
   }
   const loopTiming = sub.kind === 'control' ? resolveLoopTiming(undefined, base) : resolveLoopTiming(sub.loop, base);
-  return loopTiming.totalDurationMs === undefined ? undefined : (sub.startOffsetMs ?? 0) + loopTiming.totalDurationMs;
+  return loopTiming.totalDurationMs === undefined
+    ? { classification: 'unknown-error' }
+    : { classification: 'finite', durationMs: (sub.startOffsetMs ?? 0) + loopTiming.totalDurationMs };
+}
+
+/** Classifies scene duration without turning infinite loops into timeline errors. */
+export function classifySceneDurationMs(
+  scene: PersistedSceneConfig,
+  visualDurations: Record<VisualId, number>,
+  audioDurations: Record<AudioSourceId, number>,
+): SceneDurationEstimate {
+  if (scene.disabled) {
+    return { classification: 'finite', durationMs: 0 };
+  }
+  let max = 0;
+  let hasIndefiniteLoop = false;
+  for (const id of scene.subCueOrder) {
+    const sub = scene.subCues[id];
+    if (!sub) {
+      continue;
+    }
+    const eff = classifySubCueEffectiveDurationMs(sub, visualDurations, audioDurations);
+    if (eff.classification === 'unknown-error') {
+      return { classification: 'unknown-error' };
+    }
+    if (eff.classification === 'indefinite-loop') {
+      hasIndefiniteLoop = true;
+      continue;
+    }
+    max = Math.max(max, eff.durationMs ?? 0);
+  }
+  if (hasIndefiniteLoop || isInfiniteLoop(scene.loop)) {
+    return { classification: 'indefinite-loop' };
+  }
+  const sceneTiming = resolveLoopTiming(scene.loop, max);
+  return sceneTiming.totalDurationMs === undefined
+    ? { classification: 'unknown-error' }
+    : { classification: 'finite', durationMs: sceneTiming.totalDurationMs };
 }
 
 /** Longest sub-cue effective duration; undefined if any contributing sub-cue duration is unknown. */
@@ -52,28 +103,8 @@ export function estimateSceneDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
 ): number | undefined {
-  if (scene.disabled) {
-    return 0;
-  }
-  let max = 0;
-  let unknown = false;
-  for (const id of scene.subCueOrder) {
-    const sub = scene.subCues[id];
-    if (!sub) {
-      continue;
-    }
-    const eff = subCueEffectiveDurationMs(sub, visualDurations, audioDurations);
-    if (eff === undefined) {
-      unknown = true;
-      continue;
-    }
-    max = Math.max(max, eff);
-  }
-  if (unknown) {
-    return undefined;
-  }
-  const sceneTiming = resolveLoopTiming(scene.loop, max);
-  return sceneTiming.totalDurationMs;
+  const classified = classifySceneDurationMs(scene, visualDurations, audioDurations);
+  return classified.classification === 'finite' ? classified.durationMs : undefined;
 }
 
 /**

@@ -744,6 +744,7 @@ export type StreamCanonicalThreadPlan = {
   threadId: StreamThreadId;
   rootSceneId: SceneId;
   rootTriggerType: 'manual' | 'at-timecode';
+  detachedReason?: 'at-timecode' | 'infinite-loop';
   sceneIds: SceneId[];
   edges: StreamThreadEdge[];
   branches: StreamThreadBranch[];

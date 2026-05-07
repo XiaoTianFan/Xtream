@@ -54,6 +54,42 @@ const AUTOMATION_BUCKET_TARGET_COUNT = 96;
 const AUTOMATION_BUCKET_MIN_MS = 100;
 const AUTOMATION_BUCKET_MAX_MS = 1000;
 
+type WaveformTheme = {
+  background: string;
+  grid: string;
+  placeholder: string;
+  text: string;
+  peak: string;
+  rangeFill: string;
+  rangeLine: string;
+  fadeFill: string;
+  fadeLine: string;
+  fadeEnvelope: string;
+  levelActive: string;
+  panActive: string;
+  automationMuted: string;
+  playhead: string;
+  labelShadow: string;
+};
+
+const DEFAULT_WAVEFORM_THEME: WaveformTheme = {
+  background: 'rgba(11, 18, 27, 0.74)',
+  grid: 'rgba(255, 255, 255, 0.08)',
+  placeholder: 'rgba(174, 196, 215, 0.32)',
+  text: 'rgba(226, 235, 242, 0.72)',
+  peak: 'rgba(130, 166, 194, 0.72)',
+  rangeFill: 'rgba(29, 201, 183, 0.11)',
+  rangeLine: 'rgba(29, 201, 183, 0.92)',
+  fadeFill: 'rgba(214, 164, 73, 0.19)',
+  fadeLine: 'rgba(236, 185, 83, 0.95)',
+  fadeEnvelope: 'rgba(236, 185, 83, 0.98)',
+  levelActive: 'rgba(64, 216, 182, 0.96)',
+  panActive: 'rgba(228, 121, 164, 0.96)',
+  automationMuted: 'rgb(210, 220, 226)',
+  playhead: 'rgba(255, 255, 255, 0.96)',
+  labelShadow: 'rgba(0, 0, 0, 0.65)',
+};
+
 export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorDeps): HTMLElement {
   const { sub, currentState, patchSubCue } = deps;
   let draftSub: PersistedAudioSubCueConfig = { ...sub };
@@ -154,6 +190,8 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const section = createSubCueSection('Timing', root);
   const resizeObserver = new ResizeObserver(() => render());
   resizeObserver.observe(stage);
+  const themeObserver = new MutationObserver(() => render());
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const disconnectObserver = createDisconnectObserver(section, () => cleanup());
   const unsubscribePreviewPosition = window.xtream.audioRuntime.onSubCuePreviewPosition?.((position) => {
     if (position.previewId !== previewId) {
@@ -379,12 +417,14 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, hostWidth, WAVEFORM_HEIGHT);
     const rect = waveformRect();
-    drawBackground(ctx, rect);
-    drawPeaks(ctx, rect, loadState, peaks);
-    drawRangeAndFades(ctx, rect);
-    drawFadeEnvelope(ctx, rect);
-    drawAutomationLines(ctx, rect);
-    drawPreviewPlayhead(ctx, rect);
+    const theme = readWaveformTheme(stage);
+    drawBackground(ctx, rect, theme);
+    drawPeaks(ctx, rect, loadState, peaks, theme);
+    drawRangeAndFades(ctx, rect, theme);
+    drawFadeEnvelope(ctx, rect, theme);
+    drawAutomationLines(ctx, rect, theme);
+    drawRangeTimeLabels(ctx, rect, theme);
+    drawPreviewPlayhead(ctx, rect, theme);
   }
 
   function waveformRect(): AudioWaveformRect {
@@ -392,10 +432,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     return { left: 0, top: 0, width, height: WAVEFORM_HEIGHT };
   }
 
-  function drawBackground(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
-    ctx.fillStyle = 'rgba(11, 18, 27, 0.74)';
+  function drawBackground(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
+    ctx.fillStyle = theme.background;
     ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.strokeStyle = theme.grid;
     ctx.lineWidth = 1;
     for (let i = 1; i < 10; i += 1) {
       const x = rect.left + (rect.width * i) / 10;
@@ -406,21 +446,27 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
   }
 
-  function drawPeaks(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, state: typeof loadState, currentPeaks: AudioWaveformPeaks | undefined): void {
+  function drawPeaks(
+    ctx: CanvasRenderingContext2D,
+    rect: AudioWaveformRect,
+    state: typeof loadState,
+    currentPeaks: AudioWaveformPeaks | undefined,
+    theme: WaveformTheme,
+  ): void {
     const mid = rect.top + rect.height / 2;
     if (state !== 'ready' || !currentPeaks?.buckets.length) {
-      ctx.fillStyle = 'rgba(174, 196, 215, 0.32)';
+      ctx.fillStyle = theme.placeholder;
       for (let i = 0; i < 96; i += 1) {
         const h = state === 'missing' ? 2 : 10 + ((i * 17) % 31);
         const x = rect.left + (i / 96) * rect.width;
         ctx.fillRect(x, mid - h / 2, Math.max(1, rect.width / 140), h);
       }
-      ctx.fillStyle = 'rgba(226, 235, 242, 0.72)';
+      ctx.fillStyle = theme.text;
       ctx.font = '12px sans-serif';
       ctx.fillText(state === 'error' ? 'Waveform unavailable' : state === 'missing' ? 'Missing audio source' : 'Loading waveform', rect.left + 12, rect.top + 22);
       return;
     }
-    ctx.strokeStyle = 'rgba(130, 166, 194, 0.72)';
+    ctx.strokeStyle = theme.peak;
     ctx.lineWidth = Math.max(1, rect.width / currentPeaks.buckets.length);
     for (let i = 0; i < currentPeaks.buckets.length; i += 1) {
       const bucket = currentPeaks.buckets[i];
@@ -432,16 +478,16 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
   }
 
-  function drawRangeAndFades(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+  function drawRangeAndFades(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
     if (!sourceDurationMs) {
       return;
     }
     const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
     const startX = msToWaveformX(range.startMs, sourceDurationMs, rect);
     const endX = msToWaveformX(range.endMs ?? sourceDurationMs, sourceDurationMs, rect);
-    ctx.fillStyle = 'rgba(29, 201, 183, 0.11)';
+    ctx.fillStyle = theme.rangeFill;
     ctx.fillRect(startX, rect.top, Math.max(0, endX - startX), rect.height);
-    ctx.strokeStyle = 'rgba(29, 201, 183, 0.92)';
+    ctx.strokeStyle = theme.rangeLine;
     ctx.lineWidth = 2;
     for (const x of [startX, endX]) {
       ctx.beginPath();
@@ -451,10 +497,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
     const fadeInX = msToWaveformX(range.startMs + (draftSub.fadeIn?.durationMs ?? 0), sourceDurationMs, rect);
     const fadeOutX = msToWaveformX((range.endMs ?? sourceDurationMs) - (draftSub.fadeOut?.durationMs ?? 0), sourceDurationMs, rect);
-    ctx.fillStyle = 'rgba(214, 164, 73, 0.19)';
+    ctx.fillStyle = theme.fadeFill;
     ctx.fillRect(startX, rect.top, Math.max(0, fadeInX - startX), rect.height);
     ctx.fillRect(fadeOutX, rect.top, Math.max(0, endX - fadeOutX), rect.height);
-    ctx.strokeStyle = 'rgba(236, 185, 83, 0.95)';
+    ctx.strokeStyle = theme.fadeLine;
     ctx.beginPath();
     ctx.moveTo(fadeInX, rect.top);
     ctx.lineTo(fadeInX, rect.top + rect.height * 0.32);
@@ -463,7 +509,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.stroke();
   }
 
-  function drawFadeEnvelope(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+  function drawFadeEnvelope(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
     if (!sourceDurationMs || (!draftSub.fadeIn?.durationMs && !draftSub.fadeOut?.durationMs)) {
       return;
     }
@@ -474,7 +520,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
     const sampleCount = Math.max(24, Math.min(160, Math.round(rect.width / 8)));
     ctx.save();
-    ctx.strokeStyle = 'rgba(236, 185, 83, 0.98)';
+    ctx.strokeStyle = theme.fadeEnvelope;
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
@@ -498,21 +544,56 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.restore();
   }
 
-  function drawAutomationLines(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+  function drawAutomationLines(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
     if (!sourceDurationMs) {
       return;
     }
-    drawAutomationLine(ctx, rect, 'level', automationMode === 'level');
-    drawAutomationLine(ctx, rect, 'pan', automationMode === 'pan');
+    drawAutomationLine(ctx, rect, 'level', automationMode === 'level', theme);
+    drawAutomationLine(ctx, rect, 'pan', automationMode === 'pan', theme);
   }
 
-  function drawAutomationLine(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, mode: AudioWaveformAutomationMode, active: boolean): void {
+  function drawRangeTimeLabels(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
+    if (!sourceDurationMs) {
+      return;
+    }
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const startX = msToWaveformX(range.startMs, sourceDurationMs, rect);
+    const endX = msToWaveformX(range.endMs ?? sourceDurationMs, sourceDurationMs, rect);
+    const y = rect.top + rect.height - 8;
+    ctx.save();
+    ctx.font = '10px "Cascadia Mono", "SFMono-Regular", Consolas, monospace';
+    ctx.fillStyle = theme.text;
+    ctx.textBaseline = 'bottom';
+    ctx.shadowColor = theme.labelShadow;
+    ctx.shadowBlur = 3;
+    ctx.textAlign = 'left';
+    ctx.fillText(formatRangeTimestamp(range.startMs), Math.min(rect.left + rect.width - 4, startX + 5), y);
+    ctx.textAlign = 'right';
+    ctx.fillText(formatRangeTimestamp(range.endMs ?? sourceDurationMs), Math.max(rect.left + 4, endX - 5), y);
+    ctx.restore();
+  }
+
+  function formatRangeTimestamp(ms: number): string {
+    const safeMs = Math.max(0, Math.round(ms));
+    const minutes = Math.floor(safeMs / 60000);
+    const seconds = Math.floor((safeMs % 60000) / 1000);
+    const millis = safeMs % 1000;
+    return `${minutes}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+  }
+
+  function drawAutomationLine(
+    ctx: CanvasRenderingContext2D,
+    rect: AudioWaveformRect,
+    mode: AudioWaveformAutomationMode,
+    active: boolean,
+    theme: WaveformTheme,
+  ): void {
     if (!sourceDurationMs) {
       return;
     }
     const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
     const points = clampAutomationPointsForWaveform(mode === 'level' ? draftSub.levelAutomation : draftSub.panAutomation, mode, range.durationMs);
-    const color = active ? (mode === 'level' ? 'rgba(64, 216, 182, 0.96)' : 'rgba(228, 121, 164, 0.96)') : 'rgb(210, 220, 226)';
+    const color = active ? (mode === 'level' ? theme.levelActive : theme.panActive) : theme.automationMuted;
     ctx.save();
     ctx.globalAlpha = active ? 1 : 0.5;
     ctx.strokeStyle = color;
@@ -551,12 +632,12 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.restore();
   }
 
-  function drawPreviewPlayhead(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+  function drawPreviewPlayhead(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
     if (!sourceDurationMs || (!previewPlaying && previewPausedAtMs <= 0 && previewSourceTimeMs === undefined)) {
       return;
     }
     const x = msToWaveformX(getPreviewPlayheadSourceMs(), sourceDurationMs, rect);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.96)';
+    ctx.strokeStyle = theme.playhead;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(x, rect.top);
@@ -750,6 +831,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     unsubscribePreviewPosition?.();
     disconnectObserver.disconnect();
     resizeObserver.disconnect();
+    themeObserver.disconnect();
     window.removeEventListener('beforeunload', cleanup);
     stopPreview(true);
   }
@@ -791,6 +873,31 @@ function createDisconnectObserver(element: HTMLElement, cleanup: () => void): { 
       wasConnected = wasConnected || element.isConnected;
     },
   };
+}
+
+function readWaveformTheme(element: HTMLElement): WaveformTheme {
+  const styles = getComputedStyle(element);
+  return {
+    background: readWaveformColor(styles, '--waveform-bg', DEFAULT_WAVEFORM_THEME.background),
+    grid: readWaveformColor(styles, '--waveform-grid', DEFAULT_WAVEFORM_THEME.grid),
+    placeholder: readWaveformColor(styles, '--waveform-placeholder', DEFAULT_WAVEFORM_THEME.placeholder),
+    text: readWaveformColor(styles, '--waveform-text', DEFAULT_WAVEFORM_THEME.text),
+    peak: readWaveformColor(styles, '--waveform-peak', DEFAULT_WAVEFORM_THEME.peak),
+    rangeFill: readWaveformColor(styles, '--waveform-range-fill', DEFAULT_WAVEFORM_THEME.rangeFill),
+    rangeLine: readWaveformColor(styles, '--waveform-range-line', DEFAULT_WAVEFORM_THEME.rangeLine),
+    fadeFill: readWaveformColor(styles, '--waveform-fade-fill', DEFAULT_WAVEFORM_THEME.fadeFill),
+    fadeLine: readWaveformColor(styles, '--waveform-fade-line', DEFAULT_WAVEFORM_THEME.fadeLine),
+    fadeEnvelope: readWaveformColor(styles, '--waveform-fade-envelope', DEFAULT_WAVEFORM_THEME.fadeEnvelope),
+    levelActive: readWaveformColor(styles, '--waveform-level-active', DEFAULT_WAVEFORM_THEME.levelActive),
+    panActive: readWaveformColor(styles, '--waveform-pan-active', DEFAULT_WAVEFORM_THEME.panActive),
+    automationMuted: readWaveformColor(styles, '--waveform-automation-muted', DEFAULT_WAVEFORM_THEME.automationMuted),
+    playhead: readWaveformColor(styles, '--waveform-playhead', DEFAULT_WAVEFORM_THEME.playhead),
+    labelShadow: readWaveformColor(styles, '--waveform-label-shadow', DEFAULT_WAVEFORM_THEME.labelShadow),
+  };
+}
+
+function readWaveformColor(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
 }
 
 function createRailButton(label: string, onClick: () => void): HTMLButtonElement {

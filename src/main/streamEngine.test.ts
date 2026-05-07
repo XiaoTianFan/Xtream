@@ -46,6 +46,30 @@ function installThreeThreadStream(stream: ReturnType<typeof getDefaultStreamPers
   };
 }
 
+function installInfiniteLoopSideThreadStream(stream: ReturnType<typeof getDefaultStreamPersistence>['stream']): void {
+  stream.sceneOrder = ['loop', 'main'];
+  stream.scenes = {
+    loop: {
+      id: 'loop',
+      title: 'Loop',
+      trigger: { type: 'manual' },
+      loop: { enabled: true, iterations: { type: 'infinite' } },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v-loop', targets: [{ displayId: 'd1' }] } },
+    },
+    main: {
+      id: 'main',
+      title: 'Main',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v-main', targets: [{ displayId: 'd1' }] } },
+    },
+  };
+}
+
 describe('StreamEngine', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -2218,6 +2242,28 @@ describe('StreamEngine', () => {
     expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'side', visualId: 'v2', streamStartMs: 0 }]);
   });
 
+  it('explicit launch of an infinite-loop thread creates a parallel timeline from idle', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'scene-row' });
+
+    expect(state.playbackTimeline.status).toBe('valid');
+    expect(state.playbackTimeline.expectedDurationMs).toBe(5_000);
+    expect(state.playbackTimeline.mainSegments?.map((segment) => segment.rootSceneId)).toEqual(['main']);
+    expect(Object.values(state.runtime?.timelineInstances ?? {})).toMatchObject([{ kind: 'parallel', durationMs: undefined }]);
+    expect(state.runtime?.mainTimelineId).toBeUndefined();
+    expect(state.runtime?.sceneStates.loop?.status).toBe('running');
+    expect(state.runtime?.sceneStates.main?.status).toBe('ready');
+  });
+
   it('header Play fallback starts the first main timeline thread, not an earlier at-timecode side thread', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],
@@ -2251,6 +2297,23 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates.main?.status).toBe('running');
     expect(state.runtime?.sceneStates.side?.status).toBe('ready');
     expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'main', visualId: 'v1' }]);
+  });
+
+  it('header Play starts the first finite main thread, not an earlier infinite-loop side thread', () => {
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play' });
+
+    expect(state.runtime?.cursorSceneId).toBe('main');
+    expect(state.runtime?.sceneStates.main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.loop?.status).toBe('ready');
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(0);
   });
 
   it('running launch of an at-timecode root starts the side thread immediately', () => {
@@ -2291,6 +2354,32 @@ describe('StreamEngine', () => {
     expect(state.runtime?.activeVisualSubCues).toEqual(
       expect.arrayContaining([expect.objectContaining({ sceneId: 'side', visualId: 'v2', streamStartMs: 1500 })]),
     );
+  });
+
+  it('running launch of an infinite-loop thread leaves main order and duration unchanged', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'main', source: 'global' });
+    vi.setSystemTime(2_500);
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+    const mainThreadIds = main?.orderedThreadInstanceIds.map((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId);
+    const parallel = Object.values(state.runtime?.timelineInstances ?? {}).find((timeline) => timeline.kind === 'parallel');
+
+    expect(state.runtime?.expectedDurationMs).toBe(10_000);
+    expect(main?.durationMs).toBe(10_000);
+    expect(mainThreadIds).toEqual(['thread:main']);
+    expect(parallel).toMatchObject({ kind: 'parallel', durationMs: undefined, spawnedAtStreamMs: 1500 });
+    expect(state.runtime?.sceneStates.loop?.status).toBe('running');
+    expect(state.runtime?.sceneStates.main?.status).toBe('running');
   });
 
   it('global pause freezes main and parallel timeline cursors independently', () => {

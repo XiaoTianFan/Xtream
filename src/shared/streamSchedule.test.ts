@@ -384,17 +384,100 @@ describe('streamSchedule', () => {
     expect(schedule.issues).toContainEqual(expect.objectContaining({ severity: 'error', sceneId: 's1' }));
   });
 
-  it('reports infinite loops as invalid timeline duration issues', () => {
+  it('excludes scene-level infinite loop threads from default main timeline duration', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'Infinite'),
       loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
       subCueOrder: ['v1'],
       subCues: { v1: { id: 'v1', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }] } },
     };
-    const stream = streamWithScenes({ s1 }, ['s1']);
+    const s2 = {
+      ...createEmptyUserScene('s2', 'Main'),
+      subCueOrder: ['v1'],
+      subCues: { v1: { id: 'v1', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 4000 } },
+    };
+    const stream = streamWithScenes({ s1, s2 }, ['s1', 's2']);
     const schedule = buildStreamSchedule(stream, { visualDurations: { vid: 10 }, audioDurations: {} });
-    expect(schedule.status).toBe('invalid');
-    expect(schedule.issues).toContainEqual(expect.objectContaining({ severity: 'error', sceneId: 's1' }));
+    const loopThread = schedule.threadPlan?.threads.find((thread) => thread.rootSceneId === 's1');
+
+    expect(schedule.status).toBe('valid');
+    expect(schedule.expectedDurationMs).toBe(4000);
+    expect(loopThread).toMatchObject({ detachedReason: 'infinite-loop', durationMs: undefined });
+    expect(schedule.mainSegments).toEqual([
+      { threadId: 'thread:s2', rootSceneId: 's2', startMs: 0, durationMs: 4000, endMs: 4000, proportion: 1 },
+    ]);
+    expect(schedule.issues).toEqual([]);
+  });
+
+  it('excludes threads with infinite audio or visual sub-cue loops from the default main timeline', () => {
+    const audioLoop = {
+      ...createEmptyUserScene('audio-loop', 'Audio loop'),
+      subCueOrder: ['a1'],
+      subCues: {
+        a1: {
+          id: 'a1',
+          kind: 'audio' as const,
+          audioSourceId: 'aud',
+          outputIds: ['output-main'],
+          loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    const visualLoop = {
+      ...createEmptyUserScene('visual-loop', 'Visual loop'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    const main = {
+      ...createEmptyUserScene('main', 'Main'),
+      subCueOrder: ['v2'],
+      subCues: { v2: { id: 'v2', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 1000 } },
+    };
+    const stream = streamWithScenes({ 'audio-loop': audioLoop, 'visual-loop': visualLoop, main }, ['audio-loop', 'visual-loop', 'main']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: { vid: 5 }, audioDurations: { aud: 5 } });
+
+    expect(schedule.status).toBe('valid');
+    expect(schedule.expectedDurationMs).toBe(1000);
+    expect(schedule.threadPlan?.threads.filter((thread) => thread.detachedReason === 'infinite-loop').map((thread) => thread.rootSceneId)).toEqual([
+      'audio-loop',
+      'visual-loop',
+    ]);
+    expect(schedule.mainSegments?.map((segment) => segment.rootSceneId)).toEqual(['main']);
+  });
+
+  it('detaches the owning thread when an auto-follow child has an infinite loop', () => {
+    const root = {
+      ...createEmptyUserScene('root', 'Root'),
+      subCueOrder: ['v1'],
+      subCues: { v1: { id: 'v1', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 1000 } },
+    };
+    const child = {
+      ...createEmptyUserScene('child', 'Child'),
+      trigger: { type: 'follow-start' as const, followsSceneId: 'root' },
+      loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
+      subCueOrder: ['v2'],
+      subCues: { v2: { id: 'v2', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 1000 } },
+    };
+    const main = {
+      ...createEmptyUserScene('main', 'Main'),
+      subCueOrder: ['v3'],
+      subCues: { v3: { id: 'v3', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 2000 } },
+    };
+    const stream = streamWithScenes({ root, child, main }, ['root', 'child', 'main']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: { vid: 5 }, audioDurations: {} });
+
+    expect(schedule.status).toBe('valid');
+    expect(schedule.threadPlan?.threads.find((thread) => thread.rootSceneId === 'root')).toMatchObject({ detachedReason: 'infinite-loop' });
+    expect(schedule.mainSegments?.map((segment) => segment.rootSceneId)).toEqual(['main']);
+    expect(schedule.expectedDurationMs).toBe(2000);
   });
 
   it('reports follow-end scenes blocked by unknown predecessor ends', () => {
