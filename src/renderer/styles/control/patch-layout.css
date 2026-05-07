@@ -206,7 +206,9 @@ body.extraction-blocked .nav-rail {
   text-align: center;
 }
 
-.status-chip[data-state="live"] {
+.status-chip[data-state="live"],
+.status-chip[data-state="running"],
+.status-chip[data-state="preloading"] {
   border-color: var(--status-live-border);
   background: var(--status-live-bg);
   color: var(--status-live-text);
@@ -217,9 +219,15 @@ body.extraction-blocked .nav-rail {
   color: var(--status-blocked-text);
 }
 
-.status-chip[data-state="degraded"] {
+.status-chip[data-state="degraded"],
+.status-chip[data-state="paused"] {
   border-color: var(--accent-ochre);
   color: var(--accent-ochre);
+}
+
+.status-chip[data-state="complete"] {
+  border-color: var(--text-secondary);
+  color: var(--text-secondary);
 }
 
 .transport-cluster button.active {
@@ -382,4 +390,3 @@ body.extraction-blocked .nav-rail {
   padding: 0;
   list-style: none;
 }
-

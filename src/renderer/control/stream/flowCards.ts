@@ -150,9 +150,11 @@ export function createFlowSceneCard(args: {
   });
   card.addEventListener('contextmenu', (event) => handlers.showContextMenu(event, node.sceneId));
   card.addEventListener('pointerdown', (event) => {
-    if ((event.target as HTMLElement).closest('button, .stream-flow-resize-handle')) {
+    event.stopPropagation();
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button, .stream-flow-resize-handle')) {
       return;
     }
+    event.preventDefault();
     handlers.beginDrag(event, node.sceneId);
   });
   resize.addEventListener('pointerdown', (event) => {
@@ -163,4 +165,3 @@ export function createFlowSceneCard(args: {
   card.title = `${node.title} - ${stream.label}`;
   return card;
 }
-

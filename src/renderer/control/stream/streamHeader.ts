@@ -90,7 +90,7 @@ export function createGlobalStreamPlayCommand(args: {
 export function deriveStreamWorkspaceLiveStateLabel(args: {
   runtime: StreamEnginePublicState['runtime'];
   playbackTimeline: StreamEnginePublicState['playbackTimeline'];
-}): 'LIVE' | 'STANDBY' | 'BLOCKED' | 'DEGRADED' {
+}): 'IDLE' | 'PRELOADING' | 'RUNNING' | 'PAUSED' | 'COMPLETE' | 'BLOCKED' | 'DEGRADED' {
   const { runtime, playbackTimeline } = args;
   if (playbackTimeline.status === 'invalid' || runtime?.status === 'failed') {
     return 'BLOCKED';
@@ -101,11 +101,18 @@ export function deriveStreamWorkspaceLiveStateLabel(args: {
   if (playbackTimeline.issues.some((issue) => issue.severity === 'warning')) {
     return 'DEGRADED';
   }
-  const status = runtime?.status;
-  if (status === 'running' || status === 'preloading') {
-    return 'LIVE';
+  switch (runtime?.status) {
+    case 'preloading':
+      return 'PRELOADING';
+    case 'running':
+      return 'RUNNING';
+    case 'paused':
+      return 'PAUSED';
+    case 'complete':
+      return 'COMPLETE';
+    default:
+      return 'IDLE';
   }
-  return 'STANDBY';
 }
 
 function playableSceneId(
@@ -345,7 +352,9 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
 export function syncStreamHeaderRuntime(
   headerEl: HTMLElement,
   runtime: StreamEnginePublicState['runtime'],
+  playbackStream: PersistedStreamConfig,
   playbackTimeline: StreamEnginePublicState['playbackTimeline'],
+  playbackFocusSceneId: string | undefined,
   currentState: DirectorState | undefined,
 ): void {
   const currentMs = getStreamCurrentMs(runtime, currentState);
@@ -362,6 +371,39 @@ export function syncStreamHeaderRuntime(
     const label = deriveStreamWorkspaceLiveStateLabel({ runtime, playbackTimeline });
     liveChip.textContent = label;
     liveChip.dataset.state = label.toLowerCase();
+  }
+  const transportState = deriveStreamTransportUiState({
+    runtime,
+    playbackTimeline,
+    playbackFocusSceneId,
+    playbackStream,
+    isPatchTransportPlaying: currentState?.paused === false,
+  });
+  const back = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="back"]');
+  if (back) {
+    back.disabled = transportState.backDisabled;
+  }
+  const play = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="play"]');
+  if (play) {
+    play.disabled = transportState.playDisabled;
+    const playbackFocusPlayable = playableSceneId(playbackStream, playbackTimeline, playbackFocusSceneId) !== undefined;
+    const playTooltip =
+      transportState.playDisabledReason ??
+      (runtime?.status === 'paused'
+        ? 'Resume stream'
+        : playbackFocusPlayable
+          ? 'Play from playback focus'
+          : 'Play from cursor');
+    play.title = playTooltip;
+    play.setAttribute('aria-label', playTooltip);
+  }
+  const pause = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="pause"]');
+  if (pause) {
+    pause.disabled = transportState.pauseDisabled;
+  }
+  const next = headerEl.querySelector<HTMLButtonElement>('[data-stream-transport-action="next"]');
+  if (next) {
+    next.disabled = transportState.nextDisabled;
   }
   const slider = headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]');
   const sliderWrap = slider?.closest<HTMLElement>('.timeline-control');
@@ -504,6 +546,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   const back = createButton('Back to first', 'secondary', () => {
     void window.xtream.stream.transport({ type: 'back-to-first' }).then(syncReferenceFromTransport);
   });
+  back.dataset.streamTransportAction = 'back';
   decorateIconButton(back, 'SkipBack', 'Back to first scene');
   back.disabled = transportState.backDisabled;
   const play = createButton(
@@ -519,6 +562,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
         }),
       ),
   );
+  play.dataset.streamTransportAction = 'play';
   const playDisabledDetail =
     transportState.playDisabledReason && ctx.playbackTimeline.status === 'invalid' && timelineIssue ? timelineIssue : transportState.playDisabledReason;
   const playTooltip =
@@ -531,11 +575,13 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   decorateIconButton(play, 'Play', playTooltip);
   play.disabled = transportState.playDisabled;
   const pause = createButton('Pause', 'secondary', () => void window.xtream.stream.transport({ type: 'pause' }));
+  pause.dataset.streamTransportAction = 'pause';
   decorateIconButton(pause, 'Pause', 'Pause stream');
   pause.disabled = transportState.pauseDisabled;
   const next = createButton('Next', 'secondary', () => {
     void window.xtream.stream.transport({ type: 'jump-next', referenceSceneId: playbackFocusSceneId }).then(syncReferenceFromTransport);
   });
+  next.dataset.streamTransportAction = 'next';
   decorateIconButton(next, 'SkipForward', 'Jump to next scene');
   next.disabled = transportState.nextDisabled;
   transport.append(back, play, pause, next, createRateButton(ctx));

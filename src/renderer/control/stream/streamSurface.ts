@@ -209,7 +209,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   function createRenderSignature(state: DirectorState): string {
     const signatureState = stripRuntimeMediaFromState(state);
     return JSON.stringify({
-      stream: createStableStreamRenderModel(streamState),
+      stream: createStructuralStreamRenderModel(streamState),
       sceneEditSceneId,
       playbackFocusSceneId,
       sceneEditSelection,
@@ -241,92 +241,40 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     });
   }
 
-  function createStableStreamRenderModel(state: StreamEnginePublicState | undefined): unknown {
+  function createStructuralStreamRenderModel(state: StreamEnginePublicState | undefined): unknown {
     if (!state) {
       return undefined;
     }
     return {
-      stream: state.stream,
+      stream: createStreamContentRenderModel(state.stream),
+      playbackStream: createStreamContentRenderModel(state.playbackStream),
+      playbackTimeline: createStableTimelineRenderModel(state.playbackTimeline),
       validationMessages: state.validationMessages,
-      runtime: state.runtime ? createStableRuntimeRenderModel(state.runtime) : null,
     };
   }
 
-  function createStableRuntimeRenderModel(runtime: NonNullable<StreamEnginePublicState['runtime']>): unknown {
+  function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown {
+    const { flowViewport: _flowViewport, scenes, ...rest } = stream;
     return {
-      status: runtime.status,
-      cursorSceneId: runtime.cursorSceneId,
-      expectedDurationMs: runtime.expectedDurationMs,
-      timelineNotice: runtime.timelineNotice,
-      sceneStates: Object.fromEntries(
-        Object.entries(runtime.sceneStates).map(([id, scene]) => [
-          id,
-          {
-            status: scene.status,
-            scheduledStartMs: scene.scheduledStartMs,
-            startedAtStreamMs: scene.startedAtStreamMs,
-            endedAtStreamMs: scene.endedAtStreamMs,
-            error: scene.error,
-          },
-        ]),
+      ...rest,
+      scenes: Object.fromEntries(
+        Object.entries(scenes).map(([id, scene]) => {
+          const { flow: _flow, ...sceneWithoutFlow } = scene;
+          return [id, sceneWithoutFlow];
+        }),
       ),
-      timelineInstances: Object.fromEntries(
-        Object.entries(runtime.timelineInstances ?? {})
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([id, timeline]) => [
-            id,
-            {
-              kind: timeline.kind,
-              status: timeline.status,
-              orderedThreadInstanceIds: [...timeline.orderedThreadInstanceIds],
-              durationMs: timeline.durationMs,
-            },
-          ]),
-      ),
-      threadInstances: Object.fromEntries(
-        Object.entries(runtime.threadInstances ?? {})
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([id, instance]) => [
-            id,
-            {
-              canonicalThreadId: instance.canonicalThreadId,
-              timelineId: instance.timelineId,
-              rootSceneId: instance.rootSceneId,
-              launchSceneId: instance.launchSceneId,
-              launchLocalMs: instance.launchLocalMs,
-              state: instance.state,
-              timelineStartMs: instance.timelineStartMs,
-              durationMs: instance.durationMs,
-              copiedFromThreadInstanceId: instance.copiedFromThreadInstanceId,
-            },
-          ]),
-      ),
-      mainTimelineId: runtime.mainTimelineId,
-      timelineOrder: runtime.timelineOrder,
-      activeAudioSubCues: [...(runtime.activeAudioSubCues ?? [])]
-        .slice()
-        .sort((a, b) => {
-          const k = `${a.sceneId}|${a.subCueId}|${a.outputId}|${a.audioSourceId}`;
-          return k.localeCompare(`${b.sceneId}|${b.subCueId}|${b.outputId}|${b.audioSourceId}`);
-        })
-        .map((cue) => ({
-          sceneId: cue.sceneId,
-          subCueId: cue.subCueId,
-          outputId: cue.outputId,
-          audioSourceId: cue.audioSourceId,
-        })),
-      activeVisualSubCues: [...(runtime.activeVisualSubCues ?? [])]
-        .slice()
-        .sort((a, b) => {
-          const ka = `${a.sceneId}|${a.subCueId}|${a.visualId}|${a.target.displayId}|${a.target.zoneId ?? ''}`;
-          return ka.localeCompare(`${b.sceneId}|${b.subCueId}|${b.visualId}|${b.target.displayId}|${b.target.zoneId ?? ''}`);
-        })
-        .map((cue) => ({
-          sceneId: cue.sceneId,
-          subCueId: cue.subCueId,
-          visualId: cue.visualId,
-          target: cue.target,
-        })),
+    };
+  }
+
+  function createStableTimelineRenderModel(timeline: StreamEnginePublicState['playbackTimeline']): unknown {
+    return {
+      status: timeline.status,
+      expectedDurationMs: timeline.expectedDurationMs,
+      entries: timeline.entries,
+      threadPlan: timeline.threadPlan,
+      mainSegments: timeline.mainSegments,
+      issues: timeline.issues,
+      notice: timeline.notice,
     };
   }
 
@@ -482,6 +430,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       const workspace = requireRef('workspace');
       syncWorkspaceSceneSelection(workspace, playbackFocusSceneId, sceneEditSceneId);
       syncListRuntimeChrome(workspace, streamState, currentState);
+      syncStreamFlowModeRuntimeChrome(workspace, streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
       syncListDragAppearance(workspace, listDragSceneId);
       syncStreamGanttRuntimeChrome(workspace, streamState);
     }
@@ -491,21 +440,21 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function canSyncRuntimeOnly(previous: StreamEnginePublicState | undefined, next: StreamEnginePublicState): boolean {
-    if (!previous || !previous.runtime || !next.runtime) {
+    if (!previous) {
       return false;
     }
     return createNonVolatileStreamSignature(previous) === createNonVolatileStreamSignature(next);
   }
 
   function createNonVolatileStreamSignature(state: StreamEnginePublicState): string {
-    return JSON.stringify(createStableStreamRenderModel(state));
+    return JSON.stringify(createStructuralStreamRenderModel(state));
   }
 
   function syncRuntimeDom(): void {
     if (!mounted || !currentState || !streamState) {
       return;
     }
-    syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackTimeline, currentState);
+    syncStreamHeaderRuntime(requireRef('header'), streamState.runtime, streamState.playbackStream, streamState.playbackTimeline, playbackFocusSceneId, currentState);
     syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
     syncStreamFlowModeRuntimeChrome(requireRef('workspace'), streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
     syncStreamGanttRuntimeChrome(requireRef('workspace'), streamState);
@@ -555,7 +504,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mediaPool?.syncPoolSelectionHighlight(mediaState);
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncListRuntimeChrome(requireRef('workspace'), pub, currentState);
+    syncStreamFlowModeRuntimeChrome(requireRef('workspace'), pub, currentState, playbackFocusSceneId, sceneEditSceneId);
     syncListDragAppearance(requireRef('workspace'), listDragSceneId);
+    syncStreamGanttRuntimeChrome(requireRef('workspace'), pub);
     mixerPanel?.syncOutputMeters(currentState);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(currentState);
     syncSceneEditRunningLock();
@@ -756,6 +707,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       refreshSceneSelectionUi,
       mode,
       setMode: (m) => {
+        if (mode !== m) {
+          lastWorkspacePaneSignature = '';
+        }
         mode = m;
       },
     };

@@ -1,6 +1,7 @@
 import type {
   AudioSourceId,
   DirectorState,
+  PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
   VisualId,
@@ -64,6 +65,19 @@ function mediaDigestForWorkspace(director: DirectorState, stream: PersistedStrea
   };
 }
 
+function streamDigestForWorkspace(stream: PersistedStreamConfig): PersistedStreamConfig {
+  const { flowViewport: _flowViewport, scenes, ...rest } = stream;
+  return {
+    ...rest,
+    scenes: Object.fromEntries(
+      Object.entries(scenes).map(([id, scene]) => {
+        const { flow: _flow, ...sceneWithoutFlow } = scene as PersistedSceneConfig;
+        return [id, sceneWithoutFlow];
+      }),
+    ) as PersistedStreamConfig['scenes'],
+  };
+}
+
 export type StreamWorkspacePaneSignatureInput = {
   mode: StreamMode;
   stream: PersistedStreamConfig;
@@ -78,11 +92,10 @@ export function createStreamWorkspacePaneSignature(input: StreamWorkspacePaneSig
   const expanded = [...input.expandedListSceneIds].filter((id) => input.stream.scenes[id]).sort((a, b) => a.localeCompare(b));
   return JSON.stringify({
     mode: input.mode,
-    stream: input.stream,
+    stream: streamDigestForWorkspace(input.stream),
     expandedListSceneIds: expanded,
     media: mediaDigestForWorkspace(input.directorState, input.stream),
     validationMessages: input.validationMessages,
     playbackTimelineStatus: input.playbackTimelineStatus,
   });
 }
-

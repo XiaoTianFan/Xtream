@@ -113,6 +113,15 @@ function applyRectToCard(root: HTMLElement, sceneId: SceneId, rect: FlowRect): v
   card.style.height = `${rect.height}px`;
 }
 
+function applyOverlayBounds(overlay: SVGSVGElement, bounds: FlowRect): void {
+  const pad = 420;
+  overlay.setAttribute('viewBox', `${bounds.x - pad} ${bounds.y - pad} ${bounds.width + pad * 2} ${bounds.height + pad * 2}`);
+  overlay.style.left = `${bounds.x - pad}px`;
+  overlay.style.top = `${bounds.y - pad}px`;
+  overlay.style.width = `${bounds.width + pad * 2}px`;
+  overlay.style.height = `${bounds.height + pad * 2}px`;
+}
+
 async function duplicateScene(stream: PersistedStreamConfig, sceneId: SceneId, ctx: StreamFlowModeContext): Promise<void> {
   const source = stream.scenes[sceneId];
   const sourceFlow = source?.flow;
@@ -221,6 +230,8 @@ function renderCards(args: {
   }
 
   const beginDrag = (event: PointerEvent, sceneId: SceneId) => {
+    event.preventDefault();
+    event.stopPropagation();
     const start = canvas.screenToFlow(event);
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
@@ -247,10 +258,13 @@ function renderCards(args: {
       }
       renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
     };
-    const up = (upEvent: PointerEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
+    const cleanup = (upEvent: PointerEvent) => {
+      if (target.hasPointerCapture(upEvent.pointerId)) {
+        target.releasePointerCapture(upEvent.pointerId);
+      }
       target.removeEventListener('pointermove', move);
-      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointerup', cleanup);
+      target.removeEventListener('pointercancel', cleanup);
       void Promise.all(
         movedIds.map((id) =>
           window.xtream.stream.edit({
@@ -259,13 +273,16 @@ function renderCards(args: {
             update: { flow: flowRectPatch(projection.nodesBySceneId[id].rect) },
           }),
         ),
-      ).then(() => ctx.requestRender());
+      );
     };
     target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', up, { once: true });
+    target.addEventListener('pointerup', cleanup, { once: true });
+    target.addEventListener('pointercancel', cleanup, { once: true });
   };
 
   const beginResize = (event: PointerEvent, sceneId: SceneId) => {
+    event.preventDefault();
+    event.stopPropagation();
     const start = canvas.screenToFlow(event);
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
@@ -284,14 +301,18 @@ function renderCards(args: {
       applyRectToCard(root, sceneId, node.rect);
       renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
     };
-    const up = (upEvent: PointerEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
+    const cleanup = (upEvent: PointerEvent) => {
+      if (target.hasPointerCapture(upEvent.pointerId)) {
+        target.releasePointerCapture(upEvent.pointerId);
+      }
       target.removeEventListener('pointermove', move);
-      target.removeEventListener('pointerup', up);
-      void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(node.rect) } }).then(() => ctx.requestRender());
+      target.removeEventListener('pointerup', cleanup);
+      target.removeEventListener('pointercancel', cleanup);
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(node.rect) } });
     };
     target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', up, { once: true });
+    target.addEventListener('pointerup', cleanup, { once: true });
+    target.addEventListener('pointercancel', cleanup, { once: true });
   };
 
   for (const node of projection.nodes) {
@@ -332,13 +353,12 @@ function renderCards(args: {
             ctx.refreshSceneSelectionUi();
             void window.xtream.stream.transport({ type: 'play', sceneId: id, source: 'flow-card' });
           },
-          addFollower: (id, anchor) => {
+          addFollower: (id, _anchor) => {
             void window.xtream.stream
               .edit({
                 type: 'create-scene',
                 afterSceneId: id,
                 trigger: { type: 'follow-end', followsSceneId: id },
-                flow: { x: anchor.x, y: anchor.y, width: 214, height: 136 },
               })
               .then((state) => {
                 const idx = state.stream.sceneOrder.indexOf(id);
@@ -422,6 +442,7 @@ export function syncStreamFlowModeRuntimeChrome(
     if (!card) {
       continue;
     }
+    applyRectToCard(root, node.sceneId, node.rect);
     for (const cl of [...card.classList]) {
       if (cl.startsWith('status-')) {
         card.classList.remove(cl);
@@ -447,6 +468,6 @@ export function syncStreamFlowModeRuntimeChrome(
       bar?.remove();
     }
   }
+  applyOverlayBounds(overlay, projection.bounds);
   renderFlowLinks(overlay, projection, streamState.runtime?.status === 'running');
 }
-

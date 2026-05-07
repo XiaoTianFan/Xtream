@@ -169,6 +169,8 @@ describe('deriveStreamGanttProjection', () => {
     const copy = projection.lanes[1]!.bars[0]!;
 
     expect(main.cursorPercent).toBe(50);
+    expect(main.minWidthPx).toBeGreaterThan(main.trackMinWidthPx);
+    expect(main.trackMinWidthPx).toBeGreaterThanOrEqual(560);
     expect(b.leftPercent).toBeCloseTo(33.333, 2);
     expect(b.widthPercent).toBeCloseTo(66.667, 2);
     expect(b.cursorPercent).toBe(25);

@@ -106,6 +106,8 @@ describe('createStreamGanttMode', () => {
     expect(root.querySelector<HTMLElement>('.stream-gantt-lane-header strong')?.textContent).toBe('Main timeline');
     expect(root.querySelector<HTMLElement>('.stream-gantt-bar-title')?.textContent).toBe('Alpha');
     expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.getPropertyValue('--stream-gantt-cursor')).toBe('50.000%');
+    expect(root.querySelector<HTMLElement>('.stream-gantt-lane')?.style.minWidth).toMatch(/\d+px/);
+    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toMatch(/\d+px/);
   });
 
   it('renders an empty state when playback has not created runtime timelines', () => {

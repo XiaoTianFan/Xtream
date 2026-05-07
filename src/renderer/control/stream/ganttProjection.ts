@@ -39,6 +39,8 @@ export type StreamGanttLaneProjection = {
   cursorMs: number;
   durationMs: number;
   cursorPercent: number;
+  minWidthPx: number;
+  trackMinWidthPx: number;
   bars: StreamGanttBarProjection[];
 };
 
@@ -97,6 +99,16 @@ function createLaneLabel(timeline: StreamRuntimeTimelineInstance, parallelIndex:
     return 'Main timeline';
   }
   return `Parallel ${parallelIndex}`;
+}
+
+function laneWidthForTimeline(durationMs: number, instanceCount: number): { minWidthPx: number; trackMinWidthPx: number } {
+  const durationWidth = Math.ceil(durationMs / 1000) * 72;
+  const instanceWidth = Math.max(1, instanceCount) * 220;
+  const trackMinWidthPx = Math.max(560, durationWidth, instanceWidth);
+  return {
+    minWidthPx: trackMinWidthPx + 190,
+    trackMinWidthPx,
+  };
 }
 
 function createBarProjection(args: {
@@ -160,6 +172,7 @@ export function deriveStreamGanttProjection(args: {
       .map((id) => runtime.threadInstances?.[id])
       .filter(Boolean) as StreamRuntimeThreadInstance[];
     const durationMs = timelineDuration(timeline, instances);
+    const widths = laneWidthForTimeline(durationMs, instances.length);
     lanes.push({
       id: timeline.id,
       kind: timeline.kind,
@@ -168,6 +181,8 @@ export function deriveStreamGanttProjection(args: {
       cursorMs: Math.max(0, timeline.cursorMs),
       durationMs,
       cursorPercent: percent(timeline.cursorMs, durationMs),
+      minWidthPx: widths.minWidthPx,
+      trackMinWidthPx: widths.trackMinWidthPx,
       bars: instances.map((instance) =>
         createBarProjection({
           stream,

@@ -65,6 +65,7 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
   const row = document.createElement('section');
   row.className = `stream-gantt-lane is-${lane.kind} status-${lane.status}`;
   row.dataset.timelineId = lane.id;
+  row.style.minWidth = `${lane.minWidthPx}px`;
 
   const header = document.createElement('div');
   header.className = 'stream-gantt-lane-header';
@@ -80,6 +81,7 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
 
   const track = document.createElement('div');
   track.className = 'stream-gantt-track';
+  track.style.minWidth = `${lane.trackMinWidthPx}px`;
   track.style.setProperty('--stream-gantt-cursor', `${lane.cursorPercent.toFixed(3)}%`);
   for (const bar of lane.bars) {
     track.append(createBar(bar));
@@ -98,6 +100,7 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
     return;
   }
   if (!streamState) {
+    body.classList.add('stream-gantt-body--centered');
     body.replaceChildren(createEmptyState());
     return;
   }
@@ -107,9 +110,11 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
     runtime: streamState.runtime,
   });
   if (!projection.hasRuntime || projection.lanes.length === 0) {
+    body.classList.add('stream-gantt-body--centered');
     body.replaceChildren(createEmptyState());
     return;
   }
+  body.classList.toggle('stream-gantt-body--centered', projection.lanes.length <= 4);
   body.replaceChildren(...projection.lanes.map(createLane));
 }
 

@@ -140,21 +140,33 @@
 .stream-timeline-segment-progress {
   width: var(--progress, 0%);
   height: 100%;
-  background: var(--stream-rail-progress-segments, var(--accent-teal));
+  background: var(--stream-rail-progress-segments, transparent);
 }
 
 .stream-timeline-slider.stream-timeline-slider {
   position: relative;
   z-index: 1;
+  --slider-fill: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
+  accent-color: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
 }
 
 .stream-timeline-slider.stream-timeline-slider::-webkit-slider-runnable-track {
   background: transparent;
 }
 
+.stream-timeline-slider.stream-timeline-slider::-webkit-slider-thumb {
+  border-color: color-mix(in srgb, var(--surface) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
+}
+
 .stream-timeline-slider.stream-timeline-slider::-moz-range-track,
 .stream-timeline-slider.stream-timeline-slider::-moz-range-progress {
   background: transparent;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-moz-range-thumb {
+  border-color: color-mix(in srgb, var(--surface) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
 }
 
 .stream-scene-title-stack {
@@ -783,8 +795,18 @@
   padding: 0.55rem 0.55rem 0;
   color: var(--text-primary);
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   user-select: none;
+}
+
+.stream-flow-card:active {
+  cursor: grabbing;
+}
+
+.stream-flow-card button {
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .stream-flow-card--threaded {
@@ -1095,6 +1117,10 @@
   padding: var(--pane-padding);
 }
 
+.stream-gantt-body--centered {
+  justify-content: center;
+}
+
 .stream-gantt-empty {
   display: grid;
   align-content: center;
@@ -1114,10 +1140,12 @@
 
 .stream-gantt-lane {
   display: grid;
-  grid-template-columns: minmax(8.5rem, 0.18fr) minmax(18rem, 1fr);
+  grid-template-columns: 10.5rem minmax(18rem, 1fr);
   gap: var(--gutter);
   align-items: stretch;
   min-height: 4.25rem;
+  width: 100%;
+  max-width: none;
 }
 
 .stream-gantt-lane-header {

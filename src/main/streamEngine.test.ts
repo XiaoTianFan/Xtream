@@ -447,6 +447,8 @@ describe('StreamEngine', () => {
   });
 
   it('launching a middle scene skips earlier scenes in the same thread', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 60 }, v2: { id: 'v2', durationSeconds: 10 } } as DirectorState['visuals'],
     });

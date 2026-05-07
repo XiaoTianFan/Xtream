@@ -80,6 +80,8 @@ const CARD_WIDTH = 214;
 const CARD_HEIGHT = 136;
 const THREAD_GAP_X = 300;
 const SCENE_GAP_X = 250;
+const CARD_GAP_X = SCENE_GAP_X - CARD_WIDTH;
+const THREAD_CARD_GAP_X = THREAD_GAP_X - CARD_WIDTH;
 const BRANCH_GAP_Y = 178;
 const MAIN_BASELINE_Y = 230;
 const SIDE_THREAD_Y = 34;
@@ -119,8 +121,65 @@ function threadOrder(timeline: CalculatedStreamTimeline | undefined): StreamCano
 }
 
 function branchIndexForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId): number {
-  const explicit = thread.branches.findIndex((branch) => branch.sceneIds.includes(sceneId));
-  return explicit >= 0 ? explicit : 0;
+  const sceneTiming = thread.sceneTimings[sceneId];
+  const sceneStartMs = sceneTiming?.threadLocalStartMs;
+  const candidates = thread.branches
+    .map((branch, index) => ({ branch, index, depth: branch.sceneIds.indexOf(sceneId) }))
+    .filter((candidate) => candidate.depth >= 0);
+  if (candidates.length === 0) {
+    return 0;
+  }
+  if (
+    candidates.length > 1 &&
+    candidates.every((candidate) => candidate.depth === candidates[0].depth) &&
+    candidates.every((candidate) => {
+      const candidatePrefix = candidate.branch.sceneIds.slice(0, candidate.depth + 1).join('|');
+      const firstPrefix = candidates[0].branch.sceneIds.slice(0, candidates[0].depth + 1).join('|');
+      return candidatePrefix === firstPrefix;
+    })
+  ) {
+    return 0;
+  }
+  const nonSharedCandidates = candidates.filter((candidate) => candidate.depth > 0);
+  const candidatePool = nonSharedCandidates.length > 0 ? nonSharedCandidates : candidates;
+  const timed = candidatePool.find((candidate) => {
+    const predecessorId = candidate.branch.sceneIds[candidate.depth - 1];
+    if (!predecessorId || sceneStartMs === undefined) {
+      return false;
+    }
+    const predecessorEndMs = thread.sceneTimings[predecessorId]?.threadLocalEndMs;
+    return predecessorEndMs === undefined || sceneStartMs >= predecessorEndMs;
+  });
+  return branchLaneOffset(thread, (timed ?? candidatePool[0] ?? candidates[0]).index);
+}
+
+function longestBranchIndexForThread(thread: StreamCanonicalThreadPlan): number {
+  const longestBranchKey = thread.longestBranchSceneIds.join('|');
+  return Math.max(
+    0,
+    thread.branches.findIndex((branch) => branch.sceneIds.join('|') === longestBranchKey),
+  );
+}
+
+function branchLaneOffset(thread: StreamCanonicalThreadPlan, branchIndex: number): number {
+  const longestBranchIndex = longestBranchIndexForThread(thread);
+  if (branchIndex === longestBranchIndex) {
+    return 0;
+  }
+  const sideBranches = thread.branches
+    .map((branch, index) => ({ branch, index }))
+    .filter((candidate) => candidate.index !== longestBranchIndex)
+    .sort((a, b) => {
+      const durationA = a.branch.durationMs ?? 0;
+      const durationB = b.branch.durationMs ?? 0;
+      return durationB - durationA || a.index - b.index;
+    });
+  const rank = sideBranches.findIndex((candidate) => candidate.index === branchIndex);
+  if (rank < 0) {
+    return 0;
+  }
+  const distance = Math.floor(rank / 2) + 1;
+  return rank % 2 === 0 ? -distance : distance;
 }
 
 function branchDepthForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId): number {
@@ -129,45 +188,104 @@ function branchDepthForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId
   return idx >= 0 ? idx : Math.max(0, thread.sceneIds.indexOf(sceneId));
 }
 
+function sceneFlowWidth(stream: PersistedStreamConfig, sceneId: SceneId): number {
+  const width = stream.scenes[sceneId]?.flow?.width;
+  return width !== undefined && Number.isFinite(width) ? Math.max(170, width) : CARD_WIDTH;
+}
+
+function createThreadSceneLocalX(stream: PersistedStreamConfig, thread: StreamCanonicalThreadPlan): Map<SceneId, number> {
+  const localX = new Map<SceneId, number>();
+  for (const branch of thread.branches.length > 0 ? thread.branches : [{ sceneIds: thread.sceneIds }]) {
+    for (const [index, sceneId] of branch.sceneIds.entries()) {
+      const previousSceneId = branch.sceneIds[index - 1];
+      const x = previousSceneId === undefined ? 0 : (localX.get(previousSceneId) ?? 0) + sceneFlowWidth(stream, previousSceneId) + CARD_GAP_X;
+      localX.set(sceneId, Math.max(localX.get(sceneId) ?? 0, x));
+    }
+  }
+  for (const [index, sceneId] of thread.sceneIds.entries()) {
+    if (!localX.has(sceneId)) {
+      const previousSceneId = thread.sceneIds[index - 1];
+      localX.set(sceneId, previousSceneId === undefined ? 0 : (localX.get(previousSceneId) ?? 0) + sceneFlowWidth(stream, previousSceneId) + CARD_GAP_X);
+    }
+  }
+  return localX;
+}
+
+function threadFlowWidth(stream: PersistedStreamConfig, thread: StreamCanonicalThreadPlan): number {
+  const localX = createThreadSceneLocalX(stream, thread);
+  return Math.max(
+    CARD_WIDTH,
+    ...thread.sceneIds.map((sceneId) => (localX.get(sceneId) ?? 0) + sceneFlowWidth(stream, sceneId)),
+  );
+}
+
+function rectKey(rect: FlowRect): string {
+  return `${Math.round(rect.x)}:${Math.round(rect.y)}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
+}
+
+function shouldUseDefaultRectForDuplicateFlow(scene: PersistedSceneConfig, duplicateFlowKeys: ReadonlySet<string>): boolean {
+  if (!scene.flow || !isFollowTrigger(scene)) {
+    return false;
+  }
+  return duplicateFlowKeys.has(rectKey(scene.flow));
+}
+
+function duplicateAutoFollowFlowKeys(stream: PersistedStreamConfig): Set<string> {
+  const counts = new Map<string, number>();
+  for (const sceneId of stream.sceneOrder) {
+    const scene = stream.scenes[sceneId];
+    if (!scene?.flow || !isFollowTrigger(scene)) {
+      continue;
+    }
+    const key = rectKey(scene.flow);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
+}
+
 function calculateDefaultRects(stream: PersistedStreamConfig, timeline: CalculatedStreamTimeline | undefined): Record<SceneId, FlowRect> {
   const rects: Record<SceneId, FlowRect> = {};
   const orderedThreads = threadOrder(timeline);
   const mainSegments = segmentOrder(timeline);
   const mainDurationMs = mainSegments.at(-1)?.endMs ?? 0;
   const mainThreadIndex = new Map(mainSegments.map((segment, index) => [segment.threadId, index]));
-  const threadX = new Map<StreamThreadId, number>();
-
-  let fallbackIndex = 0;
+  const mainThreadBaseX = new Map<StreamThreadId, number>();
+  let nextMainThreadX = 56;
+  for (const segment of mainSegments) {
+    const thread = orderedThreads.find((candidate) => candidate.threadId === segment.threadId);
+    if (!thread) {
+      continue;
+    }
+    mainThreadBaseX.set(thread.threadId, nextMainThreadX);
+    nextMainThreadX += threadFlowWidth(stream, thread) + THREAD_CARD_GAP_X;
+  }
+  let nextFallbackX = 56;
   for (const thread of orderedThreads) {
     const mainIndex = mainThreadIndex.get(thread.threadId);
+    const localX = createThreadSceneLocalX(stream, thread);
     let baseX: number;
     let baseY: number;
     if (mainIndex !== undefined) {
-      baseX = 56 + mainIndex * THREAD_GAP_X;
+      baseX = mainThreadBaseX.get(thread.threadId) ?? 56 + mainIndex * THREAD_GAP_X;
       baseY = MAIN_BASELINE_Y;
     } else if (thread.rootTriggerType === 'at-timecode') {
       const root = stream.scenes[thread.rootSceneId];
       const ratio =
         root?.trigger.type === 'at-timecode' && mainDurationMs > 0 ? Math.max(0, Math.min(1, root.trigger.timecodeMs / mainDurationMs)) : 0;
-      baseX = 56 + ratio * Math.max(THREAD_GAP_X, Math.max(0, mainSegments.length - 1) * THREAD_GAP_X);
+      baseX = 56 + ratio * Math.max(THREAD_GAP_X, Math.max(0, nextMainThreadX - 56 - CARD_WIDTH));
       baseY = SIDE_THREAD_Y;
     } else {
-      baseX = 56 + fallbackIndex * THREAD_GAP_X;
+      baseX = nextFallbackX;
       baseY = ORPHAN_BASELINE_Y;
-      fallbackIndex += 1;
+      nextFallbackX += threadFlowWidth(stream, thread) + THREAD_CARD_GAP_X;
     }
-    threadX.set(thread.threadId, baseX);
     const branchCount = Math.max(1, thread.branches.length);
-    const longestBranchIndex = Math.max(
-      0,
-      thread.branches.findIndex((branch) => branch.sceneIds.join('|') === thread.longestBranchSceneIds.join('|')),
-    );
     for (const sceneId of thread.sceneIds) {
       const depth = branchDepthForScene(thread, sceneId);
       const branchIndex = branchIndexForScene(thread, sceneId);
-      const yOffset = (branchIndex - longestBranchIndex) * BRANCH_GAP_Y;
+      const yOffset = branchIndex * BRANCH_GAP_Y;
       rects[sceneId] = {
-        x: baseX + depth * SCENE_GAP_X,
+        x: baseX + (localX.get(sceneId) ?? depth * SCENE_GAP_X),
         y: baseY + yOffset + (branchCount === 1 ? 0 : 22),
         width: CARD_WIDTH,
         height: CARD_HEIGHT,
@@ -278,6 +396,7 @@ export function deriveStreamFlowProjection(args: {
   const threadBySceneId = timeline?.threadPlan?.threadBySceneId ?? {};
   const threadById = new Map((timeline?.threadPlan?.threads ?? []).map((thread) => [thread.threadId, thread]));
   const temporarilyDisabled = new Set(timeline?.threadPlan?.temporarilyDisabledSceneIds ?? []);
+  const duplicateFlowKeys = duplicateAutoFollowFlowKeys(stream);
   const nodesBySceneId: Record<SceneId, FlowSceneNode> = {};
   const warningStubs: FlowWarningStub[] = [];
 
@@ -287,7 +406,8 @@ export function deriveStreamFlowProjection(args: {
       return [];
     }
     const fallbackRect = defaultRects[sceneId] ?? defaultRect();
-    const rect = scene.flow ?? fallbackRect;
+    const useDefaultRect = shouldUseDefaultRectForDuplicateFlow(scene, duplicateFlowKeys);
+    const rect = useDefaultRect ? fallbackRect : scene.flow ?? fallbackRect;
     const threadId = threadBySceneId[sceneId];
     const thread = threadId ? threadById.get(threadId) : undefined;
     const node: FlowSceneNode = {
@@ -295,7 +415,7 @@ export function deriveStreamFlowProjection(args: {
       sceneNumber: index + 1,
       title: scene.title?.trim() || `Scene ${index + 1}`,
       rect,
-      usesDefaultRect: scene.flow === undefined,
+      usesDefaultRect: scene.flow === undefined || useDefaultRect,
       status: sceneRuntimeStatus(scene, args.runtimeSceneStates?.[sceneId], temporarilyDisabled.has(sceneId)),
       progress: args.runtimeSceneStates?.[sceneId]?.progress,
       durationLabel: formatSceneDuration(directorState, scene),

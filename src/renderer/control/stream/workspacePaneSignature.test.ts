@@ -170,4 +170,28 @@ describe('createStreamWorkspacePaneSignature', () => {
     });
     expect(a).toBe(b);
   });
+
+  it('ignores flow viewport and scene card geometry changes', () => {
+    const { stream: base } = getDefaultStreamPersistence();
+    const sceneId = base.sceneOrder[0]!;
+    const dir = minimalDirector({ visuals: {}, audioSources: {} });
+    const moved = structuredClone(base);
+    moved.flowViewport = { x: 20, y: -10, zoom: 1.25 };
+    moved.scenes[sceneId]!.flow = { x: 360, y: 140, width: 360, height: 180 };
+
+    const a = createStreamWorkspacePaneSignature({
+      mode: 'flow',
+      stream: base,
+      expandedListSceneIds: [],
+      directorState: dir,
+    });
+    const b = createStreamWorkspacePaneSignature({
+      mode: 'flow',
+      stream: moved,
+      expandedListSceneIds: [],
+      directorState: dir,
+    });
+
+    expect(a).toBe(b);
+  });
 });

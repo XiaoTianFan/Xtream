@@ -79,8 +79,17 @@ vi.mock('./streamHeader', () => ({
 }));
 
 vi.mock('./workspacePane', () => ({
-  renderStreamWorkspacePane: vi.fn((panel) => {
-    panel.textContent = 'STREAM WORKSPACE';
+  renderStreamWorkspacePane: vi.fn((panel, _stream, ctx) => {
+    const label = document.createElement('span');
+    label.textContent = 'STREAM WORKSPACE';
+    const flow = document.createElement('button');
+    flow.type = 'button';
+    flow.dataset.testModeFlow = 'true';
+    flow.addEventListener('click', () => {
+      ctx.setMode('flow');
+      ctx.requestRender();
+    });
+    panel.replaceChildren(label, flow);
   }),
 }));
 
@@ -167,6 +176,39 @@ function streamPublic(): StreamEnginePublicState {
   } as unknown as StreamEnginePublicState;
 }
 
+function runningStreamPublic(cursorMs = 0): StreamEnginePublicState {
+  const pub = streamPublic();
+  return {
+    ...pub,
+    runtime: {
+      status: 'running',
+      sceneStates: {
+        'scene-a': {
+          sceneId: 'scene-a',
+          status: 'running',
+          scheduledStartMs: 0,
+          progress: cursorMs / 1000,
+        },
+      },
+      currentStreamMs: cursorMs,
+      expectedDurationMs: 1000,
+    },
+  } as unknown as StreamEnginePublicState;
+}
+
+function streamPublicWithFlowLayout(): StreamEnginePublicState {
+  const pub = streamPublic();
+  const stream = structuredClone(pub.stream);
+  stream.flowViewport = { x: 120, y: -40, zoom: 1.2 };
+  stream.scenes['scene-a']!.flow = { x: 440, y: 150, width: 320, height: 156 };
+  return {
+    ...pub,
+    stream,
+    playbackStream: stream,
+    playbackTimeline: { ...pub.playbackTimeline, revision: ((pub.playbackTimeline as { revision?: number }).revision ?? 0) + 1 },
+  };
+}
+
 describe('createStreamSurfaceController state hydration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -223,5 +265,81 @@ describe('createStreamSurfaceController state hydration', () => {
     expect(elements.surfacePanel.textContent).toContain('STREAM HEADER');
     expect(elements.surfacePanel.textContent).toContain('STREAM WORKSPACE');
     expect(elements.surfacePanel.textContent).toContain('STREAM BOTTOM');
+  });
+
+  it('syncs runtime-only updates without rerendering the workspace pane', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { syncStreamHeaderRuntime } = await import('./streamHeader');
+    const { syncStreamFlowModeRuntimeChrome } = await import('./flowMode');
+    const { syncStreamGanttRuntimeChrome } = await import('./ganttMode');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    controller.applyStreamState(runningStreamPublic(500));
+
+    expect(renderStreamWorkspacePane).not.toHaveBeenCalled();
+    expect(syncStreamHeaderRuntime).toHaveBeenCalled();
+    expect(syncStreamFlowModeRuntimeChrome).toHaveBeenCalled();
+    expect(syncStreamGanttRuntimeChrome).toHaveBeenCalled();
+  });
+
+  it('syncs flow viewport and card geometry updates without rerendering the workspace pane', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { syncStreamFlowModeRuntimeChrome } = await import('./flowMode');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => streamPublic(),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    vi.mocked(syncStreamFlowModeRuntimeChrome).mockClear();
+    controller.applyStreamState(streamPublicWithFlowLayout());
+
+    expect(renderStreamWorkspacePane).not.toHaveBeenCalled();
+    expect(syncStreamFlowModeRuntimeChrome).toHaveBeenCalled();
+  });
+
+  it('rerenders the workspace when mode changes during running playback', async () => {
+    const { elements } = await import('../shell/elements');
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    elements.surfacePanel.querySelector<HTMLButtonElement>('[data-test-mode-flow="true"]')?.click();
+
+    expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
   });
 });

@@ -30,40 +30,49 @@ const playableTimeline = timeline('valid', {
 });
 
 describe('deriveStreamWorkspaceLiveStateLabel', () => {
-  it('is STANDBY when idle', () => {
+  it('is IDLE before runtime starts', () => {
     expect(
       deriveStreamWorkspaceLiveStateLabel({
         runtime: null,
         playbackTimeline: timeline('valid'),
       }),
-    ).toBe('STANDBY');
+    ).toBe('IDLE');
   });
 
-  it('is LIVE while running', () => {
+  it('is RUNNING while running', () => {
     expect(
       deriveStreamWorkspaceLiveStateLabel({
         runtime: { status: 'running', sceneStates: {} },
         playbackTimeline: timeline('valid'),
       }),
-    ).toBe('LIVE');
+    ).toBe('RUNNING');
   });
 
-  it('is LIVE while preloading', () => {
+  it('is PRELOADING while preloading', () => {
     expect(
       deriveStreamWorkspaceLiveStateLabel({
         runtime: { status: 'preloading', sceneStates: {} },
         playbackTimeline: timeline('valid'),
       }),
-    ).toBe('LIVE');
+    ).toBe('PRELOADING');
   });
 
-  it('is STANDBY when paused', () => {
+  it('is PAUSED when paused', () => {
     expect(
       deriveStreamWorkspaceLiveStateLabel({
         runtime: { status: 'paused', sceneStates: {} },
         playbackTimeline: timeline('valid'),
       }),
-    ).toBe('STANDBY');
+    ).toBe('PAUSED');
+  });
+
+  it('is COMPLETE when complete', () => {
+    expect(
+      deriveStreamWorkspaceLiveStateLabel({
+        runtime: { status: 'complete', sceneStates: {} },
+        playbackTimeline: timeline('valid'),
+      }),
+    ).toBe('COMPLETE');
   });
 
   it('is BLOCKED when timeline is invalid', () => {
