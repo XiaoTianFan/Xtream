@@ -1,5 +1,17 @@
 # Xtream Runtime Changelog
 
+## v0.2.0
+
+- **Thread-based Stream playback:** Stream can now run scene chains as independent threads, so follow cues, manual starts, skipped scenes, and parallel branches behave more predictably without earlier scenes being accidentally consumed.
+- **Flow mode for scene programming:** The Stream workspace adds a richer Flow view for arranging scene cards, seeing scene relationships, dragging layouts into place, and keeping disabled or manual scenes visually clear while authoring.
+- **Gantt mode for timeline review:** A new Gantt view shows how scenes and threads line up over time, with shared scaling, fit and zoom behavior, lane sizing, and context actions for managing non-main timelines.
+- **Output bus timelines:** Audio and visual output details can now show Gantt-style cue rows, making it easier to inspect what each output is doing and where active cues sit against the running stream.
+- **Better live Stream synchronization:** Stream UI hydration, workspace rendering, playback focus, header controls, scene states, and runtime-only updates are more resilient, so the console stays lined up with the latest stream state during fast playback and editing.
+- **More reliable media and display behavior:** Audio metadata probing is more consistent across source types, source URLs are resolved more carefully, and visual display layers use steadier projection keys so loops, shared cues, and live output rendering stay in sync.
+- **Flow and layout recovery tools:** Operators can reset persisted Flow layouts and viewports, keep dragged card positions through runtime updates, and get cleaner toolbar actions while moving between Stream modes.
+- **Thread color and playback settings polish:** Multi-timeline playback settings now normalize to sensible defaults, thread colors are presented consistently, and scene summaries can favor first- or last-instance behavior depending on the show.
+- **Engineering groundwork for the new runtime:** The release includes a substantial stream engine rewrite, a documented thread runtime mechanism, Rete-powered Flow infrastructure, and broad test coverage for the new scheduling, projection, hydration, and timeline behavior.
+
 ## v0.1.6
 
 - **Layout preferences sync across workspaces:** Pane dimensions and layout choices in Patch now carry over to Stream and vice versa, so your workspace stays consistent as you switch contexts.
