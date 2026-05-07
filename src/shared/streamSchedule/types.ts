@@ -8,6 +8,7 @@ import type {
   VisualId,
   VirtualOutputId,
 } from '../types';
+import type { VisualSubCueMediaInfo } from '../visualSubCueTiming';
 
 export type ValidateStreamContentContext = {
   visuals?: ReadonlySet<VisualId>;
@@ -17,6 +18,7 @@ export type ValidateStreamContentContext = {
   audioSourceLabels?: ReadonlyMap<AudioSourceId, string>;
   audioDurations?: ReadonlyMap<AudioSourceId, number>;
   visualLabels?: ReadonlyMap<VisualId, string>;
+  visualMedia?: ReadonlyMap<VisualId, VisualSubCueMediaInfo>;
 };
 
 /** Structured authoring validation (disk + live context); used for messages, UI highlights, and scene runtime `error`. */

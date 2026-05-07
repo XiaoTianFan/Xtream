@@ -101,6 +101,54 @@ describe('streamSchedule', () => {
     expect(estimateSceneDurationMs(scene, {}, {})).toBe(4000);
   });
 
+  it('requires explicit duration for image and live visual media unless they render infinitely', () => {
+    const imageScene = {
+      ...createEmptyUserScene('image-scene', 'Still'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'image',
+          targets: [{ displayId: 'd0' }],
+        },
+      },
+    };
+    const liveScene = {
+      ...createEmptyUserScene('live-scene', 'Camera'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'live',
+          targets: [{ displayId: 'd0' }],
+          durationOverrideMs: 2500,
+        },
+      },
+    };
+
+    expect(
+      estimateSceneDurationMs(imageScene, {}, {}, { image: { id: 'image', kind: 'file', type: 'image' } }),
+    ).toBeUndefined();
+    expect(
+      estimateSceneDurationMs(liveScene, {}, {}, { live: { id: 'live', kind: 'live', type: 'video' } }),
+    ).toBe(2500);
+
+    const infiniteImageScene = {
+      ...imageScene,
+      subCues: {
+        v1: {
+          ...imageScene.subCues.v1,
+          loop: { enabled: true as const, iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    expect(
+      estimateSceneDurationMs(infiniteImageScene, {}, {}, { image: { id: 'image', kind: 'file', type: 'image' } }),
+    ).toBeUndefined();
+  });
+
   it('treats any unknown contributing sub-cue duration as unknown', () => {
     const scene = {
       ...createEmptyUserScene('s1', 'S'),
@@ -618,6 +666,46 @@ describe('streamSchedule', () => {
         expect.stringContaining('invalid level automation point 1 time'),
         expect.stringContaining('invalid level automation point 1 value'),
         expect.stringContaining('invalid pan automation point 1 value'),
+      ]),
+    );
+  });
+
+  it('validates visual duration, fade, and freeze timing fields', () => {
+    const scene = {
+      ...createEmptyUserScene('scene-user', 'User'),
+      subCueOrder: ['v1', 'v2'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          freezeFrameMs: 6000,
+          fadeIn: { durationMs: -1 },
+          fadeOut: { durationMs: Number.NaN },
+        },
+        v2: {
+          id: 'v2',
+          kind: 'visual' as const,
+          visualId: 'image',
+          targets: [{ displayId: 'd0' }],
+        },
+      },
+    };
+    const stream = streamWithScenes({ 'scene-user': scene }, ['scene-user']);
+    const msgs = validateStreamContent(stream, {
+      visuals: new Set(['vid', 'image']),
+      visualMedia: new Map([
+        ['vid', { id: 'vid', kind: 'file', type: 'video', durationSeconds: 5 }],
+        ['image', { id: 'image', kind: 'file', type: 'image' }],
+      ]),
+    });
+    expect(msgs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('freeze frame exceeds visual duration'),
+        expect.stringContaining('invalid fade in duration'),
+        expect.stringContaining('invalid fade out duration'),
+        expect.stringContaining('requires duration or infinite render'),
       ]),
     );
   });

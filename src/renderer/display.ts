@@ -45,6 +45,7 @@ let lastMediaSeekDurationMs: number | undefined;
 const appliedCorrectionRevisions = new Set<number>();
 const videoElements = new Map<VisualId, HTMLVideoElement>();
 const liveVisualCleanups = new Map<VisualId, () => void>();
+const liveFreezeCanvases = new WeakMap<HTMLVideoElement, HTMLCanvasElement>();
 const videoFrameStats = new WeakMap<HTMLVideoElement, VideoFrameStats>();
 const DISPLAY_SYNC_INTERVAL_MS = 500;
 const DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS = 0.5;
@@ -736,13 +737,18 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visual = visualId ? state.visuals[visualId] : undefined;
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
-    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState }) | undefined;
+    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState; runtimeFreezeFrameSeconds?: number }) | undefined;
     const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
-    const effectiveTarget = getMediaEffectiveTime(
-      (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
-      visualDuration,
-      runtime?.runtimeLoop ?? state.loop,
-    );
+    const rawMediaTarget = (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1);
+    const freezeSeconds = runtime?.runtimeFreezeFrameSeconds;
+    const frozen = freezeSeconds !== undefined && Number.isFinite(freezeSeconds) && rawMediaTarget >= freezeSeconds;
+    const effectiveTarget = frozen
+      ? clampFreezeTargetSeconds(freezeSeconds, visualDuration)
+      : getMediaEffectiveTime(
+          rawMediaTarget,
+          visualDuration,
+          runtime?.runtimeLoop ?? state.loop,
+        );
     const syncStateBefore = getMediaSyncState(video);
     const syncKeyChanged = syncStateBefore.lastSyncKey !== syncKey;
     const driftBeforeSeconds = video.currentTime - effectiveTarget;
@@ -762,7 +768,7 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     syncTimedMediaElement(
       video,
       effectiveTarget,
-      !state.paused,
+      !state.paused && !frozen,
       shouldApplyCorrection ? `${syncKey}:correction:${correction.revision}` : syncKey,
       DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS,
       {
@@ -814,11 +820,68 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
       applyVisualStyle(video, visual);
     }
   }
+  syncLiveFreezeElements(state, targetSeconds);
 }
 
 function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
   element.style.opacity = element.closest('.display-layer') ? '1' : String(visual.opacity ?? 1);
   element.style.filter = `brightness(${visual.brightness ?? 1}) contrast(${visual.contrast ?? 1})`;
+}
+
+function clampFreezeTargetSeconds(seconds: number, durationSeconds: number | undefined): number {
+  const safe = Math.max(0, seconds);
+  if (!Number.isFinite(durationSeconds) || durationSeconds === undefined || durationSeconds <= 0) {
+    return safe;
+  }
+  return Math.min(safe, Math.max(0, durationSeconds - 0.001));
+}
+
+function syncLiveFreezeElements(state: DirectorState, targetSeconds: number): void {
+  for (const video of displayRoot.querySelectorAll<HTMLVideoElement>('video[data-visual-id]')) {
+    const visualId = video.dataset.visualId;
+    const visual = visualId ? state.visuals[visualId] : undefined;
+    if (visual?.kind !== 'live') {
+      continue;
+    }
+    const runtime = visual as VisualState & { runtimeOffsetSeconds?: number; runtimeFreezeFrameSeconds?: number };
+    const freezeSeconds = runtime.runtimeFreezeFrameSeconds;
+    const runtimeOffsetSeconds = runtime.runtimeOffsetSeconds ?? 0;
+    const localSeconds = (targetSeconds - runtimeOffsetSeconds) * (visual.playbackRate ?? 1);
+    const shouldFreeze = freezeSeconds !== undefined && Number.isFinite(freezeSeconds) && localSeconds >= freezeSeconds;
+    if (!shouldFreeze) {
+      unfreezeLiveVideo(video);
+      continue;
+    }
+    freezeLiveVideo(video, visual);
+  }
+}
+
+function freezeLiveVideo(video: HTMLVideoElement, visual: VisualState): void {
+  if (liveFreezeCanvases.has(video)) {
+    return;
+  }
+  if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.className = 'display-live-freeze-canvas';
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  applyVisualStyle(canvas, visual);
+  canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+  video.after(canvas);
+  video.style.visibility = 'hidden';
+  liveFreezeCanvases.set(video, canvas);
+}
+
+function unfreezeLiveVideo(video: HTMLVideoElement): void {
+  const canvas = liveFreezeCanvases.get(video);
+  if (!canvas) {
+    return;
+  }
+  canvas.remove();
+  video.style.visibility = '';
+  liveFreezeCanvases.delete(video);
 }
 
 function observeVideoFrames(video: HTMLVideoElement): void {

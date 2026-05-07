@@ -3,6 +3,7 @@ import { deriveStreamThreadPlan } from '../streamThreadPlan';
 import { classifySceneDurationMs } from './durations';
 import { resolveFollowsSceneId } from './triggerGraph';
 import type { StreamSchedule, StreamScheduleEntry, StreamScheduleIssue } from './types';
+import type { VisualSubCueMediaInfo } from '../visualSubCueTiming';
 
 function createUnknownDurationIssue(sceneId: SceneId, scene: PersistedSceneConfig): StreamScheduleIssue {
   return {
@@ -35,6 +36,7 @@ export function buildStreamSchedule(
   durations: {
     visualDurations: Record<VisualId, number>;
     audioDurations: Record<AudioSourceId, number>;
+    visualMedia?: Record<VisualId, VisualSubCueMediaInfo>;
   },
 ): StreamSchedule {
   const entries: Record<SceneId, StreamScheduleEntry> = {};
@@ -45,7 +47,9 @@ export function buildStreamSchedule(
 
   for (const id of stream.sceneOrder) {
     const scene = stream.scenes[id];
-    const classified = scene && !scene.disabled ? classifySceneDurationMs(scene, durations.visualDurations, durations.audioDurations) : undefined;
+    const classified = scene && !scene.disabled
+      ? classifySceneDurationMs(scene, durations.visualDurations, durations.audioDurations, durations.visualMedia)
+      : undefined;
     const durationMs = classified?.classification === 'finite' ? classified.durationMs : undefined;
     if (classified?.classification === 'indefinite-loop') {
       indefiniteLoopSceneIds.add(id);

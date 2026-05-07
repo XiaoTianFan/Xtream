@@ -18,9 +18,11 @@ import type {
   VisualState,
 } from '../shared/types';
 import { clampPitchShiftSemitones, normalizeAudioSourceRange } from '../shared/audioSubCueAutomation';
+import { evaluateVisualSubCueOpacity } from '../shared/visualSubCueTiming';
 
 type RuntimeOffset = {
   runtimeOffsetSeconds?: number;
+  runtimeFreezeFrameSeconds?: number;
   runtimeLoop?: LoopState;
 };
 
@@ -170,8 +172,9 @@ function createStreamVisualLayer(args: {
   nowWallTimeMs: number;
   order: number;
   settings: Required<VisualMingleSettings>;
+  currentMs: number;
 }): StreamDisplayLayer {
-  const { cue, visual, streamState, nowWallTimeMs, order, settings } = args;
+  const { cue, visual, streamState, nowWallTimeMs, order, settings, currentMs } = args;
   const zoneId = cue.target.zoneId ?? 'single';
   const absoluteStartMs = cue.streamStartMs + cue.localStartMs;
   const timelineSort = runtimeTimelineSort(streamState, cue);
@@ -183,13 +186,22 @@ function createStreamVisualLayer(args: {
     cue.target.displayId
   }:${zoneId}${temporalSuffix}`;
   const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
+  const localTimeMs = Math.max(0, currentMs - absoluteStartMs);
+  const authoredOpacity = evaluateVisualSubCueOpacity({
+    localTimeMs,
+    durationMs: cue.localEndMs,
+    baseOpacity: visual.opacity ?? 1,
+    fadeIn: cue.fadeIn,
+    fadeOut: cue.fadeOut,
+  });
   const projectedVisual = {
     ...visual,
     id: layerId,
-    opacity: (visual.opacity ?? 1) * fadeFactor,
+    opacity: authoredOpacity * fadeFactor,
     playbackRate: (visual.playbackRate ?? 1) * cue.playbackRate,
     durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : visual.durationSeconds,
     runtimeOffsetSeconds: absoluteStartMs / 1000,
+    runtimeFreezeFrameSeconds: cue.freezeFrameMs !== undefined ? cue.freezeFrameMs / 1000 : undefined,
     runtimeLoop: cue.mediaLoop,
   } as VisualState & RuntimeOffset;
   return {
@@ -269,7 +281,7 @@ export function buildStreamDisplayFrames(
       continue;
     }
     const settings = normalizeVisualMingleSettings(state.displayVisualMingle?.[display.id]);
-    const layer = createStreamVisualLayer({ cue, visual, streamState, nowWallTimeMs, order, settings });
+    const layer = createStreamVisualLayer({ cue, visual, streamState, nowWallTimeMs, order, settings, currentMs });
     order += 1;
     const byZone = layersByDisplayZone.get(display.id) ?? new Map<DisplayZoneId, StreamDisplayLayer[]>();
     const zoneLayers = byZone.get(layer.zoneId) ?? [];

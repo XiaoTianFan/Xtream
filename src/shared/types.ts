@@ -819,6 +819,9 @@ export type StreamRuntimeVisualSubCue = {
   localStartMs: number;
   localEndMs?: number;
   playbackRate: number;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  freezeFrameMs?: number;
   mediaLoop?: LoopState;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;

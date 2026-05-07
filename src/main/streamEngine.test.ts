@@ -2472,6 +2472,56 @@ describe('StreamEngine', () => {
     expect(state.runtime?.activeAudioSubCues?.filter((cue) => cue.sceneId === 'loop')).toHaveLength(1);
   });
 
+  it('launches a follow-start child at a manual thread boundary after the previous main thread completes while an infinite loop runs', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      audioSources: { 'a-loop': { id: 'a-loop', durationSeconds: 5 } } as DirectorState['audioSources'],
+      visuals: {
+        'v-b': { id: 'v-b', durationSeconds: 1 },
+        'v-c-root': { id: 'v-c-root', durationSeconds: 1 },
+        'v-c-child': { id: 'v-c-child', durationSeconds: 10 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopWithTwoMainThreads(stream);
+    stream.sceneOrder = ['loop', 'b', 'c', 'c-child'];
+    stream.scenes.c.subCueOrder = ['vis'];
+    stream.scenes.c.subCues = { vis: { id: 'vis', kind: 'visual', visualId: 'v-c-root', targets: [{ displayId: 'd1' }] } };
+    stream.scenes['c-child'] = {
+      id: 'c-child',
+      title: 'C child',
+      trigger: { type: 'follow-start', followsSceneId: 'c' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v-c-child', targets: [{ displayId: 'd1' }] } },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.advanceTimersByTime(1_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    vi.advanceTimersByTime(1_100);
+
+    const beforeChild = engine.getPublicState();
+    const pausedMain = beforeChild.runtime?.mainTimelineId ? beforeChild.runtime.timelineInstances?.[beforeChild.runtime.mainTimelineId] : undefined;
+    expect(beforeChild.runtime?.status).toBe('running');
+    expect(pausedMain?.status).toBe('paused');
+    expect(beforeChild.runtime?.sceneStates['c-child']?.status).toBe('ready');
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'c-child', source: 'scene-row' });
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+
+    expect(main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.c?.status).toBe('running');
+    expect(state.runtime?.sceneStates['c-child']?.status).toBe('running');
+    expect(state.runtime?.playbackFocusSceneId).toBe('c-child');
+    expect(state.runtime?.activeVisualSubCues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sceneId: 'c-child', visualId: 'v-c-child' })]),
+    );
+  });
+
   it('header Play fallback starts the first main timeline thread, not an earlier at-timecode side thread', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],

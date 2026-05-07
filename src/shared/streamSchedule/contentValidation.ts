@@ -20,6 +20,7 @@ import {
   validateStreamStructureIssues,
   validateTriggerReferencesIssues,
 } from './structureValidation';
+import { isImageOrLiveVisual } from '../visualSubCueTiming';
 
 function pushLoopIssues(out: StreamScheduleIssue[], messages: string[], sceneId: string, subCueId?: SubCueId): void {
   for (const message of messages) {
@@ -46,6 +47,7 @@ export function validateStreamContextFromDirector(state: DirectorState | undefin
       Object.values(state.audioSources ?? {}).flatMap((s) => (s.durationSeconds !== undefined ? [[s.id, s.durationSeconds] as const] : [])),
     ),
     visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
+    visualMedia: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, { id: v.id, kind: v.kind, type: v.type, durationSeconds: v.durationSeconds }])),
   };
 }
 
@@ -343,6 +345,8 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
         }
       } else if (subCue.kind === 'visual') {
         const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'visual');
+        const visualMedia = context.visualMedia?.get(subCue.visualId);
+        const visualDurationMs = visualMedia?.durationSeconds !== undefined ? visualMedia.durationSeconds * 1000 : undefined;
         pushLoopIssues(
           out,
           createLoopValidationMessages({ policy: subCue.loop, label: `${sceneLabel} · ${ordLabel}` }),
@@ -355,6 +359,55 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
             sceneId,
             subCueId,
             message: `${sceneLabel} · ${ordLabel} references missing visual ${subCue.visualId}`,
+          });
+        }
+        if (
+          isImageOrLiveVisual(visualMedia) &&
+          subCue.durationOverrideMs === undefined &&
+          !(subCue.loop?.enabled && subCue.loop.iterations.type === 'infinite')
+        ) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} requires duration or infinite render for image/live visual media`,
+          });
+        }
+        if (subCue.freezeFrameMs !== undefined && (!Number.isFinite(subCue.freezeFrameMs) || subCue.freezeFrameMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid freeze frame`,
+          });
+        }
+        if (
+          subCue.freezeFrameMs !== undefined &&
+          visualDurationMs !== undefined &&
+          Number.isFinite(subCue.freezeFrameMs) &&
+          subCue.freezeFrameMs > visualDurationMs
+        ) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} freeze frame exceeds visual duration`,
+          });
+        }
+        if (subCue.fadeIn !== undefined && (!Number.isFinite(subCue.fadeIn.durationMs) || subCue.fadeIn.durationMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid fade in duration`,
+          });
+        }
+        if (subCue.fadeOut !== undefined && (!Number.isFinite(subCue.fadeOut.durationMs) || subCue.fadeOut.durationMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid fade out duration`,
           });
         }
         if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.targets.length === 0) {

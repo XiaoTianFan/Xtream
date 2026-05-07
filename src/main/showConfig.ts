@@ -576,6 +576,7 @@ export function validateShowConfigMedia(config: PersistedShowConfig, showConfigP
       displayZones,
       audioSourceLabels: new Map(Object.values(config.audioSources).map((s) => [s.id, s.label])),
       visualLabels: new Map(Object.values(config.visuals).map((v) => [v.id, v.label])),
+      visualMedia: new Map(Object.values(config.visuals).map((v) => [v.id, { id: v.id, kind: v.kind ?? 'file', type: v.type, durationSeconds: undefined }])),
     }),
   ]) {
     issues.push({

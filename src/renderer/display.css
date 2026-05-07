@@ -84,12 +84,19 @@ body {
 
 .display-output video,
 .display-output img,
+.display-output canvas,
 .display-layer video,
-.display-layer img {
+.display-layer img,
+.display-layer canvas {
   width: 100%;
   height: 100%;
   background: #000;
   object-fit: contain;
+}
+
+.display-live-freeze-canvas {
+  position: absolute;
+  inset: 0;
 }
 
 .display-layer--additive {

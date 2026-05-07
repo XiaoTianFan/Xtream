@@ -102,6 +102,7 @@ describe('deriveDirectorStateForStream', () => {
             streamStartMs: 2_000,
             localStartMs: 1_000,
             playbackRate: 0.5,
+            freezeFrameMs: 2500,
             mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 10 },
           },
         ],
@@ -137,8 +138,70 @@ describe('deriveDirectorStateForStream', () => {
     });
     expect(derived.displays.d1.layout).toMatchObject({ type: 'single' });
     const visualId = derived.displays.d1.layout.type === 'single' ? derived.displays.d1.layout.visualId ?? '' : '';
-    expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3, runtimeLoop: { enabled: true, endSeconds: 10 } });
+    expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3, runtimeFreezeFrameSeconds: 2.5, runtimeLoop: { enabled: true, endSeconds: 10 } });
     expect(derived.activeTimeline.durationSeconds).toBe(20);
+  });
+
+  it('applies authored visual fades before projected display opacity', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_250);
+    const state = {
+      paused: true,
+      rate: 1,
+      anchorWallTimeMs: 0,
+      offsetSeconds: 0,
+      loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: 1,
+      globalDisplayBlackoutFadeOutSeconds: 1,
+      visuals: {
+        v1: { id: 'v1', kind: 'file', type: 'video', label: 'Video', url: 'file://video.mp4', durationSeconds: 10, opacity: 0.8, ready: true },
+      },
+      audioSources: {},
+      outputs: {},
+      displays: {
+        d1: { id: 'd1', layout: { type: 'single' }, fullscreen: false, health: 'ready' },
+      },
+      activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+      audioRendererReady: true,
+      readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+      corrections: { displays: {} },
+      previews: {},
+      audioExtractionFormat: 'm4a',
+      controlDisplayPreviewMaxFps: 15,
+      performanceMode: false,
+    } as DirectorState;
+    const streamState = {
+      stream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      validationMessages: [],
+      runtime: {
+        status: 'running',
+        originWallTimeMs: 1_000,
+        offsetStreamMs: 250,
+        currentStreamMs: 250,
+        sceneStates: {},
+        activeVisualSubCues: [
+          {
+            sceneId: 'scene-1',
+            subCueId: 'vis',
+            visualId: 'v1',
+            target: { displayId: 'd1' },
+            streamStartMs: 0,
+            localStartMs: 0,
+            localEndMs: 1000,
+            playbackRate: 1,
+            fadeIn: { durationMs: 500, curve: 'linear' },
+          },
+        ],
+      },
+    } satisfies StreamEnginePublicState;
+
+    const frame = buildStreamDisplayFrames(state, streamState).d1;
+
+    expect(frame.zones[0]?.layers[0]?.opacity).toBeCloseTo(0.4, 5);
   });
 
   it('applies orphan fade metadata to projected audio level and visual opacity', () => {
