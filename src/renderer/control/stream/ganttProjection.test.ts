@@ -213,6 +213,33 @@ describe('deriveStreamGanttProjection', () => {
     expect(parallel.cursorPercent).toBe(75);
   });
 
+  it('grows undefined-duration parallel bars with the running timeline cursor', () => {
+    const early = runtime();
+    early.timelineInstances!['timeline:parallel']!.status = 'running';
+    early.timelineInstances!['timeline:parallel']!.cursorMs = 750;
+    early.timelineInstances!['timeline:parallel']!.durationMs = undefined;
+    early.threadInstances!['c-copy']!.state = 'running';
+    early.threadInstances!['c-copy']!.durationMs = undefined;
+
+    const later = runtime();
+    later.timelineInstances!['timeline:parallel']!.status = 'running';
+    later.timelineInstances!['timeline:parallel']!.cursorMs = 6000;
+    later.timelineInstances!['timeline:parallel']!.durationMs = undefined;
+    later.threadInstances!['c-copy']!.state = 'running';
+    later.threadInstances!['c-copy']!.durationMs = undefined;
+
+    const earlyProjection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: early });
+    const laterProjection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: later });
+    const earlyParallel = earlyProjection.lanes[1]!;
+    const laterParallel = laterProjection.lanes[1]!;
+
+    expect(earlyParallel.bars[0]?.durationMs).toBe(750);
+    expect(laterParallel.bars[0]?.durationMs).toBe(6000);
+    expect(laterParallel.bars[0]?.scaleEndMs).toBeGreaterThan(earlyParallel.bars[0]!.scaleEndMs);
+    expect(laterParallel.trackMinWidthPx).toBeGreaterThanOrEqual(earlyParallel.trackMinWidthPx);
+    expect(laterParallel.cursorMs).toBeGreaterThan(earlyParallel.cursorMs);
+  });
+
   it('projects the planned main timeline when no runtime exists', () => {
     const projection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: null });
 

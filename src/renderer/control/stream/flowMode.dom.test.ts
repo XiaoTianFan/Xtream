@@ -127,6 +127,44 @@ function runningStreamPublic(): StreamEnginePublicState {
   } as unknown as StreamEnginePublicState;
 }
 
+function parallelOnlyStreamPublic(): StreamEnginePublicState {
+  const base = runningStreamPublic();
+  return {
+    ...base,
+    runtime: {
+      ...base.runtime!,
+      mainTimelineId: undefined,
+      offsetStreamMs: 0,
+      currentStreamMs: 500,
+      timelineOrder: ['timeline:parallel'],
+      timelineInstances: {
+        'timeline:parallel': {
+          id: 'timeline:parallel',
+          kind: 'parallel',
+          status: 'running',
+          orderedThreadInstanceIds: ['thread:scene-a:parallel'],
+          cursorMs: 500,
+          spawnedAtStreamMs: 0,
+          offsetMs: 0,
+          originWallTimeMs: 0,
+        },
+      },
+      threadInstances: {
+        'thread:scene-a:parallel': {
+          id: 'thread:scene-a:parallel',
+          canonicalThreadId: 'thread:scene-a',
+          timelineId: 'timeline:parallel',
+          rootSceneId: 'scene-a',
+          launchSceneId: 'scene-a',
+          launchLocalMs: 0,
+          state: 'running',
+          timelineStartMs: 0,
+        },
+      },
+    },
+  };
+}
+
 function streamPublicWithFlow(flow: { x: number; y: number; width: number; height: number }): StreamEnginePublicState {
   const base = runningStreamPublic();
   return {
@@ -239,6 +277,67 @@ describe('createStreamFlowMode', () => {
     expect(root.querySelectorAll('.stream-flow-card')).toHaveLength(1);
     expect(root.querySelector('.stream-flow-card.status-running')).not.toBeNull();
     expect(root.querySelector('.stream-flow-main-curve-glow.is-running')).not.toBeNull();
+  });
+
+  it('keeps the main curve cursor fixed when runtime only has a parallel timeline', async () => {
+    const streamState = parallelOnlyStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    const glow = root.querySelector<SVGPathElement>('.stream-flow-main-curve-glow')!;
+    expect(glow.classList.contains('is-running')).toBe(false);
+    expect(glow.style.getPropertyValue('--stream-flow-main-progress')).toBe('0');
+
+    syncStreamFlowModeRuntimeChrome(
+      root,
+      {
+        ...streamState,
+        runtime: {
+          ...streamState.runtime!,
+          status: 'paused',
+          pausedAtStreamMs: 900,
+          pausedCursorMs: 900,
+          offsetStreamMs: 900,
+          currentStreamMs: 900,
+          timelineInstances: {
+            'timeline:parallel': {
+              ...streamState.runtime!.timelineInstances!['timeline:parallel']!,
+              status: 'paused',
+              cursorMs: 900,
+              offsetMs: 900,
+              pausedAtMs: 900,
+              originWallTimeMs: undefined,
+            },
+          },
+        },
+      },
+      director(),
+      'scene-a',
+      'scene-a',
+    );
+
+    const syncedGlow = root.querySelector<SVGPathElement>('.stream-flow-main-curve-glow')!;
+    expect(syncedGlow.classList.contains('is-running')).toBe(false);
+    expect(syncedGlow.style.getPropertyValue('--stream-flow-main-progress')).toBe('0');
   });
 
   it('renders fit and reset toolbar actions without zoom in/out buttons', async () => {

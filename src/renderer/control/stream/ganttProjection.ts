@@ -75,7 +75,7 @@ function timelineDuration(timeline: StreamRuntimeTimelineInstance, instances: St
   if (timeline.durationMs !== undefined && timeline.durationMs > 0) {
     return timeline.durationMs;
   }
-  const maxEnd = instances.reduce((max, instance) => Math.max(max, instance.timelineStartMs + (instance.durationMs ?? 0)), 0);
+  const maxEnd = instances.reduce((max, instance) => Math.max(max, instance.timelineStartMs + instanceDurationForProjection(timeline, instance)), 0);
   return Math.max(maxEnd, timeline.cursorMs, 0);
 }
 
@@ -117,6 +117,16 @@ function laneWidthForTimeline(durationMs: number, instanceCount: number): { minW
   };
 }
 
+function instanceDurationForProjection(timeline: StreamRuntimeTimelineInstance, instance: StreamRuntimeThreadInstance): number {
+  if (instance.durationMs !== undefined) {
+    return Math.max(0, instance.durationMs);
+  }
+  if (timeline.kind !== 'parallel') {
+    return 0;
+  }
+  return Math.max(0, timeline.cursorMs - instance.timelineStartMs);
+}
+
 function createBarProjection(args: {
   stream: PersistedStreamConfig;
   timeline: StreamRuntimeTimelineInstance;
@@ -126,8 +136,8 @@ function createBarProjection(args: {
   scaleStartMs?: number;
 }): StreamGanttBarProjection {
   const { stream, timeline, timelineDurationMs, instance, color, scaleStartMs: timelineScaleStartMs = 0 } = args;
-  const durationMs = Math.max(0, instance.durationMs ?? 0);
   const startMs = Math.max(0, instance.timelineStartMs);
+  const durationMs = instanceDurationForProjection(timeline, instance);
   const endMs = startMs + durationMs;
   const scaleStartMs = timelineScaleStartMs + startMs;
   const scaleEndMs = scaleStartMs + durationMs;

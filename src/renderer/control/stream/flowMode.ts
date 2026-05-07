@@ -47,7 +47,26 @@ function getRuntimeMainCursorMs(streamState: StreamEnginePublicState | undefined
     return undefined;
   }
   const main = runtime.mainTimelineId ? runtime.timelineInstances?.[runtime.mainTimelineId] : undefined;
-  return main?.cursorMs ?? runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs;
+  if (main?.kind === 'main') {
+    return main.pausedAtMs ?? main.cursorMs ?? main.offsetMs;
+  }
+  const timelineIds = runtime.timelineOrder?.filter((id) => runtime.timelineInstances?.[id]) ?? Object.keys(runtime.timelineInstances ?? {});
+  for (const timelineId of timelineIds) {
+    const timeline = runtime.timelineInstances?.[timelineId];
+    if (timeline?.kind === 'parallel' && timeline.spawnedAtStreamMs !== undefined) {
+      return timeline.spawnedAtStreamMs;
+    }
+  }
+  if (runtime.status === 'running' || runtime.status === 'preloading') {
+    return runtime.pausedAtStreamMs ?? runtime.pausedCursorMs ?? runtime.offsetStreamMs ?? 0;
+  }
+  return runtime.pausedAtStreamMs ?? runtime.pausedCursorMs ?? runtime.currentStreamMs ?? runtime.offsetStreamMs;
+}
+
+function isRuntimeMainTimelineRunning(streamState: StreamEnginePublicState | undefined): boolean {
+  const runtime = streamState?.runtime;
+  const main = runtime?.mainTimelineId ? runtime.timelineInstances?.[runtime.mainTimelineId] : undefined;
+  return runtime?.status === 'running' && main?.kind === 'main' && main.status === 'running';
 }
 
 function createProjection(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): FlowProjection {
@@ -371,7 +390,7 @@ function renderCards(args: {
         }
       }
       canvas.setOverlayBounds(projectionRef.current.bounds);
-      renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+      renderFlowLinks(canvas.overlay, projectionRef.current, isRuntimeMainTimelineRunning(ctx.streamState));
     };
     const cleanup = (upEvent: PointerEvent) => {
       if (target.hasPointerCapture(upEvent.pointerId)) {
@@ -398,7 +417,7 @@ function renderCards(args: {
           }
         }
         canvas.setOverlayBounds(projectionRef.current.bounds);
-        renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+        renderFlowLinks(canvas.overlay, projectionRef.current, isRuntimeMainTimelineRunning(ctx.streamState));
       });
     };
     target.addEventListener('pointermove', move);
@@ -433,7 +452,7 @@ function renderCards(args: {
       applyRectToCard(root, sceneId, node.rect);
       projectionRef.current = createProjectionWithFlowOverrides(root, latestFlowStream(root, stream), ctx);
       canvas.setOverlayBounds(projectionRef.current.bounds);
-      renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+      renderFlowLinks(canvas.overlay, projectionRef.current, isRuntimeMainTimelineRunning(ctx.streamState));
     };
     const cleanup = (upEvent: PointerEvent) => {
       if (target.hasPointerCapture(upEvent.pointerId)) {
@@ -450,7 +469,7 @@ function renderCards(args: {
           applyRectToCard(root, sceneId, rect);
         }
         canvas.setOverlayBounds(projectionRef.current.bounds);
-        renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+        renderFlowLinks(canvas.overlay, projectionRef.current, isRuntimeMainTimelineRunning(ctx.streamState));
       });
     };
     target.addEventListener('pointermove', move);
@@ -542,7 +561,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     root.prepend(createToolbar(canvas, () => projectionRef.current, ctx));
     canvas.setOverlayBounds(projectionRef.current.bounds);
     renderCards({ stream, ctx, projectionRef, canvas, root });
-    renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+    renderFlowLinks(canvas.overlay, projectionRef.current, isRuntimeMainTimelineRunning(ctx.streamState));
     canvasHost.addEventListener('contextmenu', (event) => {
       if ((event.target as HTMLElement).closest('.stream-flow-card-node, .stream-flow-toolbar')) {
         return;
@@ -632,5 +651,5 @@ export function syncStreamFlowModeRuntimeChrome(
     }
   }
   applyOverlayBounds(overlay, projection.bounds);
-  renderFlowLinks(overlay, projection, streamState.runtime?.status === 'running');
+  renderFlowLinks(overlay, projection, isRuntimeMainTimelineRunning(streamState));
 }

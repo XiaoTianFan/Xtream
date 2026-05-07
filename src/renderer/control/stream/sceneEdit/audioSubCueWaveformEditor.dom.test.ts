@@ -95,6 +95,47 @@ describe('audioSubCueWaveformEditor', () => {
     expect(playTimes!.disabled).toBe(true);
   });
 
+  it('stops preview UI state after fixed-count play times finish', () => {
+    vi.useFakeTimers();
+    const preview = vi.fn();
+    window.xtream = {
+      audioRuntime: { preview, onSubCuePreviewPosition: vi.fn() },
+    } as unknown as typeof window.xtream;
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ sourceStartMs: 0, sourceEndMs: 1000, loop: { enabled: true, iterations: { type: 'count', count: 2 } } }),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+
+    const [play, pause] = [...editor.querySelectorAll<HTMLButtonElement>('.stream-audio-waveform-transport')];
+    play.click();
+    vi.advanceTimersByTime(2000);
+    pause.click();
+
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ type: 'play-audio-subcue-preview' }));
+    expect(preview).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'pause-audio-subcue-preview' }));
+  });
+
+  it('keeps preview UI state alive for infinite loops', () => {
+    vi.useFakeTimers();
+    const preview = vi.fn();
+    window.xtream = {
+      audioRuntime: { preview, onSubCuePreviewPosition: vi.fn() },
+    } as unknown as typeof window.xtream;
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ sourceStartMs: 0, sourceEndMs: 1000, loop: { enabled: true, iterations: { type: 'infinite' } } }),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+
+    const [play, pause] = [...editor.querySelectorAll<HTMLButtonElement>('.stream-audio-waveform-transport')];
+    play.click();
+    vi.advanceTimersByTime(10000);
+    pause.click();
+
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ type: 'pause-audio-subcue-preview' }));
+  });
+
   it('does not patch persisted stream state until a waveform drag commits', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({

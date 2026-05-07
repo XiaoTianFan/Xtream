@@ -2264,6 +2264,76 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates.main?.status).toBe('ready');
   });
 
+  it('header Play for a focused infinite-loop thread matches row Run from here', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+
+    expect(state.runtime?.status).toBe('running');
+    expect(Object.values(state.runtime?.timelineInstances ?? {})).toMatchObject([{ kind: 'parallel', status: 'running' }]);
+    expect(state.runtime?.mainTimelineId).toBeUndefined();
+    expect(state.runtime?.sceneStates.loop?.status).toBe('running');
+    expect(state.runtime?.playbackFocusSceneId).toBe('loop');
+  });
+
+  it('focused header Play from paused side-only playback starts the selected main thread from its root', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.setSystemTime(7_000);
+    engine.applyTransport({ type: 'pause' });
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'main', source: 'global' });
+
+    expect(state.runtime?.status).toBe('running');
+    expect(state.runtime?.currentStreamMs).toBe(0);
+    expect(state.runtime?.mainTimelineId).toBeDefined();
+    expect(state.runtime?.sceneStates.main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.loop?.status).toBe('ready');
+    expect(state.runtime?.playbackFocusSceneId).toBe('main');
+  });
+
+  it('focused header Play from running side-only playback starts the selected main thread instead of relaunching the side thread', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      visuals: { 'v-loop': { id: 'v-loop', durationSeconds: 5 }, 'v-main': { id: 'v-main', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopSideThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.setSystemTime(2_000);
+
+    const state = engine.applyTransport({ type: 'play', sceneId: 'main', source: 'global' });
+    const timelines = Object.values(state.runtime?.timelineInstances ?? {});
+
+    expect(state.runtime?.status).toBe('running');
+    expect(state.runtime?.mainTimelineId).toBeDefined();
+    expect(timelines.filter((timeline) => timeline.kind === 'main')).toHaveLength(1);
+    expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+    expect(state.runtime?.sceneStates.main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.loop?.status).toBe('running');
+    expect(state.runtime?.playbackFocusSceneId).toBe('main');
+    expect(state.runtime?.cursorSceneId).toBe('main');
+  });
+
   it('header Play fallback starts the first main timeline thread, not an earlier at-timecode side thread', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 } } as DirectorState['visuals'],

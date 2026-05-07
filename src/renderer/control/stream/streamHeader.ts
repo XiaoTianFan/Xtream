@@ -126,28 +126,43 @@ function playableSceneId(
   }
   const scene = playbackStream.scenes[sceneId];
   const entry = playbackTimeline.entries[sceneId];
-  return scene && !scene.disabled && entry?.startMs !== undefined ? sceneId : undefined;
+  return scene && !scene.disabled && entry ? sceneId : undefined;
 }
 
 function isTimelineScrubDraftActive(): boolean {
   return timelineScrubPointerActive || performance.now() < timelineScrubDraftUntil;
 }
 
+function getDetachedMainCursorMs(runtime: NonNullable<StreamEnginePublicState['runtime']>): number {
+  const timelineIds = runtime.timelineOrder?.filter((id) => runtime.timelineInstances?.[id]) ?? Object.keys(runtime.timelineInstances ?? {});
+  for (const timelineId of timelineIds) {
+    const timeline = runtime.timelineInstances?.[timelineId];
+    if (timeline?.kind === 'parallel' && timeline.spawnedAtStreamMs !== undefined) {
+      return timeline.spawnedAtStreamMs;
+    }
+  }
+  if (runtime.status === 'running' || runtime.status === 'preloading') {
+    return runtime.pausedAtStreamMs ?? runtime.pausedCursorMs ?? runtime.offsetStreamMs ?? 0;
+  }
+  return runtime.pausedAtStreamMs ?? runtime.pausedCursorMs ?? runtime.currentStreamMs ?? runtime.offsetStreamMs ?? 0;
+}
+
 function getStreamCurrentMs(runtime: StreamEnginePublicState['runtime'], state: DirectorState | undefined): number {
   if (!runtime) {
     return 0;
   }
-  const states = Object.values(runtime.sceneStates ?? {});
-  const originWall = runtime.originWallTimeMs;
-  const wallClockRunning =
-    (runtime.status === 'running' || runtime.status === 'preloading') &&
-    originWall !== undefined &&
-    (states.length === 0 || states.some((s) => s.status === 'running' || s.status === 'preloading'));
-  if (wallClockRunning) {
-    const rate = state?.rate && state.rate > 0 ? state.rate : 1;
-    return (runtime.offsetStreamMs ?? 0) + (Date.now() - originWall) * rate;
+  const mainTimeline = runtime.mainTimelineId ? runtime.timelineInstances?.[runtime.mainTimelineId] : undefined;
+  if (!mainTimeline || mainTimeline.kind !== 'main') {
+    return getDetachedMainCursorMs(runtime);
   }
-  return runtime.currentStreamMs ?? runtime.pausedAtStreamMs ?? runtime.offsetStreamMs ?? 0;
+  if ((runtime.status === 'running' || runtime.status === 'preloading') && mainTimeline.status === 'running') {
+    if (mainTimeline.originWallTimeMs === undefined) {
+      return mainTimeline.cursorMs ?? mainTimeline.offsetMs ?? getDetachedMainCursorMs(runtime);
+    }
+    const rate = state?.rate && state.rate > 0 ? state.rate : 1;
+    return (mainTimeline.offsetMs ?? mainTimeline.cursorMs ?? 0) + (Date.now() - mainTimeline.originWallTimeMs) * rate;
+  }
+  return mainTimeline.pausedAtMs ?? mainTimeline.cursorMs ?? mainTimeline.offsetMs ?? getDetachedMainCursorMs(runtime);
 }
 
 function formatStreamDuration(playbackTimeline: StreamEnginePublicState['playbackTimeline'], runtime?: StreamEnginePublicState['runtime']): string {

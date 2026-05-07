@@ -424,9 +424,18 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     const selectedScene = sceneEditSceneId ? pub.stream.scenes[sceneEditSceneId] : undefined;
     return JSON.stringify({
       sceneEditSceneId,
+      playbackFocusSceneId,
       selectedSceneTitle: selectedScene?.title,
       selectedSceneNote: selectedScene?.note,
       headerEditField,
+      runtimeTransport: pub.runtime
+        ? {
+            status: pub.runtime.status,
+            cursorSceneId: pub.runtime.cursorSceneId,
+            selectedSceneIdAtPause: pub.runtime.selectedSceneIdAtPause,
+            playbackFocusSceneId: pub.runtime.playbackFocusSceneId,
+          }
+        : undefined,
       playbackTimeline: {
         status: pub.playbackTimeline.status,
         revision: pub.playbackTimeline.revision,

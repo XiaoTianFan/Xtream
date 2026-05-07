@@ -348,6 +348,39 @@ describe('createStreamSurfaceController state hydration', () => {
     expect(syncStreamGanttRuntimeChrome).toHaveBeenCalled();
   });
 
+  it('rebuilds the header command closure when playback focus changes without changing edit focus', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamHeader, syncStreamHeaderRuntime } = await import('./streamHeader');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => twoSceneStreamPublic(),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    const headerCtx = vi.mocked(renderStreamHeader).mock.calls.at(-1)?.[0] as
+      | { setPlaybackFocusSceneId: (id: string | undefined) => void; requestRender: () => void }
+      | undefined;
+    vi.mocked(renderStreamHeader).mockClear();
+    vi.mocked(syncStreamHeaderRuntime).mockClear();
+
+    headerCtx?.setPlaybackFocusSceneId('scene-b');
+    headerCtx?.requestRender();
+
+    expect(renderStreamHeader).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(renderStreamHeader).mock.calls.at(-1)?.[0]).toMatchObject({
+      sceneEditSceneId: 'scene-a',
+      playbackFocusSceneId: 'scene-b',
+    });
+    expect(syncStreamHeaderRuntime).not.toHaveBeenCalled();
+  });
+
   it('syncs flow viewport and card geometry updates without rerendering the workspace pane', async () => {
     const { createStreamSurfaceController } = await import('./streamSurface');
     const { renderStreamWorkspacePane } = await import('./workspacePane');

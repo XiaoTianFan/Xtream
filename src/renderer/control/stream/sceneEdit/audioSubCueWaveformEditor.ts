@@ -8,7 +8,7 @@ import type {
   SceneLoopPolicy,
   VirtualOutputId,
 } from '../../../../shared/types';
-import { resolveLoopTiming } from '../../../../shared/streamLoopTiming';
+import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
 import {
   clampPitchShiftSemitones,
   evaluateFadeGain,
@@ -693,22 +693,17 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function getPreviewPlayheadSourceMs(): number {
-    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
-    const rangeEndMs = range.endMs ?? sourceDurationMs ?? range.startMs;
-    const rangeDurationMs = Math.max(1, rangeEndMs - range.startMs);
-    const sourceMs =
-      previewSourceTimeMs ??
-      range.startMs + getPreviewElapsedMs() * Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
-    if (draftSub.loop?.enabled && sourceMs >= rangeEndMs) {
-      return range.startMs + ((sourceMs - range.startMs) % rangeDurationMs);
-    }
-    return Math.min(rangeEndMs, Math.max(range.startMs, sourceMs));
+    return previewSourceTimeMs ?? sourceMsForPreviewLocalMs(getPreviewElapsedMs());
   }
 
   function sourceMsForPreviewLocalMs(localTimeMs: number): number {
     const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
-    const sourceMs = range.startMs + Math.max(0, localTimeMs) * Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
-    return Math.min(range.endMs ?? sourceDurationMs ?? sourceMs, Math.max(range.startMs, sourceMs));
+    const playbackRate = Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
+    const rangeEndMs = range.endMs ?? sourceDurationMs ?? range.startMs;
+    const baseDurationMs = Math.max(0, rangeEndMs - range.startMs) / playbackRate;
+    const timing = resolveLoopTiming(draftSub.loop, baseDurationMs);
+    const phaseMs = Math.min(baseDurationMs, mapElapsedToLoopPhase(Math.max(0, localTimeMs), timing));
+    return Math.min(rangeEndMs, Math.max(range.startMs, range.startMs + phaseMs * playbackRate));
   }
 
   function applyPreviewPosition(position: AudioSubCuePreviewPosition): void {
@@ -848,7 +843,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
 
   function schedulePreviewUiStop(payload: AudioSubCuePreviewPayload, resumeFromMs: number): void {
     clearPreviewStopTimer();
-    if (payload.loop?.enabled || payload.playTimeMs === undefined) {
+    if (isInfinitePreviewLoop(payload) || payload.playTimeMs === undefined) {
       return;
     }
     previewStopTimer = window.setTimeout(() => {
@@ -957,6 +952,10 @@ function createClearAutomationButton(onClick: () => void): HTMLButtonElement {
     event.stopPropagation();
   });
   return button;
+}
+
+function isInfinitePreviewLoop(payload: AudioSubCuePreviewPayload): boolean {
+  return Boolean(payload.loop?.enabled && payload.loop.iterations.type === 'infinite');
 }
 
 function getPlayTimes(sub: PersistedAudioSubCueConfig): number {

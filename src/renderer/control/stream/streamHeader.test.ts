@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getDefaultStreamPersistence } from '../../../shared/streamWorkspace';
 import type { CalculatedStreamTimeline, StreamEnginePublicState } from '../../../shared/types';
 import {
@@ -79,6 +79,44 @@ function segmentedTimeline(): CalculatedStreamTimeline {
       issues: [],
     },
   };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+function renderHeaderForRuntime(
+  runtime: StreamEnginePublicState['runtime'],
+  playbackTimeline: CalculatedStreamTimeline = segmentedTimeline(),
+): { headerEl: HTMLElement; stream: ReturnType<typeof getDefaultStreamPersistence>['stream'] } {
+  const { stream } = getDefaultStreamPersistence();
+  const headerEl = document.createElement('header');
+  renderStreamHeader({
+    headerEl,
+    stream,
+    playbackStream: stream,
+    runtime,
+    playbackTimeline,
+    validationMessages: [],
+    currentState: { rate: 1, paused: true } as never,
+    sceneEditSceneId: 'scene-1',
+    playbackFocusSceneId: 'scene-1',
+    headerEditField: undefined,
+    options: {
+      showActions: {
+        saveShow: vi.fn(),
+        saveShowAs: vi.fn(),
+        openShow: vi.fn(),
+        createShow: vi.fn(),
+      },
+    } as never,
+    setHeaderEditField: vi.fn(),
+    updateSelectedScene: vi.fn(),
+    setPlaybackFocusSceneId: vi.fn(),
+    refreshChrome: vi.fn(),
+    requestRender: vi.fn(),
+  });
+  return { headerEl, stream };
 }
 
 describe('deriveStreamWorkspaceLiveStateLabel', () => {
@@ -238,6 +276,148 @@ describe('deriveStreamTransportUiState', () => {
 });
 
 describe('syncStreamHeaderRuntime', () => {
+  it('keeps the main timecode and rail frozen when only a parallel timeline is running', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const runtime: StreamEnginePublicState['runtime'] = {
+      status: 'running',
+      originWallTimeMs: 1_000,
+      offsetStreamMs: 0,
+      currentStreamMs: 0,
+      expectedDurationMs: 3000,
+      sceneStates: {
+        loop: { sceneId: 'loop', status: 'running', scheduledStartMs: 0 },
+      },
+      timelineOrder: ['parallel'],
+      timelineInstances: {
+        parallel: {
+          id: 'parallel',
+          kind: 'parallel',
+          status: 'running',
+          orderedThreadInstanceIds: ['loop-inst'],
+          cursorMs: 0,
+          spawnedAtStreamMs: 0,
+          offsetMs: 0,
+          originWallTimeMs: 1_000,
+        },
+      },
+      threadInstances: {
+        'loop-inst': {
+          id: 'loop-inst',
+          canonicalThreadId: 'thread:loop',
+          timelineId: 'parallel',
+          rootSceneId: 'loop',
+          launchSceneId: 'loop',
+          launchLocalMs: 0,
+          state: 'running',
+          timelineStartMs: 0,
+        },
+      },
+    };
+    const { headerEl, stream } = renderHeaderForRuntime(runtime);
+
+    vi.setSystemTime(4_000);
+    syncStreamHeaderRuntime(
+      headerEl,
+      {
+        ...runtime,
+        currentStreamMs: 3000,
+        timelineInstances: {
+          parallel: {
+            ...runtime.timelineInstances!.parallel!,
+            cursorMs: 3000,
+          },
+        },
+      },
+      stream,
+      segmentedTimeline(),
+      'scene-1',
+      { rate: 1, paused: true } as never,
+    );
+
+    expect(headerEl.querySelector<HTMLElement>('[data-stream-timecode="true"]')?.textContent).toBe('00:00.000');
+    expect(Number(headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]')?.value)).toBe(0);
+
+    syncStreamHeaderRuntime(
+      headerEl,
+      {
+        ...runtime,
+        status: 'paused',
+        pausedAtStreamMs: 3000,
+        pausedCursorMs: 3000,
+        currentStreamMs: 3000,
+        offsetStreamMs: 3000,
+        originWallTimeMs: undefined,
+        timelineInstances: {
+          parallel: {
+            ...runtime.timelineInstances!.parallel!,
+            status: 'paused',
+            cursorMs: 3000,
+            offsetMs: 3000,
+            pausedAtMs: 3000,
+            originWallTimeMs: undefined,
+          },
+        },
+      },
+      stream,
+      segmentedTimeline(),
+      'scene-1',
+      { rate: 1, paused: true } as never,
+    );
+
+    expect(headerEl.querySelector<HTMLElement>('[data-stream-timecode="true"]')?.textContent).toBe('00:00.000');
+    expect(Number(headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]')?.value)).toBe(0);
+  });
+
+  it('advances the main timecode and rail from a running main timeline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const runtime: StreamEnginePublicState['runtime'] = {
+      status: 'running',
+      originWallTimeMs: 1_000,
+      offsetStreamMs: 500,
+      currentStreamMs: 500,
+      expectedDurationMs: 3000,
+      sceneStates: {
+        a: { sceneId: 'a', status: 'running', scheduledStartMs: 0 },
+      },
+      mainTimelineId: 'main',
+      timelineOrder: ['main'],
+      timelineInstances: {
+        main: {
+          id: 'main',
+          kind: 'main',
+          status: 'running',
+          orderedThreadInstanceIds: ['a-inst'],
+          cursorMs: 500,
+          offsetMs: 500,
+          originWallTimeMs: 1_000,
+          durationMs: 3000,
+        },
+      },
+      threadInstances: {
+        'a-inst': {
+          id: 'a-inst',
+          canonicalThreadId: 'thread:a',
+          timelineId: 'main',
+          rootSceneId: 'a',
+          launchSceneId: 'a',
+          launchLocalMs: 0,
+          state: 'running',
+          timelineStartMs: 0,
+          durationMs: 1000,
+        },
+      },
+    };
+    const { headerEl, stream } = renderHeaderForRuntime(runtime);
+
+    vi.setSystemTime(2_500);
+    syncStreamHeaderRuntime(headerEl, runtime, stream, segmentedTimeline(), 'scene-1', { rate: 1, paused: true } as never);
+
+    expect(headerEl.querySelector<HTMLElement>('[data-stream-timecode="true"]')?.textContent).toBe('00:02.000');
+    expect(Number(headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]')?.value)).toBe(2);
+  });
+
   it('refreshes transport disabled states during runtime-only updates', () => {
     const { stream } = getDefaultStreamPersistence();
     const headerEl = document.createElement('header');
@@ -636,6 +816,20 @@ describe('syncStreamHeaderRuntime', () => {
 });
 
 describe('createGlobalStreamPlayCommand', () => {
+  it('targets a focused detached scene even when it has no main timeline start', () => {
+    const { stream } = getDefaultStreamPersistence();
+    expect(
+      createGlobalStreamPlayCommand({
+        runtime: null,
+        playbackStream: stream,
+        playbackTimeline: timeline('valid', {
+          'scene-1': { sceneId: 'scene-1', triggerKnown: false },
+        }),
+        playbackFocusSceneId: 'scene-1',
+      }),
+    ).toEqual({ type: 'play', sceneId: 'scene-1', source: 'global' });
+  });
+
   it('resumes a paused stream when selection has not changed', () => {
     const { stream } = getDefaultStreamPersistence();
     const runtime: StreamEnginePublicState['runtime'] = {

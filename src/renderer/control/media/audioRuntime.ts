@@ -1,4 +1,5 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
+import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../../../shared/streamLoopTiming';
 import {
   clampPitchShiftSemitones,
   evaluateAudioSubCueLevelDb,
@@ -111,6 +112,7 @@ type AudioSubCuePreviewRuntime = {
   sinkElement?: SinkCapableAudioElement;
   startedAtContextSeconds: number;
   pausedAtMs: number;
+  paused: boolean;
   lastPositionReportMs?: number;
   stopTimer?: number;
   automationTimer?: number;
@@ -706,6 +708,7 @@ export function playAudioSubCuePreview(payload: AudioSubCuePreviewPayload): void
     busPanner,
     startedAtContextSeconds: context.currentTime,
     pausedAtMs: 0,
+    paused: false,
   };
   previewRuntimes.set(payload.previewId, runtime);
   void configurePreviewRouting(runtime);
@@ -722,6 +725,7 @@ export function pauseAudioSubCuePreview(previewId: string): void {
     return;
   }
   runtime.pausedAtMs = getPreviewLocalMs(runtime);
+  runtime.paused = true;
   runtime.element.pause();
   if (runtime.sinkElement) {
     runtime.sinkElement.pause();
@@ -736,6 +740,7 @@ export function pauseAudioSubCuePreview(previewId: string): void {
 function resumeAudioSubCuePreview(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): void {
   runtime.payload = payload;
   runtime.startedAtContextSeconds = runtime.context.currentTime - runtime.pausedAtMs / 1000;
+  runtime.paused = false;
   runtime.element.playbackRate = Math.max(0.01, payload.playbackRate ?? 1);
   syncPreviewAutomation(runtime);
   armPreviewStopTimer(runtime);
@@ -760,7 +765,7 @@ function seekAudioSubCuePreview(previewId: string, command: Extract<AudioSubCueP
   const localTimeMs = command.localTimeMs ?? Math.max(0, (sourceTimeMs - sourceStartMs) / rate);
   runtime.element.currentTime = Math.max(0, sourceTimeMs / 1000);
   runtime.pausedAtMs = localTimeMs;
-  if (!runtime.element.paused) {
+  if (!runtime.paused) {
     runtime.startedAtContextSeconds = runtime.context.currentTime - localTimeMs / 1000;
   }
   syncPreviewAutomation(runtime);
@@ -1206,7 +1211,7 @@ async function configurePreviewRouting(runtime: AudioSubCuePreviewRuntime): Prom
 }
 
 function getPreviewLocalMs(runtime: AudioSubCuePreviewRuntime): number {
-  if (runtime.element.paused) {
+  if (runtime.paused) {
     return runtime.pausedAtMs;
   }
   return Math.max(0, (runtime.context.currentTime - runtime.startedAtContextSeconds) * 1000);
@@ -1222,8 +1227,8 @@ function reportPreviewPosition(runtime: AudioSubCuePreviewRuntime, force = false
     previewId: runtime.payload.previewId,
     sourceTimeMs: Math.max(0, runtime.element.currentTime * 1000),
     localTimeMs: getPreviewLocalMs(runtime),
-    playing: !runtime.element.paused,
-    paused: runtime.element.paused,
+    playing: !runtime.paused,
+    paused: runtime.paused,
   });
 }
 
@@ -1232,7 +1237,7 @@ function armPreviewStopTimer(runtime: AudioSubCuePreviewRuntime): void {
     window.clearTimeout(runtime.stopTimer);
     runtime.stopTimer = undefined;
   }
-  if (runtime.payload.loop?.enabled || runtime.payload.playTimeMs === undefined) {
+  if (isInfinitePreviewLoop(runtime.payload) || runtime.payload.playTimeMs === undefined) {
     return;
   }
   const remainingMs = Math.max(0, runtime.payload.playTimeMs - runtime.pausedAtMs);
@@ -1241,11 +1246,19 @@ function armPreviewStopTimer(runtime: AudioSubCuePreviewRuntime): void {
 
 function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
   const localMs = getPreviewLocalMs(runtime);
+  const sourceMs = getPreviewSourceMsForLocalMs(runtime, localMs);
+  if (sourceMs !== undefined && shouldResyncPreviewSource(runtime, sourceMs)) {
+    runtime.element.currentTime = sourceMs / 1000;
+    if (!runtime.paused && runtime.element.paused) {
+      requestMediaPlay(runtime.element, undefined, true);
+    }
+  }
+  if (!isElapsedWithinPreviewTotal(runtime, localMs)) {
+    stopAudioSubCuePreview(runtime.payload.previewId);
+    return;
+  }
   const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
   const sourceEndMs = runtime.payload.sourceEndMs;
-  if (sourceEndMs !== undefined && runtime.element.currentTime * 1000 >= sourceEndMs && runtime.payload.loop?.enabled) {
-    runtime.element.currentTime = sourceStartMs / 1000;
-  }
   const durationMs =
     runtime.payload.playTimeMs ??
     (sourceEndMs !== undefined ? Math.max(0, sourceEndMs - sourceStartMs) / Math.max(0.01, runtime.payload.playbackRate ?? 1) : undefined);
@@ -1265,9 +1278,59 @@ function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
   reportPreviewPosition(runtime);
 }
 
+function isInfinitePreviewLoop(payload: AudioSubCuePreviewPayload): boolean {
+  return Boolean(payload.loop?.enabled && payload.loop.iterations.type === 'infinite');
+}
+
+function previewLoopSignature(loop: AudioSubCuePreviewPayload['loop']): string {
+  return JSON.stringify(loop ?? { enabled: false });
+}
+
+function getPreviewNaturalDurationMs(runtime: AudioSubCuePreviewRuntime): number | undefined {
+  const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
+  const sourceEndMs =
+    runtime.payload.sourceEndMs ??
+    (Number.isFinite(runtime.element.duration) ? Math.max(sourceStartMs, runtime.element.duration * 1000) : undefined);
+  if (sourceEndMs === undefined) {
+    return undefined;
+  }
+  return Math.max(0, sourceEndMs - sourceStartMs) / Math.max(0.01, runtime.payload.playbackRate ?? 1);
+}
+
+function getPreviewSourceMsForLocalMs(runtime: AudioSubCuePreviewRuntime, localMs: number): number | undefined {
+  const naturalDurationMs = getPreviewNaturalDurationMs(runtime);
+  if (naturalDurationMs === undefined) {
+    return undefined;
+  }
+  const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
+  const timing = resolveLoopTiming(runtime.payload.loop, naturalDurationMs);
+  const phaseMs = Math.min(naturalDurationMs, mapElapsedToLoopPhase(localMs, timing));
+  return sourceStartMs + phaseMs * Math.max(0.01, runtime.payload.playbackRate ?? 1);
+}
+
+function shouldResyncPreviewSource(runtime: AudioSubCuePreviewRuntime, sourceMs: number): boolean {
+  const currentMs = runtime.element.currentTime * 1000;
+  if (!Number.isFinite(currentMs)) {
+    return true;
+  }
+  const driftMs = Math.abs(currentMs - sourceMs);
+  if (driftMs > 140) {
+    return true;
+  }
+  return Boolean(runtime.payload.loop?.enabled && runtime.element.paused && !runtime.paused);
+}
+
+function isElapsedWithinPreviewTotal(runtime: AudioSubCuePreviewRuntime, localMs: number): boolean {
+  if (runtime.payload.playTimeMs !== undefined) {
+    return localMs < runtime.payload.playTimeMs;
+  }
+  const naturalDurationMs = getPreviewNaturalDurationMs(runtime);
+  return naturalDurationMs === undefined || isElapsedWithinLoopTotal(localMs, resolveLoopTiming(runtime.payload.loop, naturalDurationMs));
+}
+
 function canResumePreviewRuntime(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): boolean {
   return (
-    runtime.element.paused &&
+    runtime.paused &&
     runtime.pausedAtMs > 0 &&
     runtime.payload.url === payload.url &&
     runtime.payload.outputId === payload.outputId &&
@@ -1276,7 +1339,7 @@ function canResumePreviewRuntime(runtime: AudioSubCuePreviewRuntime, payload: Au
     runtime.payload.sourceEndMs === payload.sourceEndMs &&
     runtime.payload.channelMode === payload.channelMode &&
     runtime.payload.channelCount === payload.channelCount &&
-    runtime.payload.loop?.enabled === payload.loop?.enabled
+    previewLoopSignature(runtime.payload.loop) === previewLoopSignature(payload.loop)
   );
 }
 

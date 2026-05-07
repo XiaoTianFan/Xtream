@@ -201,7 +201,7 @@ function getMinimumGanttZoom(root: HTMLElement): number {
 }
 
 function autoFitMainTimeline(root: HTMLElement): boolean {
-  if (root.dataset.ganttUserZoomed === 'true') {
+  if (root.dataset.ganttUserZoomed === 'true' || root.dataset.ganttAutoFitApplied === 'true') {
     return false;
   }
   const body = root.querySelector<HTMLElement>('.stream-gantt-body');
@@ -210,12 +210,13 @@ function autoFitMainTimeline(root: HTMLElement): boolean {
     return false;
   }
   applyGanttZoom(root, fit.zoom);
+  root.dataset.ganttAutoFitApplied = 'true';
   body.scrollLeft = 0;
   return true;
 }
 
 function queueAutoFitMainTimeline(root: HTMLElement): void {
-  if (root.dataset.ganttUserZoomed === 'true' || root.dataset.ganttFitScheduled === 'true') {
+  if (root.dataset.ganttUserZoomed === 'true' || root.dataset.ganttAutoFitApplied === 'true' || root.dataset.ganttFitScheduled === 'true') {
     return;
   }
   root.dataset.ganttFitScheduled = 'true';

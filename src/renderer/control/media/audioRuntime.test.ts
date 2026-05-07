@@ -315,6 +315,40 @@ describe('audio sub-cue preview runtime', () => {
 
     expect(closeContext).toHaveBeenCalledTimes(1);
   });
+
+  it('automatically disposes fixed-count loop previews at their computed play time', () => {
+    playAudioSubCuePreview({
+      previewId: 'preview-a',
+      audioSourceId: 's1',
+      url: 'file:///F:/media/a.wav',
+      outputId: 'o1',
+      playbackRate: 1,
+      loop: { enabled: true, iterations: { type: 'count', count: 2 } },
+      playTimeMs: 2000,
+    });
+
+    vi.advanceTimersByTime(1999);
+    expect(closeContext).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+
+    expect(closeContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps infinite loop previews alive without a finite play time', () => {
+    playAudioSubCuePreview({
+      previewId: 'preview-a',
+      audioSourceId: 's1',
+      url: 'file:///F:/media/a.wav',
+      outputId: 'o1',
+      playbackRate: 1,
+      loop: { enabled: true, iterations: { type: 'infinite' } },
+    });
+
+    vi.advanceTimersByTime(10000);
+
+    expect(closeContext).not.toHaveBeenCalled();
+  });
 });
 
 describe('syncVirtualAudioGraph', () => {

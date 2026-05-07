@@ -155,6 +155,31 @@ function publicStateWithParallel(): StreamEnginePublicState {
   return state;
 }
 
+function publicStateWithInfiniteParallel(cursorMs: number): StreamEnginePublicState {
+  const state = publicState();
+  state.runtime!.timelineOrder = ['timeline:main', 'timeline:parallel'];
+  state.runtime!.timelineInstances!['timeline:parallel'] = {
+    id: 'timeline:parallel',
+    kind: 'parallel',
+    status: 'running',
+    orderedThreadInstanceIds: ['a-loop'],
+    cursorMs,
+    durationMs: undefined,
+  };
+  state.runtime!.threadInstances!['a-loop'] = {
+    id: 'a-loop',
+    canonicalThreadId: 'thread:a',
+    timelineId: 'timeline:parallel',
+    rootSceneId: 'a',
+    launchSceneId: 'a',
+    launchLocalMs: 0,
+    state: 'running',
+    timelineStartMs: 0,
+    durationMs: undefined,
+  };
+  return state;
+}
+
 afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
@@ -268,6 +293,25 @@ describe('createStreamGanttMode', () => {
 
     expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe(zoomedWidth);
     expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.getPropertyValue('--stream-gantt-cursor')).toBe('75.000%');
+  });
+
+  it('widens a running undefined-duration parallel bar as its cursor advances', () => {
+    const root = createStreamGanttMode(stream(), { streamState: publicStateWithInfiniteParallel(750) });
+    setBodyViewport(root, 800);
+    syncStreamGanttRuntimeChrome(root, publicStateWithInfiniteParallel(750));
+    const parallelLane = root.querySelector<HTMLElement>('.stream-gantt-lane.is-parallel')!;
+    const parallelTrack = parallelLane.querySelector<HTMLElement>('.stream-gantt-track')!;
+    const parallelBar = parallelTrack.querySelector<HTMLElement>('.stream-gantt-bar')!;
+    const earlyTrackWidth = pxValue(parallelTrack.style.minWidth);
+    const earlyBarWidth = Number.parseFloat(parallelBar.style.width);
+
+    syncStreamGanttRuntimeChrome(root, publicStateWithInfiniteParallel(10_000));
+    const laterParallelLane = root.querySelector<HTMLElement>('.stream-gantt-lane.is-parallel')!;
+    const laterParallelTrack = laterParallelLane.querySelector<HTMLElement>('.stream-gantt-track')!;
+    const laterParallelBar = laterParallelTrack.querySelector<HTMLElement>('.stream-gantt-bar')!;
+
+    expect(pxValue(laterParallelTrack.style.minWidth)).toBeGreaterThan(earlyTrackWidth);
+    expect(Number.parseFloat(laterParallelBar.style.width)).toBeGreaterThan(earlyBarWidth);
   });
 
   it('shows remove timeline on non-main lane context menu', () => {
