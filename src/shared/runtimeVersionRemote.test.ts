@@ -8,8 +8,8 @@ import {
 
 describe('parseRuntimeVersionFromVersionTsSource', () => {
   it('reads assignment from version.ts shape', () => {
-    const src = `export const XTREAM_RUNTIME_VERSION = 'v0.2.0';\n`;
-    expect(parseRuntimeVersionFromVersionTsSource(src)).toBe('v0.2.0');
+    const src = `export const XTREAM_RUNTIME_VERSION = 'v0.2.1';\n`;
+    expect(parseRuntimeVersionFromVersionTsSource(src)).toBe('v0.2.1');
   });
 
   it('allows double quotes', () => {

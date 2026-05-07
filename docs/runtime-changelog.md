@@ -1,5 +1,16 @@
 # Xtream Runtime Changelog
 
+## v0.2.1
+
+- **Waveform editing for audio sub-cues:** Audio sub-cues now have a waveform-centered editor for trimming the playable source range, adjusting timing, auditioning the cue, changing pitch, and editing fades from the scene edit pane.
+- **Level and pan automation on audio cues:** Operators can draw, clear, and switch between level and pan automation curves directly on the waveform, with clearer visual feedback for the active curve and automation points.
+- **More precise audio playback ranges:** Stream playback now respects source start/end ranges, pitch shift, fade timing, loop policy, and automation data when projecting audio sub-cues onto output buses.
+- **Smoother manual and parallel thread playback:** Running scenes manually, relaunching completed threads, and moving through manual boundaries now keeps playback focus and scene state more predictable, even while parallel timelines are active.
+- **Better support for infinite-loop side threads:** Infinite manual loops can run beside the main Stream timeline without stretching the main duration, blocking ready manual scenes, or disturbing full-pass audio cues across loop iterations.
+- **Steadier display and audio synchronization:** Display layer identity is more stable across parallel timelines, and Stream playback drift correction uses renderer-reported timing so display output and Patch-derived audio stay better aligned.
+- **Clearer Flow and Gantt projection for complex streams:** Manual infinite-loop threads and side timelines are classified and positioned more consistently, making complex Stream structures easier to review while authoring.
+- **Runtime and UI maintainability work:** The Stream engine, schedule builder, media pool, mixer, IPC setup, and control styles were split into smaller focused modules, giving the new waveform and multi-timeline behavior stronger test coverage and a cleaner base for future fixes.
+
 ## v0.2.0
 
 - **Thread-based Stream playback:** Stream can now run scene chains as independent threads, so follow cues, manual starts, skipped scenes, and parallel branches behave more predictably without earlier scenes being accidentally consumed.
