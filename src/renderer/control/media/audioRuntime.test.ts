@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+/**
+ * @vitest-environment happy-dom
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState } from '../../../shared/types';
-import { clampAudioPan, computeAudioGraphSignature, findOutputSourceSelectionForRuntime, getEffectiveOutputGain } from './audioRuntime';
+import {
+  clampAudioPan,
+  computeAudioGraphSignature,
+  findOutputSourceSelectionForRuntime,
+  getAudioRuntimeDebugSnapshot,
+  getEffectiveOutputGain,
+  resetAudioRuntimeForTests,
+  syncVirtualAudioGraph,
+} from './audioRuntime';
 
 const output = {
   id: 'output-main',
@@ -56,6 +67,133 @@ function graphTestState(overrides: { outputPan?: number; sourcePan?: number } = 
   } satisfies DirectorState;
 }
 
+function addStreamRuntimeSource(state: DirectorState): DirectorState {
+  const streamAudioId = 'stream-audio:scene-b:aud:output-main';
+  return {
+    ...state,
+    audioSources: {
+      ...state.audioSources,
+      [streamAudioId]: {
+        ...state.audioSources.s1,
+        id: streamAudioId,
+      },
+    },
+    outputs: {
+      ...state.outputs,
+      o1: {
+        ...state.outputs.o1,
+        sources: [...state.outputs.o1.sources, { audioSourceId: streamAudioId, levelDb: 0, pan: 0 }],
+      },
+    },
+  };
+}
+
+const closeContext = vi.fn();
+
+class FakeAudioParam {
+  value = 0;
+  cancelScheduledValues = vi.fn();
+  setValueAtTime = vi.fn((value: number) => {
+    this.value = value;
+  });
+  linearRampToValueAtTime = vi.fn((value: number) => {
+    this.value = value;
+  });
+  setTargetAtTime = vi.fn((value: number) => {
+    this.value = value;
+  });
+}
+
+class FakeAudioNode {
+  constructor(readonly context: FakeAudioContext) {}
+  connect<T>(node: T): T {
+    return node;
+  }
+  disconnect = vi.fn();
+}
+
+class FakeGainNode extends FakeAudioNode {
+  gain = new FakeAudioParam();
+}
+
+class FakePannerNode extends FakeAudioNode {
+  pan = new FakeAudioParam();
+}
+
+class FakeDelayNode extends FakeAudioNode {
+  delayTime = new FakeAudioParam();
+}
+
+class FakeAnalyserNode extends FakeAudioNode {
+  fftSize = 1024;
+  getFloatTimeDomainData(data: Float32Array): void {
+    data.fill(0);
+  }
+}
+
+class FakeSplitterNode extends FakeAudioNode {
+  override connect<T>(node: T): T {
+    return node;
+  }
+}
+
+class FakeAudioContext {
+  currentTime = 0;
+  destination = new FakeAudioNode(this);
+  createGain(): FakeGainNode {
+    return new FakeGainNode(this);
+  }
+  createStereoPanner(): FakePannerNode {
+    return new FakePannerNode(this);
+  }
+  createDelay(): FakeDelayNode {
+    return new FakeDelayNode(this);
+  }
+  createAnalyser(): FakeAnalyserNode {
+    return new FakeAnalyserNode(this);
+  }
+  createMediaElementSource(): FakeAudioNode {
+    return new FakeAudioNode(this);
+  }
+  createChannelSplitter(): FakeSplitterNode {
+    return new FakeSplitterNode(this);
+  }
+  createMediaStreamDestination(): FakeAudioNode & { stream: MediaStream } {
+    return Object.assign(new FakeAudioNode(this), { stream: {} as MediaStream });
+  }
+  resume = vi.fn(() => Promise.resolve());
+  suspend = vi.fn(() => Promise.resolve());
+  setSinkId = vi.fn(() => Promise.resolve());
+  close = vi.fn(() => {
+    closeContext();
+    return Promise.resolve();
+  });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  closeContext.mockClear();
+  (window as unknown as { AudioContext: typeof AudioContext }).AudioContext = FakeAudioContext as unknown as typeof AudioContext;
+  Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+    configurable: true,
+    value: vi.fn(() => Promise.resolve()),
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'pause', {
+    configurable: true,
+    value: vi.fn(),
+  });
+  window.xtream = {
+    audioSources: { reportMetadata: vi.fn() },
+    audioRuntime: { reportMeter: vi.fn() },
+    outputs: { update: vi.fn(() => Promise.resolve({})) },
+  } as unknown as typeof window.xtream;
+});
+
+afterEach(async () => {
+  await resetAudioRuntimeForTests();
+  vi.useRealTimers();
+});
+
 describe('getEffectiveOutputGain', () => {
   it('uses bus gain when no mute or solo is active', () => {
     expect(getEffectiveOutputGain(false, output, new Set())).toBeCloseTo(0.501187, 6);
@@ -106,6 +244,35 @@ describe('computeAudioGraphSignature', () => {
       },
     };
     expect(computeAudioGraphSignature(a)).not.toBe(computeAudioGraphSignature(c));
+  });
+});
+
+describe('syncVirtualAudioGraph', () => {
+  it('adds a Stream runtime source to an existing Patch output without closing the output context', () => {
+    const patchOnly = graphTestState();
+    const withStream = addStreamRuntimeSource(patchOnly);
+
+    syncVirtualAudioGraph(patchOnly);
+    closeContext.mockClear();
+    syncVirtualAudioGraph(withStream);
+
+    expect(closeContext).not.toHaveBeenCalled();
+    expect(getAudioRuntimeDebugSnapshot().outputs).toEqual([
+      { outputId: 'o1', sourceIds: ['s1', 'stream-audio:scene-b:aud:output-main'] },
+    ]);
+  });
+
+  it('removes a transient Stream runtime source without rebuilding the Patch output bus', () => {
+    const patchOnly = graphTestState();
+    const withStream = addStreamRuntimeSource(patchOnly);
+
+    syncVirtualAudioGraph(withStream);
+    closeContext.mockClear();
+    syncVirtualAudioGraph(patchOnly);
+    vi.advanceTimersByTime(50);
+
+    expect(closeContext).not.toHaveBeenCalled();
+    expect(getAudioRuntimeDebugSnapshot().outputs).toEqual([{ outputId: 'o1', sourceIds: ['s1'] }]);
   });
 });
 

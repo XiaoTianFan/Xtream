@@ -100,6 +100,7 @@ type MediaPoolControllerOptions = {
   setShowStatus: (message: string) => void;
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
   probeVisualMetadata: (visual: VisualState) => void;
+  probeAudioMetadata: (source: AudioSourceState) => void;
   createEmbeddedAudioRepresentation: (visualId: VisualId) => Promise<void>;
   extractEmbeddedAudioFile: (visualId: VisualId) => Promise<void>;
   /** Absolute path to loaded `show…json` — used for REP/LNK/FIL placement labels. */
@@ -919,6 +920,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
       setShowStatus: options.setShowStatus,
       queueEmbeddedAudioImportPrompt: options.queueEmbeddedAudioImportPrompt,
       probeVisualMetadata: options.probeVisualMetadata,
+      probeAudioMetadata: options.probeAudioMetadata,
       setSelectedEntity: options.setSelectedEntity,
       renderState: options.renderState,
       selectPoolTab: setPoolTab,

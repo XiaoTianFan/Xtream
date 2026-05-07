@@ -95,6 +95,13 @@ vi.mock('./bottomPane', () => ({
   renderStreamBottomPane: vi.fn((panel, ctx) => {
     panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}`;
   }),
+  syncStreamSceneEditPaneContent: vi.fn((panel, ctx) => {
+    if (ctx.detailPane || ctx.bottomTab !== 'scene') {
+      return false;
+    }
+    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}`;
+    return true;
+  }),
 }));
 
 vi.mock('./streamMixerBottomRedrawDefer', () => ({

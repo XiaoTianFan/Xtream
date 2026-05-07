@@ -69,6 +69,37 @@ describe('StreamEngine', () => {
     expect(engine.isStreamPlaybackActive()).toBe(true);
   });
 
+  it('refreshes stream duration when external audio metadata arrives after load', () => {
+    const directorState: Partial<DirectorState> = {
+      audioSources: {
+        aud: { id: 'aud', label: 'External audio', type: 'external-file', ready: false },
+      } as DirectorState['audioSources'],
+    };
+    const director = createDirector(directorState);
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['aud'];
+    stream.scenes['scene-1'].subCues = {
+      aud: { id: 'aud', kind: 'audio', audioSourceId: 'aud', outputIds: ['output-main'] },
+    };
+
+    const pending = (() => {
+      engine.loadFromShow({ stream });
+      return engine.getPublicState();
+    })();
+    expect(pending.editTimeline.status).toBe('invalid');
+    expect(pending.validationMessages.some((message) => message.includes('no calculable duration'))).toBe(true);
+
+    directorState.audioSources = {
+      aud: { id: 'aud', label: 'External audio', type: 'external-file', durationSeconds: 12, ready: true },
+    } as DirectorState['audioSources'];
+    const refreshed = engine.refreshMediaDurations();
+
+    expect(refreshed.editTimeline.status).toBe('valid');
+    expect(refreshed.editTimeline.expectedDurationMs).toBe(12_000);
+    expect(refreshed.validationMessages.some((message) => message.includes('no calculable duration'))).toBe(false);
+  });
+
   it('does not start when Patch transport is playing', () => {
     const director = { isPatchTransportPlaying: () => true } as unknown as Director;
     const engine = new StreamEngine(director);

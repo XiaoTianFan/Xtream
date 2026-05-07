@@ -91,6 +91,50 @@ export function renderStreamDisplayPane(ctx: StreamBottomPaneContext, displayLis
   return displayList;
 }
 
+function createSceneEditContent(ctx: StreamBottomPaneContext): HTMLElement {
+  const stream = ctx.streamState.stream;
+  const sid = ctx.selectedSceneId;
+  const scene = sid ? stream.scenes[sid] : undefined;
+  const highlights = getStreamAuthoringErrorHighlights(
+    stream,
+    validateStreamContextFromDirector(ctx.currentState),
+    ctx.streamState.playbackTimeline,
+  );
+  const authoringSceneHasError = sid ? highlights.scenesWithErrors.has(sid) : false;
+  const authoringSubCueIdsWithError: ReadonlySet<SubCueId> | undefined =
+    sid ? highlights.subCuesWithErrors.get(sid) : undefined;
+  return scene
+    ? createSceneEditPane({
+        stream,
+        scene,
+        currentState: ctx.currentState,
+        streamPublic: ctx.streamState,
+        isSceneRunning: ctx.isSelectedSceneRunning(),
+        sceneEditSelection: ctx.sceneEditSelection,
+        setSceneEditSelection: ctx.setSceneEditSelection,
+        getDirectorState: ctx.getDirectorState,
+        renderDirectorState: ctx.renderDirectorState,
+        requestRender: ctx.requestRender,
+        duplicateScene: ctx.duplicateSelectedScene,
+        removeScene: ctx.removeSelectedScene,
+        authoringSceneHasError,
+        authoringSubCueIdsWithError,
+      })
+    : createHint('No scene selected.');
+}
+
+export function syncStreamSceneEditPaneContent(panel: HTMLElement, ctx: StreamBottomPaneContext): boolean {
+  if (ctx.detailPane || ctx.bottomTab !== 'scene') {
+    return false;
+  }
+  const content = panel.querySelector<HTMLElement>('.stream-bottom-content');
+  if (!content) {
+    return false;
+  }
+  content.replaceChildren(createSceneEditContent(ctx));
+  return true;
+}
+
 export function renderStreamBottomPane(
   panel: HTMLElement,
   ctx: StreamBottomPaneContext,
@@ -125,37 +169,7 @@ export function renderStreamBottomPane(
   const content = document.createElement('div');
   content.className = 'stream-bottom-content';
   if (ctx.bottomTab === 'scene') {
-    const stream = ctx.streamState.stream;
-    const sid = ctx.selectedSceneId;
-    const scene = sid ? stream.scenes[sid] : undefined;
-    const highlights = getStreamAuthoringErrorHighlights(
-      stream,
-      validateStreamContextFromDirector(ctx.currentState),
-      ctx.streamState.playbackTimeline,
-    );
-    const authoringSceneHasError = sid ? highlights.scenesWithErrors.has(sid) : false;
-    const authoringSubCueIdsWithError: ReadonlySet<SubCueId> | undefined =
-      sid ? highlights.subCuesWithErrors.get(sid) : undefined;
-    content.append(
-      scene
-        ? createSceneEditPane({
-            stream,
-            scene,
-            currentState: ctx.currentState,
-            streamPublic: ctx.streamState,
-            isSceneRunning: ctx.isSelectedSceneRunning(),
-            sceneEditSelection: ctx.sceneEditSelection,
-            setSceneEditSelection: ctx.setSceneEditSelection,
-            getDirectorState: ctx.getDirectorState,
-            renderDirectorState: ctx.renderDirectorState,
-            requestRender: ctx.requestRender,
-            duplicateScene: ctx.duplicateSelectedScene,
-            removeScene: ctx.removeSelectedScene,
-            authoringSceneHasError,
-            authoringSubCueIdsWithError,
-          })
-        : createHint('No scene selected.'),
-    );
+    content.append(createSceneEditContent(ctx));
   } else if (ctx.bottomTab === 'mixer') {
     content.append(renderStreamMixerPane(ctx, outputPanel));
   } else {

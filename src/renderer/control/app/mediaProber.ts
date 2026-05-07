@@ -1,4 +1,4 @@
-import type { DirectorState } from '../../../shared/types';
+import type { AudioSourceState, DirectorState } from '../../../shared/types';
 import { hasEmbeddedAudioTrack } from '../media/mediaMetadata';
 
 export function probeAllMedia(state: DirectorState): void {
@@ -62,62 +62,76 @@ export function probeAllMedia(state: DirectorState): void {
   }
 
   for (const source of Object.values(state.audioSources)) {
-    const url =
-      source.type === 'external-file'
-        ? source.url
-        : source.extractionMode === 'file' && source.extractionStatus === 'ready' && source.extractedUrl
-          ? source.extractedUrl
-          : state.visuals[source.visualId]?.url;
-          
-    if (!url) {
-      continue;
-    }
-    const audio = document.createElement('audio');
-    audio.preload = 'metadata';
-    audio.muted = true;
-    audio.style.display = 'none';
-    audio.src = url;
-    document.body.append(audio);
-    
-    const context = new AudioContext();
-    const sourceNode = context.createMediaElementSource(audio);
-    
-    const cleanup = () => {
-      audio.removeAttribute('src');
-      audio.load();
-      audio.remove();
-      void context.close();
-    };
-
-    audio.addEventListener(
-      'loadedmetadata',
-      () => {
-        let channelCount = source.channelCount;
-        if (!channelCount) {
-          channelCount = Math.max(1, Math.min(8, sourceNode.channelCount || 2));
-        }
-        void window.xtream.audioSources.reportMetadata({
-          audioSourceId: source.id,
-          durationSeconds: Number.isFinite(audio.duration) ? audio.duration : undefined,
-          channelCount: channelCount,
-          ready: true,
-        });
-        cleanup();
-      },
-      { once: true },
-    );
-    audio.addEventListener(
-      'error',
-      () => {
-        void window.xtream.audioSources.reportMetadata({
-          audioSourceId: source.id,
-          durationSeconds: Number.isFinite(audio.duration) ? audio.duration : undefined,
-          ready: false,
-          error: audio.error?.message ?? 'Audio failed to load.',
-        });
-        cleanup();
-      },
-      { once: true },
-    );
+    probeAudioMetadata(source, state);
   }
+}
+
+export function probeAudioMetadata(source: AudioSourceState, state?: DirectorState): void {
+  const url = resolveAudioSourceUrl(source, state);
+  if (!url) {
+    return;
+  }
+  const audio = document.createElement('audio');
+  audio.preload = 'metadata';
+  audio.muted = true;
+  audio.style.display = 'none';
+  audio.src = url;
+  document.body.append(audio);
+
+  let context: AudioContext | undefined;
+  let sourceNode: MediaElementAudioSourceNode | undefined;
+  try {
+    context = new AudioContext();
+    sourceNode = context.createMediaElementSource(audio);
+  } catch {
+    context = undefined;
+    sourceNode = undefined;
+  }
+
+  const cleanup = () => {
+    audio.removeAttribute('src');
+    audio.load();
+    audio.remove();
+    if (context) {
+      void context.close();
+    }
+  };
+
+  audio.addEventListener(
+    'loadedmetadata',
+    () => {
+      const channelCount = source.channelCount ?? (sourceNode ? Math.max(1, Math.min(8, sourceNode.channelCount || 2)) : undefined);
+      void window.xtream.audioSources.reportMetadata({
+        audioSourceId: source.id,
+        durationSeconds: Number.isFinite(audio.duration) ? audio.duration : undefined,
+        channelCount,
+        ready: true,
+      });
+      cleanup();
+    },
+    { once: true },
+  );
+  audio.addEventListener(
+    'error',
+    () => {
+      void window.xtream.audioSources.reportMetadata({
+        audioSourceId: source.id,
+        durationSeconds: Number.isFinite(audio.duration) ? audio.duration : undefined,
+        ready: false,
+        error: audio.error?.message ?? 'Audio failed to load.',
+      });
+      cleanup();
+    },
+    { once: true },
+  );
+}
+
+function resolveAudioSourceUrl(source: AudioSourceState, state: DirectorState | undefined): string | undefined {
+  if (source.type === 'external-file') {
+    return source.url;
+  }
+  if (source.extractionMode === 'file' && source.extractionStatus === 'ready' && source.extractedUrl) {
+    return source.extractedUrl;
+  }
+  return state?.visuals[source.visualId]?.url;
 }

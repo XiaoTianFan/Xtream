@@ -9,11 +9,14 @@ type SinkCapableAudioElement = HTMLAudioElement & {
 type OutputSourceRuntime = {
   selectionId: string;
   audioSourceId: string;
+  graphKey: string;
   element: HTMLMediaElement;
   sourceNode: MediaElementAudioSourceNode;
   gainNode: GainNode;
   sourcePanner: StereoPannerNode;
   meterLanes: SourceMeterLaneRuntime[];
+  pendingFadeIn: boolean;
+  removalTimer?: number;
 };
 
 type SourceMeterLaneRuntime = {
@@ -29,6 +32,7 @@ type OutputSinkRouting = 'contextSink' | 'mediaElementSink';
 
 type OutputRuntime = {
   outputId: string;
+  graphKey: string;
   context: AudioContext;
   sources: OutputSourceRuntime[];
   busGain: GainNode;
@@ -53,6 +57,9 @@ type TransportEnvelopeMode = 'playing' | 'fading-out' | 'paused';
 export const OUTPUT_BUS_DELAY_MAX_MS = 3000;
 const OUTPUT_DELAY_MAX_SECONDS = OUTPUT_BUS_DELAY_MAX_MS / 1000;
 const DELAY_SMOOTH_SECONDS = 0.02;
+const SOURCE_GAIN_SMOOTH_SECONDS = 0.015;
+const SOURCE_REMOVE_FADE_MS = 45;
+const SOURCE_REMOVE_FADE_SECONDS = SOURCE_REMOVE_FADE_MS / 1000;
 /** Pause/stop (and resume) envelope ramp; set to 1000ms to verify audibility. */
 const TRANSPORT_FADE_MS = 85;
 const TRANSPORT_FADE_SECONDS = TRANSPORT_FADE_MS / 1000;
@@ -74,30 +81,69 @@ export function setSoloOutputIds(outputIds: Iterable<string>): void {
   soloOutputIds = new Set(outputIds);
 }
 
+export function getAudioRuntimeDebugSnapshot(): { outputs: Array<{ outputId: string; sourceIds: string[] }> } {
+  return {
+    outputs: [...outputRuntimes.values()].map((runtime) => ({
+      outputId: runtime.outputId,
+      sourceIds: runtime.sources.map((source) => source.audioSourceId),
+    })),
+  };
+}
+
+export async function resetAudioRuntimeForTests(): Promise<void> {
+  for (const runtime of outputRuntimes.values()) {
+    await disposeOutputRuntime(runtime, { immediate: true });
+  }
+  outputRuntimes = new Map();
+  audioGraphSignature = '';
+  soloOutputIds = new Set();
+  lastGlobalAudioMuted = undefined;
+}
+
 /** Build signature for topology-only changes (membership, URL, sink, channel layout). Pan updates do not rebuild. */
 export function computeAudioGraphSignature(state: DirectorState): string {
   return JSON.stringify(
     Object.values(state.outputs)
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((output) => ({
-        id: output.id,
-        sinkId: output.sinkId,
+        output: computeOutputGraphKey(output),
         sources: output.sources.map((selection, index) => ({
           selectionId: getOutputSourceSelectionRuntimeId(selection, index),
-          id: selection.audioSourceId,
-          url: getAudioSourceUrl(selection.audioSourceId, state),
-          channelCount: state.audioSources[selection.audioSourceId]?.channelCount,
-          channelMode: state.audioSources[selection.audioSourceId]?.channelMode,
+          graphKey: computeSourceGraphKey(selection, index, state),
         })),
       })),
   );
 }
 
 export function syncVirtualAudioGraph(state: DirectorState): void {
-  const signature = computeAudioGraphSignature(state);
-  if (signature !== audioGraphSignature) {
-    audioGraphSignature = signature;
-    void rebuildAudioGraph(state);
+  audioGraphSignature = computeAudioGraphSignature(state);
+  const desiredOutputIds = new Set(Object.keys(state.outputs));
+  for (const [outputId, runtime] of outputRuntimes) {
+    if (!desiredOutputIds.has(outputId)) {
+      outputRuntimes.delete(outputId);
+      void disposeOutputRuntime(runtime, { immediate: true });
+    }
+  }
+  for (const output of Object.values(state.outputs)) {
+    const graphKey = computeOutputGraphKey(output);
+    const existing = outputRuntimes.get(output.id);
+    if (!existing) {
+      const runtime = createOutputRuntime(output, state);
+      outputRuntimes.set(output.id, runtime);
+      reconcileOutputSources(runtime, output, state);
+      void configureOutputRouting(output, runtime.context, runtime.analyser, runtime);
+      continue;
+    }
+    if (existing.graphKey !== graphKey) {
+      outputRuntimes.delete(output.id);
+      void disposeOutputRuntime(existing, { immediate: true });
+      const runtime = createOutputRuntime(output, state);
+      outputRuntimes.set(output.id, runtime);
+      reconcileOutputSources(runtime, output, state);
+      void configureOutputRouting(output, runtime.context, runtime.analyser, runtime);
+      continue;
+    }
+    reconcileOutputSources(existing, output, state);
   }
   syncAudioRuntimeToDirector(state);
 }
@@ -105,106 +151,205 @@ export function syncVirtualAudioGraph(state: DirectorState): void {
 export async function rebuildAudioGraph(state: DirectorState): Promise<void> {
   lastGlobalAudioMuted = undefined;
   for (const runtime of outputRuntimes.values()) {
-    if (runtime.fadePauseTimer !== undefined) {
-      window.clearTimeout(runtime.fadePauseTimer);
-    }
-    if (runtime.sinkElement) {
-      runtime.sinkElement.pause();
-      runtime.sinkElement.remove();
-    }
-    for (const source of runtime.sources) {
-      source.element.pause();
-      source.element.remove();
-    }
-    await runtime.context.close().catch(() => undefined);
+    await disposeOutputRuntime(runtime, { immediate: true });
   }
   outputRuntimes = new Map();
+  audioGraphSignature = '';
+  syncVirtualAudioGraph(state);
+}
+
+function computeOutputGraphKey(output: VirtualOutputState): string {
+  return JSON.stringify({
+    id: output.id,
+    sinkId: output.sinkId,
+  });
+}
+
+function computeSourceGraphKey(selection: VirtualOutputSourceSelection, index: number, state: DirectorState): string {
+  const source = state.audioSources[selection.audioSourceId];
+  return JSON.stringify({
+    selectionId: getOutputSourceSelectionRuntimeId(selection, index),
+    audioSourceId: selection.audioSourceId,
+    url: getAudioSourceUrl(selection.audioSourceId, state),
+    channelCount: source?.channelCount,
+    channelMode: source?.channelMode,
+  });
+}
+
+function createOutputRuntime(output: VirtualOutputState, state: DirectorState): OutputRuntime {
   const AudioContextCtor = window.AudioContext;
-  for (const output of Object.values(state.outputs)) {
-    const context = new AudioContextCtor();
-    const busGain = context.createGain();
-    const busPanner = context.createStereoPanner();
-    busPanner.pan.value = clampAudioPan(output.pan);
-    const globalMuteGain = context.createGain();
-    globalMuteGain.gain.value = state.globalAudioMuted ? 0 : 1;
-    const envelopeGain = context.createGain();
-    envelopeGain.gain.value = state.paused ? 0 : 1;
-    const delayNode = context.createDelay(OUTPUT_DELAY_MAX_SECONDS);
-    const d0 = getClampedOutputDelaySeconds(output);
-    delayNode.delayTime.value = d0;
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 1024;
-    busGain.connect(busPanner).connect(globalMuteGain).connect(envelopeGain).connect(delayNode).connect(analyser);
-    const runtime: OutputRuntime = {
-      outputId: output.id,
-      context,
-      sources: [],
-      busGain,
-      busPanner,
-      globalMuteGain,
-      envelopeGain,
-      delayNode,
-      analyser,
-      routing: 'mediaElementSink',
-      meterData: new Uint8Array(analyser.fftSize),
-      lastMeterReportMs: 0,
-      transportPlaying: !state.paused,
-      envelopeTargetGain: state.paused ? 0 : 1,
-    };
-    for (const [selectionIndex, selection] of output.sources.entries()) {
-      const selectionId = getOutputSourceSelectionRuntimeId(selection, selectionIndex);
-      const url = getAudioSourceUrl(selection.audioSourceId, state);
-      if (!url) {
-        continue;
-      }
-      const element = document.createElement('audio');
-      element.preload = 'auto';
-      element.style.display = 'none';
-      element.src = url;
-      document.body.append(element);
-      const sourceNode = context.createMediaElementSource(element);
-      const gainNode = context.createGain();
-      connectAudioSourceToGain(context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
-      const sourcePanner = context.createStereoPanner();
-      sourcePanner.pan.value = clampAudioPan(selection.pan);
-      gainNode.connect(sourcePanner);
-      sourcePanner.connect(busGain);
-      const meterLanes = createSourceMeterLanes(
-        context,
-        sourcePanner,
-        output.id,
-        selectionId,
-        selection.audioSourceId,
-        state.audioSources[selection.audioSourceId],
-      );
-      element.addEventListener('loadedmetadata', () => {
-        if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
-          return;
-        }
-        const detectedChannelCount = getSourceChannelCount(state.audioSources[selection.audioSourceId], sourceNode);
-        void window.xtream.audioSources.reportMetadata({
-          audioSourceId: selection.audioSourceId,
-          durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
-          channelCount: detectedChannelCount,
-          ready: true,
-        });
-      });
-      element.addEventListener('error', () => {
-        if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
-          return;
-        }
-        void window.xtream.audioSources.reportMetadata({
-          audioSourceId: selection.audioSourceId,
-          durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
-          ready: false,
-          error: element.error?.message ?? 'Audio failed to load.',
-        });
-      });
-      runtime.sources.push({ selectionId, audioSourceId: selection.audioSourceId, element, sourceNode, gainNode, sourcePanner, meterLanes });
+  const context = new AudioContextCtor();
+  const busGain = context.createGain();
+  const busPanner = context.createStereoPanner();
+  busPanner.pan.value = clampAudioPan(output.pan);
+  const globalMuteGain = context.createGain();
+  globalMuteGain.gain.value = state.globalAudioMuted ? 0 : 1;
+  const envelopeGain = context.createGain();
+  envelopeGain.gain.value = state.paused ? 0 : 1;
+  const delayNode = context.createDelay(OUTPUT_DELAY_MAX_SECONDS);
+  delayNode.delayTime.value = getClampedOutputDelaySeconds(output);
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 1024;
+  busGain.connect(busPanner).connect(globalMuteGain).connect(envelopeGain).connect(delayNode).connect(analyser);
+  return {
+    outputId: output.id,
+    graphKey: computeOutputGraphKey(output),
+    context,
+    sources: [],
+    busGain,
+    busPanner,
+    globalMuteGain,
+    envelopeGain,
+    delayNode,
+    analyser,
+    routing: 'mediaElementSink',
+    meterData: new Uint8Array(analyser.fftSize),
+    lastMeterReportMs: 0,
+    transportPlaying: !state.paused,
+    envelopeTargetGain: state.paused ? 0 : 1,
+  };
+}
+
+function reconcileOutputSources(runtime: OutputRuntime, output: VirtualOutputState, state: DirectorState): void {
+  const existingBySelectionId = new Map(runtime.sources.map((source) => [source.selectionId, source]));
+  const nextSources: OutputSourceRuntime[] = [];
+  const retained = new Set<OutputSourceRuntime>();
+
+  for (const [selectionIndex, selection] of output.sources.entries()) {
+    const selectionId = getOutputSourceSelectionRuntimeId(selection, selectionIndex);
+    const graphKey = computeSourceGraphKey(selection, selectionIndex, state);
+    const existing = existingBySelectionId.get(selectionId);
+    if (existing && existing.graphKey === graphKey) {
+      retained.add(existing);
+      nextSources.push(existing);
+      continue;
     }
-    outputRuntimes.set(output.id, runtime);
-    await configureOutputRouting(output, context, analyser, runtime);
+    if (existing) {
+      disposeSourceRuntime(existing);
+    }
+    const created = createSourceRuntime(runtime, output, selection, selectionIndex, graphKey, state);
+    if (created) {
+      retained.add(created);
+      nextSources.push(created);
+    }
   }
+
+  for (const source of runtime.sources) {
+    if (!retained.has(source)) {
+      disposeSourceRuntime(source);
+    }
+  }
+  runtime.sources = nextSources;
+}
+
+function createSourceRuntime(
+  runtime: OutputRuntime,
+  output: VirtualOutputState,
+  selection: VirtualOutputSourceSelection,
+  selectionIndex: number,
+  graphKey: string,
+  state: DirectorState,
+): OutputSourceRuntime | undefined {
+  const selectionId = getOutputSourceSelectionRuntimeId(selection, selectionIndex);
+  const url = getAudioSourceUrl(selection.audioSourceId, state);
+  if (!url) {
+    return undefined;
+  }
+  const element = document.createElement('audio');
+  element.preload = 'auto';
+  element.style.display = 'none';
+  element.src = url;
+  document.body.append(element);
+  const sourceNode = runtime.context.createMediaElementSource(element);
+  const gainNode = runtime.context.createGain();
+  gainNode.gain.value = 0;
+  connectAudioSourceToGain(runtime.context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
+  const sourcePanner = runtime.context.createStereoPanner();
+  sourcePanner.pan.value = clampAudioPan(selection.pan);
+  gainNode.connect(sourcePanner);
+  sourcePanner.connect(runtime.busGain);
+  const meterLanes = createSourceMeterLanes(
+    runtime.context,
+    sourcePanner,
+    output.id,
+    selectionId,
+    selection.audioSourceId,
+    state.audioSources[selection.audioSourceId],
+  );
+  element.addEventListener('loadedmetadata', () => {
+    if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
+      return;
+    }
+    const detectedChannelCount = getSourceChannelCount(state.audioSources[selection.audioSourceId], sourceNode);
+    void window.xtream.audioSources.reportMetadata({
+      audioSourceId: selection.audioSourceId,
+      durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
+      channelCount: detectedChannelCount,
+      ready: true,
+    });
+  });
+  element.addEventListener('error', () => {
+    if (isStreamRuntimeAudioSourceId(selection.audioSourceId)) {
+      return;
+    }
+    void window.xtream.audioSources.reportMetadata({
+      audioSourceId: selection.audioSourceId,
+      durationSeconds: Number.isFinite(element.duration) ? element.duration : undefined,
+      ready: false,
+      error: element.error?.message ?? 'Audio failed to load.',
+    });
+  });
+  return {
+    selectionId,
+    audioSourceId: selection.audioSourceId,
+    graphKey,
+    element,
+    sourceNode,
+    gainNode,
+    sourcePanner,
+    meterLanes,
+    pendingFadeIn: true,
+  };
+}
+
+async function disposeOutputRuntime(runtime: OutputRuntime, options: { immediate?: boolean } = {}): Promise<void> {
+  if (runtime.fadePauseTimer !== undefined) {
+    window.clearTimeout(runtime.fadePauseTimer);
+  }
+  if (runtime.sinkElement) {
+    runtime.sinkElement.pause();
+    runtime.sinkElement.remove();
+  }
+  for (const source of runtime.sources) {
+    disposeSourceRuntime(source, { immediate: options.immediate });
+  }
+  await runtime.context.close().catch(() => undefined);
+}
+
+function disposeSourceRuntime(source: OutputSourceRuntime, options: { immediate?: boolean } = {}): void {
+  if (source.removalTimer !== undefined) {
+    window.clearTimeout(source.removalTimer);
+    source.removalTimer = undefined;
+  }
+  const remove = () => {
+    source.element.pause();
+    source.element.remove();
+    source.sourceNode.disconnect();
+    source.gainNode.disconnect();
+    source.sourcePanner.disconnect();
+    for (const lane of source.meterLanes) {
+      lane.analyser.disconnect();
+    }
+  };
+  if (options.immediate) {
+    remove();
+    return;
+  }
+  const now = source.gainNode.context.currentTime;
+  source.gainNode.gain.cancelScheduledValues(now);
+  source.gainNode.gain.setValueAtTime(source.gainNode.gain.value, now);
+  source.gainNode.gain.linearRampToValueAtTime(0, now + SOURCE_REMOVE_FADE_SECONDS);
+  source.removalTimer = window.setTimeout(remove, SOURCE_REMOVE_FADE_MS);
 }
 
 export function syncAudioRuntimeToDirector(state: DirectorState): void {
@@ -237,7 +382,10 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
         runtimeSource.runtimeLoop ?? state.loop,
       );
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
-      sourceRuntime.gainNode.gain.value = sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0);
+      setSourceRuntimeGain(
+        sourceRuntime,
+        sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0),
+      );
       sourceRuntime.sourcePanner.pan.value = clampAudioPan(selection.pan);
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
       if (transportMode === 'fading-out') {
@@ -266,6 +414,19 @@ export function getEffectiveOutputGain(
     return 0;
   }
   return getProgramOutputGain(output, soloIds);
+}
+
+function setSourceRuntimeGain(sourceRuntime: OutputSourceRuntime, targetGain: number): void {
+  const gain = sourceRuntime.gainNode.gain;
+  const now = sourceRuntime.gainNode.context.currentTime;
+  if (sourceRuntime.pendingFadeIn) {
+    sourceRuntime.pendingFadeIn = false;
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(gain.value, now);
+    gain.linearRampToValueAtTime(targetGain, now + SOURCE_GAIN_SMOOTH_SECONDS);
+    return;
+  }
+  gain.setTargetAtTime(targetGain, now, SOURCE_GAIN_SMOOTH_SECONDS);
 }
 
 function getProgramOutputGain(
@@ -413,7 +574,7 @@ export function sampleMeters(state: DirectorState, meterRoot?: HTMLElement): voi
       }
       if (source && sourceRuntime.meterLanes.length !== getExpectedChannelCount(source)) {
         // A source can expose a different channel count after metadata; rebuild on the next state sync.
-        audioGraphSignature = '';
+        sourceRuntime.graphKey = '';
       }
     }
     if (meterRoot) {

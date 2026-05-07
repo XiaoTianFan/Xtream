@@ -395,6 +395,9 @@ hydrateControlShellAfterShow = async (result, ctx) => {
   if (!filePath) {
     return;
   }
+  if (currentState) {
+    probeAllMedia(currentState);
+  }
   if (ctx) {
     logShowOpenProfile({
       runId: ctx.runId,
@@ -466,10 +469,6 @@ hydrateControlShellAfterShow = async (result, ctx) => {
     });
   }
   scheduleMaybeAutoOpenMissingRelink();
-
-  if (currentState) {
-    probeAllMedia(currentState);
-  }
 };
 
 window.__xtreamGetControlUiSnapshot = (): ControlProjectUiStateV1 | null => {

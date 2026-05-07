@@ -70,6 +70,14 @@ export function createFlowSceneCard(args: {
   handlers: FlowCardHandlers;
 }): HTMLElement {
   const { stream, scene, node, handlers } = args;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'stream-flow-card-node';
+  wrapper.dataset.sceneId = node.sceneId;
+  wrapper.style.left = `${node.rect.x}px`;
+  wrapper.style.top = `${node.rect.y}px`;
+  wrapper.style.width = `${node.rect.width}px`;
+  wrapper.style.height = `${node.rect.height}px`;
+
   const card = document.createElement('article');
   card.className = [
     'stream-flow-card',
@@ -82,11 +90,6 @@ export function createFlowSceneCard(args: {
   ]
     .filter(Boolean)
     .join(' ');
-  card.dataset.sceneId = node.sceneId;
-  card.style.left = `${node.rect.x}px`;
-  card.style.top = `${node.rect.y}px`;
-  card.style.width = `${node.rect.width}px`;
-  card.style.height = `${node.rect.height}px`;
   applyThreadStyle(card, node);
 
   const header = document.createElement('div');
@@ -121,6 +124,9 @@ export function createFlowSceneCard(args: {
     handlers.addFollower(node.sceneId, { x: node.rect.x + node.rect.width + 42, y: node.rect.y });
   });
   decorateIconButton(add, 'Plus', 'Add following scene');
+  add.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
 
   const resize = document.createElement('span');
   resize.className = 'stream-flow-resize-handle';
@@ -137,7 +143,7 @@ export function createFlowSceneCard(args: {
     card.append(progress);
   }
 
-  card.append(header, previews, hover, footer, add, resize);
+  card.append(header, previews, hover, footer, resize);
   card.addEventListener('click', (event) => {
     if ((event.target as HTMLElement).closest('button')) {
       return;
@@ -162,6 +168,7 @@ export function createFlowSceneCard(args: {
     event.stopPropagation();
     handlers.beginResize(event, node.sceneId);
   });
-  card.title = `${node.title} - ${stream.label}`;
-  return card;
+  wrapper.append(card, add);
+  wrapper.title = `${node.title} - ${stream.label}`;
+  return wrapper;
 }

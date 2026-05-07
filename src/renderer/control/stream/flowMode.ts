@@ -93,9 +93,13 @@ function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjecti
 }
 
 function syncFocusClasses(root: HTMLElement, playbackId: SceneId | undefined, editId: SceneId | undefined): void {
-  for (const card of root.querySelectorAll<HTMLElement>('.stream-flow-card[data-scene-id]')) {
-    const id = card.dataset.sceneId as SceneId | undefined;
+  for (const node of root.querySelectorAll<HTMLElement>('.stream-flow-card-node[data-scene-id]')) {
+    const id = node.dataset.sceneId as SceneId | undefined;
     if (!id) {
+      continue;
+    }
+    const card = node.querySelector<HTMLElement>('.stream-flow-card');
+    if (!card) {
       continue;
     }
     const { playback, edit } = sceneWorkspaceFocusFlags(id, playbackId, editId);
@@ -105,14 +109,14 @@ function syncFocusClasses(root: HTMLElement, playbackId: SceneId | undefined, ed
 }
 
 function applyRectToCard(root: HTMLElement, sceneId: SceneId, rect: FlowRect): void {
-  const card = root.querySelector<HTMLElement>(`.stream-flow-card[data-scene-id="${CSS.escape(sceneId)}"]`);
-  if (!card) {
+  const node = root.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(sceneId)}"]`);
+  if (!node) {
     return;
   }
-  card.style.left = `${rect.x}px`;
-  card.style.top = `${rect.y}px`;
-  card.style.width = `${rect.width}px`;
-  card.style.height = `${rect.height}px`;
+  node.style.left = `${rect.x}px`;
+  node.style.top = `${rect.y}px`;
+  node.style.width = `${rect.width}px`;
+  node.style.height = `${rect.height}px`;
 }
 
 function applyOverlayBounds(overlay: SVGSVGElement, bounds: FlowRect): void {
@@ -401,7 +405,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     renderCards({ stream, ctx, projection, canvas, root });
     renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
     canvasHost.addEventListener('contextmenu', (event) => {
-      if ((event.target as HTMLElement).closest('.stream-flow-card, .stream-flow-toolbar')) {
+      if ((event.target as HTMLElement).closest('.stream-flow-card-node, .stream-flow-toolbar')) {
         return;
       }
       showRootContextMenu(event, canvas!, ctx);
@@ -448,7 +452,8 @@ export function syncStreamFlowModeRuntimeChrome(
     ).scenesWithErrors,
   });
   for (const node of projection.nodes) {
-    const card = root.querySelector<HTMLElement>(`.stream-flow-card[data-scene-id="${CSS.escape(node.sceneId)}"]`);
+    const wrapper = root.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(node.sceneId)}"]`);
+    const card = wrapper?.querySelector<HTMLElement>('.stream-flow-card');
     if (!card) {
       continue;
     }

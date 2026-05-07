@@ -6,6 +6,7 @@ export type UnifiedMediaPoolImportDeps = {
   setShowStatus: (message: string) => void;
   queueEmbeddedAudioImportPrompt: (visuals: VisualState[] | undefined) => void;
   probeVisualMetadata: (visual: VisualState) => void;
+  probeAudioMetadata: (source: AudioSourceState) => void;
   setSelectedEntity: (entity: SelectedEntity | undefined) => void;
   renderState: (state: DirectorState) => void;
   selectPoolTab: (tab: 'visuals' | 'audio') => void;
@@ -119,6 +120,7 @@ export async function runUnifiedMediaPoolImport(
 
   deps.queueEmbeddedAudioImportPrompt(newVisuals.length > 0 ? newVisuals : undefined);
   newVisuals.forEach(deps.probeVisualMetadata);
+  newAudio.forEach(deps.probeAudioMetadata);
 
   if (newVisuals[0]) {
     deps.setSelectedEntity({ type: 'visual', id: newVisuals[0].id });

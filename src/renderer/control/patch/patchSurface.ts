@@ -6,6 +6,7 @@ import { createDetailsPaneController } from './detailsPane';
 import { syncPreviewElements } from './displayPreview';
 import { createDisplayWorkspaceController } from './displayWorkspace';
 import { createEmbeddedAudioImportController } from './embeddedAudioImport';
+import { probeAudioMetadata } from '../app/mediaProber';
 import { getShownProjectPath } from '../app/showProjectPath';
 import {
   applyLayoutPrefs,
@@ -111,6 +112,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     setShowStatus: options.setShowStatus,
     queueEmbeddedAudioImportPrompt: embeddedAudioImport.queueEmbeddedAudioImportPrompt,
     probeVisualMetadata: embeddedAudioImport.probeVisualMetadata,
+    probeAudioMetadata,
     createEmbeddedAudioRepresentation: embeddedAudioImport.createEmbeddedAudioRepresentation,
     extractEmbeddedAudioFile: embeddedAudioImport.extractEmbeddedAudioFile,
     getShowConfigPath: () => getShownProjectPath(),
