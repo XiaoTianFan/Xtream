@@ -79,6 +79,35 @@ describe('streamThreadPlan', () => {
     expect(thread.longestBranchSceneIds).toEqual(['root', 'b']);
   });
 
+  it('uses branch depth as the longest-branch tiebreaker for equal timed durations', () => {
+    const stream = streamWithScenes(
+      {
+        root: scene('root', 1000),
+        short: { ...scene('short', 1000), trigger: { type: 'follow-end', followsSceneId: 'root' } },
+        deep: { ...scene('deep', 0), trigger: { type: 'follow-end', followsSceneId: 'root' } },
+        'deep-middle': { ...scene('deep-middle', 1000), trigger: { type: 'follow-end', followsSceneId: 'deep' } },
+        'deep-tail': { ...scene('deep-tail', 0), trigger: { type: 'follow-end', followsSceneId: 'deep-middle' } },
+      },
+      ['root', 'short', 'deep', 'deep-middle', 'deep-tail'],
+    );
+
+    const plan = deriveStreamThreadPlan(stream, {
+      root: 1000,
+      short: 1000,
+      deep: 0,
+      'deep-middle': 1000,
+      'deep-tail': 0,
+    });
+    const thread = plan.threads[0];
+
+    expect(thread.durationMs).toBe(2000);
+    expect(thread.branches.map((branch) => [branch.sceneIds, branch.durationMs])).toEqual([
+      [['root', 'short'], 2000],
+      [['root', 'deep', 'deep-middle', 'deep-tail'], 2000],
+    ]);
+    expect(thread.longestBranchSceneIds).toEqual(['root', 'deep', 'deep-middle', 'deep-tail']);
+  });
+
   it('temporarily disables a missing-predecessor branch and restores it after repair', () => {
     const broken = streamWithScenes(
       {

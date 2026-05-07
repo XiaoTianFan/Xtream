@@ -179,14 +179,17 @@ describe('createStreamGanttMode', () => {
     expect(root.querySelector<HTMLButtonElement>('.stream-gantt-fit-button')?.title).toBe('Fit to content');
   });
 
-  it('renders an empty state when playback has not created runtime timelines', () => {
+  it('renders a planned main timeline when playback has not created runtime timelines', () => {
     const s = stream();
     const t = timeline();
     const root = createStreamGanttMode(s, {
       streamState: { stream: s, playbackStream: s, editTimeline: t, playbackTimeline: t, validationMessages: [], runtime: null },
     });
 
-    expect(root.querySelector<HTMLElement>('.stream-gantt-empty')?.textContent).toContain('No active Stream timelines');
+    expect(root.querySelector<HTMLElement>('.stream-gantt-empty')).toBeNull();
+    expect(root.querySelectorAll('.stream-gantt-lane')).toHaveLength(1);
+    expect(root.querySelector<HTMLElement>('.stream-gantt-lane')?.classList.contains('status-idle')).toBe(true);
+    expect(root.querySelector<HTMLElement>('.stream-gantt-bar-title')?.textContent).toBe('Alpha');
   });
 
   it('zooms the Gantt track with ctrl wheel', () => {
@@ -221,8 +224,18 @@ describe('createStreamGanttMode', () => {
 
     root.querySelector<HTMLButtonElement>('.stream-gantt-fit-button')?.click();
 
-    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe('280px');
+    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe('328px');
     expect(body.scrollLeft).toBe(0);
+  });
+
+  it('defaults to fitting the main timeline when the viewport is measurable', () => {
+    const state = publicState();
+    const root = createStreamGanttMode(stream(), { streamState: state });
+    setBodyViewport(root, 470);
+
+    syncStreamGanttRuntimeChrome(root, state);
+
+    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe('328px');
   });
 
   it('limits ctrl wheel zoom-out at the fit-to-content width', () => {
@@ -234,7 +247,7 @@ describe('createStreamGanttMode', () => {
       body.dispatchEvent(createWheelEvent({ ctrlKey: true, deltaY: 100, clientX: 200 }));
     }
 
-    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe('280px');
+    expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe('328px');
   });
 
   it('syncs cursor changes in place', () => {

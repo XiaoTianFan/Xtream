@@ -1719,12 +1719,15 @@ describe('StreamEngine', () => {
     installThreeThreadStream(stream);
     engine.loadFromShow({ stream });
     engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(2_500);
 
     const state = engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
     const timelines = Object.values(state.runtime?.timelineInstances ?? {});
     const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+    const parallel = timelines.find((timeline) => timeline.kind === 'parallel');
 
     expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+    expect(parallel?.spawnedAtStreamMs).toBe(1500);
     expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:c' && instance.timelineId !== state.runtime?.mainTimelineId)).toBe(true);
     expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:c')).toBe(false);
   });

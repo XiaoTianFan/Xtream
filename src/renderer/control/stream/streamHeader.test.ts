@@ -11,6 +11,7 @@ import {
   renderStreamHeader,
   syncStreamHeaderRuntime,
 } from './streamHeader';
+import type { StreamHeaderRenderContext } from './streamHeader';
 
 function timeline(
   status: CalculatedStreamTimeline['status'],
@@ -37,6 +38,48 @@ const playableTimeline = timeline('valid', {
   'scene-1': { sceneId: 'scene-1', startMs: 0, durationMs: 1000, endMs: 1000, triggerKnown: true },
   'scene-2': { sceneId: 'scene-2', startMs: 1000, durationMs: 1000, endMs: 2000, triggerKnown: true },
 });
+
+function segmentedTimeline(): CalculatedStreamTimeline {
+  return {
+    ...playableTimeline,
+    expectedDurationMs: 3000,
+    mainSegments: [
+      { threadId: 'thread:a', rootSceneId: 'a', startMs: 0, durationMs: 1000, endMs: 1000, proportion: 1 / 3 },
+      { threadId: 'thread:b', rootSceneId: 'b', startMs: 1000, durationMs: 2000, endMs: 3000, proportion: 2 / 3 },
+    ],
+    threadPlan: {
+      threads: [
+        {
+          threadId: 'thread:a',
+          rootSceneId: 'a',
+          rootTriggerType: 'manual',
+          sceneIds: ['a'],
+          edges: [],
+          branches: [{ sceneIds: ['a'], durationMs: 1000 }],
+          longestBranchSceneIds: ['a'],
+          sceneTimings: { a: { sceneId: 'a', threadLocalStartMs: 0, threadLocalEndMs: 1000 } },
+          durationMs: 1000,
+          temporarilyDisabledSceneIds: [],
+        },
+        {
+          threadId: 'thread:b',
+          rootSceneId: 'b',
+          rootTriggerType: 'manual',
+          sceneIds: ['b'],
+          edges: [],
+          branches: [{ sceneIds: ['b'], durationMs: 2000 }],
+          longestBranchSceneIds: ['b'],
+          sceneTimings: { b: { sceneId: 'b', threadLocalStartMs: 0, threadLocalEndMs: 2000 } },
+          durationMs: 2000,
+          temporarilyDisabledSceneIds: [],
+        },
+      ],
+      threadBySceneId: { a: 'thread:a', b: 'thread:b' },
+      temporarilyDisabledSceneIds: [],
+      issues: [],
+    },
+  };
+}
 
 describe('deriveStreamWorkspaceLiveStateLabel', () => {
   it('is IDLE before runtime starts', () => {
@@ -249,6 +292,243 @@ describe('syncStreamHeaderRuntime', () => {
     expect(pause.disabled).toBe(true);
     expect(headerEl.querySelector<HTMLElement>('[data-stream-live-state="true"]')?.textContent).toBe('PAUSED');
   });
+
+  it('keeps segmented rail CSS variables when a paused runtime has incomplete thread durations', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const playbackTimeline = segmentedTimeline();
+    const headerEl = document.createElement('header');
+    const runningRuntime: StreamEnginePublicState['runtime'] = {
+      status: 'running',
+      sceneStates: {},
+      mainTimelineId: 'main',
+      currentStreamMs: 500,
+      expectedDurationMs: 3000,
+      timelineInstances: {
+        main: {
+          id: 'main',
+          kind: 'main',
+          status: 'running',
+          orderedThreadInstanceIds: ['a-inst', 'b-inst'],
+          cursorMs: 500,
+          durationMs: 3000,
+        },
+      },
+      threadInstances: {
+        'a-inst': {
+          id: 'a-inst',
+          canonicalThreadId: 'thread:a',
+          timelineId: 'main',
+          rootSceneId: 'a',
+          launchSceneId: 'a',
+          launchLocalMs: 0,
+          state: 'running',
+          timelineStartMs: 0,
+          durationMs: 1000,
+        },
+        'b-inst': {
+          id: 'b-inst',
+          canonicalThreadId: 'thread:b',
+          timelineId: 'main',
+          rootSceneId: 'b',
+          launchSceneId: 'b',
+          launchLocalMs: 0,
+          state: 'ready',
+          timelineStartMs: 1000,
+          durationMs: 2000,
+        },
+      },
+    };
+
+    renderStreamHeader({
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: runningRuntime,
+      playbackTimeline,
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const sliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control')!;
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-segments')).toContain('linear-gradient');
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toContain('linear-gradient');
+
+    syncStreamHeaderRuntime(
+      headerEl,
+      {
+        ...runningRuntime,
+        status: 'paused',
+        currentStreamMs: 1500,
+        pausedAtStreamMs: 1500,
+        timelineInstances: {
+          main: {
+            id: 'main',
+            kind: 'main',
+            status: 'paused',
+            orderedThreadInstanceIds: ['a-inst', 'b-inst'],
+            cursorMs: 1500,
+            pausedAtMs: 1500,
+          },
+        },
+        threadInstances: {
+          'a-inst': {
+            id: 'a-inst',
+            canonicalThreadId: 'thread:a',
+            timelineId: 'main',
+            rootSceneId: 'a',
+            launchSceneId: 'a',
+            launchLocalMs: 0,
+            state: 'complete',
+            timelineStartMs: 0,
+            durationMs: 0,
+          },
+          'b-inst': {
+            id: 'b-inst',
+            canonicalThreadId: 'thread:b',
+            timelineId: 'main',
+            rootSceneId: 'b',
+            launchSceneId: 'b',
+            launchLocalMs: 0,
+            state: 'paused',
+            timelineStartMs: 1000,
+          },
+        },
+      },
+      stream,
+      playbackTimeline,
+      'scene-1',
+      undefined,
+    );
+
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-segments')).toContain('0.000% 33.333%');
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-segments')).toContain('33.333% 100.000%');
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toContain('#a6b8a2');
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toContain('#86bfcb');
+  });
+
+  it('keeps the last valid rail segments through transient segmentless syncs', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const playbackTimeline = segmentedTimeline();
+    const headerEl = document.createElement('header');
+
+    renderStreamHeader({
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      playbackTimeline,
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const sliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control')!;
+    const originalRail = sliderWrap.style.getPropertyValue('--stream-rail-segments');
+    const originalProgress = sliderWrap.style.getPropertyValue('--stream-rail-progress-segments');
+    expect(originalRail).toContain('linear-gradient');
+
+    syncStreamHeaderRuntime(
+      headerEl,
+      { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      stream,
+      {
+        ...playableTimeline,
+        revision: 999,
+        expectedDurationMs: 3000,
+        mainSegments: [],
+        threadPlan: undefined,
+      },
+      'scene-1',
+      undefined,
+    );
+
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-segments')).toBe(originalRail);
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toBe(originalProgress);
+  });
+
+  it('keeps the last valid rail segments through transient segmentless full header rebuilds', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const playbackTimeline = segmentedTimeline();
+    const headerEl = document.createElement('header');
+    const baseCtx: Omit<StreamHeaderRenderContext, 'playbackTimeline'> = {
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    };
+
+    renderStreamHeader({
+      ...baseCtx,
+      playbackTimeline,
+    });
+    const originalRail = headerEl.querySelector<HTMLElement>('.timeline-control')!.style.getPropertyValue('--stream-rail-segments');
+    const originalProgress = headerEl.querySelector<HTMLElement>('.timeline-control')!.style.getPropertyValue('--stream-rail-progress-segments');
+    expect(originalRail).toContain('linear-gradient');
+
+    renderStreamHeader({
+      ...baseCtx,
+      playbackTimeline: {
+        ...playableTimeline,
+        revision: 999,
+        expectedDurationMs: 3000,
+        mainSegments: [],
+        threadPlan: undefined,
+      },
+    });
+
+    const nextSliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control')!;
+    expect(nextSliderWrap.style.getPropertyValue('--stream-rail-segments')).toBe(originalRail);
+    expect(nextSliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toBe(originalProgress);
+  });
 });
 
 describe('createGlobalStreamPlayCommand', () => {
@@ -382,7 +662,7 @@ describe('createStreamRailSegmentStyles', () => {
     expect(styles?.foreground).toContain('#86bfcb');
   });
 
-  it('builds segmented rail gradients from latest runtime main order proportions', () => {
+  it('builds segmented rail gradients from the validated playback main timeline', () => {
     const playbackTimeline: CalculatedStreamTimeline = {
       ...playableTimeline,
       expectedDurationMs: 3000,
@@ -465,9 +745,61 @@ describe('createStreamRailSegmentStyles', () => {
       },
     });
 
-    expect(styles?.background).toContain('0.000% 66.667%');
-    expect(styles?.background).toContain('66.667% 100.000%');
-    expect(styles?.foreground).toContain('#86bfcb');
+    expect(styles?.background).toContain('0.000% 33.333%');
+    expect(styles?.background).toContain('33.333% 100.000%');
     expect(styles?.foreground).toContain('#a6b8a2');
+    expect(styles?.foreground).toContain('#86bfcb');
+  });
+
+  it('ignores paused runtime main order when deriving persistent rail segments', () => {
+    const playbackTimeline = segmentedTimeline();
+    const styles = createStreamRailSegmentStyles({
+      playbackTimeline,
+      runtime: {
+        status: 'paused',
+        sceneStates: {},
+        mainTimelineId: 'main',
+        currentStreamMs: 1500,
+        pausedAtStreamMs: 1500,
+        timelineInstances: {
+          main: {
+            id: 'main',
+            kind: 'main',
+            status: 'paused',
+            orderedThreadInstanceIds: ['b-inst', 'a-inst'],
+            cursorMs: 1500,
+            pausedAtMs: 1500,
+          },
+        },
+        threadInstances: {
+          'b-inst': {
+            id: 'b-inst',
+            canonicalThreadId: 'thread:b',
+            timelineId: 'main',
+            rootSceneId: 'b',
+            launchSceneId: 'b',
+            launchLocalMs: 0,
+            state: 'paused',
+            timelineStartMs: 0,
+          },
+          'a-inst': {
+            id: 'a-inst',
+            canonicalThreadId: 'thread:a',
+            timelineId: 'main',
+            rootSceneId: 'a',
+            launchSceneId: 'a',
+            launchLocalMs: 0,
+            state: 'ready',
+            timelineStartMs: 2000,
+            durationMs: 0,
+          },
+        },
+      },
+    });
+
+    expect(styles?.background).toContain('0.000% 33.333%');
+    expect(styles?.background).toContain('33.333% 100.000%');
+    expect(styles?.foreground).toContain('#a6b8a2');
+    expect(styles?.foreground).toContain('#86bfcb');
   });
 });

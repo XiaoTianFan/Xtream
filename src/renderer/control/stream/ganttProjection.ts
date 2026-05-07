@@ -24,6 +24,8 @@ export type StreamGanttBarProjection = {
   startMs: number;
   durationMs: number;
   endMs: number;
+  scaleStartMs: number;
+  scaleEndMs: number;
   leftPercent: number;
   widthPercent: number;
   cursorPercent: number;
@@ -38,6 +40,8 @@ export type StreamGanttLaneProjection = {
   status: StreamRuntimeTimelineInstance['status'];
   cursorMs: number;
   durationMs: number;
+  scaleStartMs: number;
+  scaleCursorMs: number;
   cursorPercent: number;
   minWidthPx: number;
   trackMinWidthPx: number;
@@ -48,6 +52,8 @@ export type StreamGanttProjection = {
   lanes: StreamGanttLaneProjection[];
   hasRuntime: boolean;
 };
+
+const GANTT_LANE_FIXED_WIDTH_PX = 142;
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) {
@@ -106,7 +112,7 @@ function laneWidthForTimeline(durationMs: number, instanceCount: number): { minW
   const instanceWidth = Math.max(1, instanceCount) * 220;
   const trackMinWidthPx = Math.max(560, durationWidth, instanceWidth);
   return {
-    minWidthPx: trackMinWidthPx + 190,
+    minWidthPx: trackMinWidthPx + GANTT_LANE_FIXED_WIDTH_PX,
     trackMinWidthPx,
   };
 }
@@ -117,11 +123,14 @@ function createBarProjection(args: {
   timelineDurationMs: number;
   instance: StreamRuntimeThreadInstance;
   color?: StreamThreadColor;
+  scaleStartMs?: number;
 }): StreamGanttBarProjection {
-  const { stream, timeline, timelineDurationMs, instance, color } = args;
+  const { stream, timeline, timelineDurationMs, instance, color, scaleStartMs: timelineScaleStartMs = 0 } = args;
   const durationMs = Math.max(0, instance.durationMs ?? 0);
   const startMs = Math.max(0, instance.timelineStartMs);
   const endMs = startMs + durationMs;
+  const scaleStartMs = timelineScaleStartMs + startMs;
+  const scaleEndMs = scaleStartMs + durationMs;
   const localCursorMs = timeline.cursorMs - startMs;
   const rootTitle = labelForScene(stream, instance.rootSceneId);
   const launchTitle = labelForScene(stream, instance.launchSceneId);
@@ -139,6 +148,8 @@ function createBarProjection(args: {
     startMs,
     durationMs,
     endMs,
+    scaleStartMs,
+    scaleEndMs,
     leftPercent: percent(startMs, timelineDurationMs),
     widthPercent: durationMs > 0 ? Math.max(1.5, percent(durationMs, timelineDurationMs)) : 1.5,
     cursorPercent: percent(localCursorMs, durationMs),
@@ -147,23 +158,119 @@ function createBarProjection(args: {
   };
 }
 
+function createPlannedMainLane(
+  stream: PersistedStreamConfig,
+  playbackTimeline: CalculatedStreamTimeline,
+): StreamGanttLaneProjection | undefined {
+  if (playbackTimeline.status !== 'valid') {
+    return undefined;
+  }
+  const segments = playbackTimeline.mainSegments ?? [];
+  const threads = playbackTimeline.threadPlan?.threads ?? [];
+  const instances = segments
+    .map((segment): StreamRuntimeThreadInstance | undefined => {
+      const thread = threads.find((candidate) => candidate.threadId === segment.threadId);
+      if (!thread) {
+        return undefined;
+      }
+      return {
+        id: `planned:${segment.threadId}`,
+        canonicalThreadId: segment.threadId,
+        timelineId: 'timeline:main',
+        rootSceneId: segment.rootSceneId,
+        launchSceneId: segment.rootSceneId,
+        launchLocalMs: 0,
+        state: 'ready',
+        timelineStartMs: segment.startMs,
+        durationMs: segment.durationMs ?? thread.durationMs,
+      };
+    })
+    .filter(Boolean) as StreamRuntimeThreadInstance[];
+  const timeline: StreamRuntimeTimelineInstance = {
+    id: 'timeline:main',
+    kind: 'main',
+    status: 'idle',
+    orderedThreadInstanceIds: instances.map((instance) => instance.id),
+    cursorMs: 0,
+    durationMs:
+      playbackTimeline.expectedDurationMs ??
+      segments.reduce((max, segment) => Math.max(max, segment.endMs), 0),
+  };
+  const durationMs = timelineDuration(timeline, instances);
+  const widths = laneWidthForTimeline(durationMs, instances.length);
+  const colors = deriveStreamThreadColorMaps(playbackTimeline);
+  return {
+    id: timeline.id,
+    kind: timeline.kind,
+    label: createLaneLabel(timeline, 0),
+    status: timeline.status,
+    cursorMs: 0,
+    durationMs,
+    scaleStartMs: 0,
+    scaleCursorMs: 0,
+    cursorPercent: 0,
+    minWidthPx: widths.minWidthPx,
+    trackMinWidthPx: widths.trackMinWidthPx,
+    bars: instances.map((instance) =>
+      createBarProjection({
+        stream,
+        timeline,
+        timelineDurationMs: durationMs,
+        instance,
+        color: colors.byThreadId[instance.canonicalThreadId],
+      }),
+    ),
+  };
+}
+
+function applySharedTimelineScale(lanes: StreamGanttLaneProjection[]): StreamGanttLaneProjection[] {
+  if (lanes.length === 0) {
+    return lanes;
+  }
+  const scaleDurationMs = Math.max(
+    ...lanes.map((lane) => lane.scaleStartMs + lane.durationMs),
+    ...lanes.flatMap((lane) => lane.bars.map((bar) => bar.scaleEndMs)),
+    0,
+  );
+  if (scaleDurationMs <= 0) {
+    return lanes;
+  }
+  const maxInstanceCount = Math.max(...lanes.map((lane) => Math.max(1, lane.bars.length)));
+  const widths = laneWidthForTimeline(scaleDurationMs, maxInstanceCount);
+  for (const lane of lanes) {
+    lane.cursorPercent = percent(lane.scaleCursorMs, scaleDurationMs);
+    lane.minWidthPx = widths.minWidthPx;
+    lane.trackMinWidthPx = widths.trackMinWidthPx;
+    for (const bar of lane.bars) {
+      bar.leftPercent = percent(bar.scaleStartMs, scaleDurationMs);
+      bar.widthPercent = bar.durationMs > 0 ? Math.max(1.5, percent(bar.durationMs, scaleDurationMs)) : 1.5;
+    }
+  }
+  return lanes;
+}
+
 export function deriveStreamGanttProjection(args: {
   stream: PersistedStreamConfig;
   playbackTimeline: CalculatedStreamTimeline;
   runtime: StreamEnginePublicState['runtime'];
 }): StreamGanttProjection {
   const { stream, playbackTimeline, runtime } = args;
+  const plannedMainLane = createPlannedMainLane(stream, playbackTimeline);
   if (!runtime?.timelineInstances || !runtime.threadInstances || Object.keys(runtime.timelineInstances).length === 0) {
-    return { lanes: [], hasRuntime: false };
+    return plannedMainLane ? { lanes: applySharedTimelineScale([plannedMainLane]), hasRuntime: false } : { lanes: [], hasRuntime: false };
   }
 
   const colors = deriveStreamThreadColorMaps(playbackTimeline);
   const lanes: StreamGanttLaneProjection[] = [];
+  let runtimeHasMain = false;
   let parallelIndex = 0;
   for (const timelineId of orderedTimelineIds(runtime)) {
     const timeline = runtime.timelineInstances[timelineId];
     if (!timeline) {
       continue;
+    }
+    if (timeline.kind === 'main') {
+      runtimeHasMain = true;
     }
     if (timeline.kind === 'parallel') {
       parallelIndex += 1;
@@ -172,6 +279,7 @@ export function deriveStreamGanttProjection(args: {
       .map((id) => runtime.threadInstances?.[id])
       .filter(Boolean) as StreamRuntimeThreadInstance[];
     const durationMs = timelineDuration(timeline, instances);
+    const scaleStartMs = timeline.kind === 'parallel' ? Math.max(0, timeline.spawnedAtStreamMs ?? 0) : 0;
     const widths = laneWidthForTimeline(durationMs, instances.length);
     lanes.push({
       id: timeline.id,
@@ -180,6 +288,8 @@ export function deriveStreamGanttProjection(args: {
       status: timeline.status,
       cursorMs: Math.max(0, timeline.cursorMs),
       durationMs,
+      scaleStartMs,
+      scaleCursorMs: scaleStartMs + Math.max(0, timeline.cursorMs),
       cursorPercent: percent(timeline.cursorMs, durationMs),
       minWidthPx: widths.minWidthPx,
       trackMinWidthPx: widths.trackMinWidthPx,
@@ -190,10 +300,15 @@ export function deriveStreamGanttProjection(args: {
           timelineDurationMs: durationMs,
           instance,
           color: colors.byThreadId[instance.canonicalThreadId],
+          scaleStartMs,
         }),
       ),
     });
   }
 
-  return { lanes, hasRuntime: true };
+  if (!runtimeHasMain && plannedMainLane) {
+    lanes.unshift(plannedMainLane);
+  }
+
+  return { lanes: applySharedTimelineScale(lanes), hasRuntime: true };
 }

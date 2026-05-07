@@ -156,4 +156,35 @@ describe('createStreamFlowMode', () => {
     expect(root.querySelector('.stream-flow-card.status-running')).not.toBeNull();
     expect(root.querySelector('.stream-flow-main-curve-glow.is-running')).not.toBeNull();
   });
+
+  it('dispatches run-from-here from a running Flow card instead of pausing', async () => {
+    const streamState = runningStreamPublic();
+    const transport = vi.fn(() => Promise.resolve(streamState));
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport,
+      },
+    } as unknown as typeof window.xtream;
+
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    root.querySelector<HTMLButtonElement>('button[aria-label="Run from here"]')?.click();
+
+    expect(transport).toHaveBeenCalledWith({ type: 'play', sceneId: 'scene-a', source: 'flow-card' });
+    expect(transport).not.toHaveBeenCalledWith({ type: 'pause' });
+  });
 });

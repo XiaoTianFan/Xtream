@@ -146,8 +146,9 @@
 .stream-timeline-slider.stream-timeline-slider {
   position: relative;
   z-index: 1;
-  --slider-fill: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
-  accent-color: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
+  --slider-fill: transparent;
+  --slider-rail: transparent;
+  accent-color: transparent;
 }
 
 .stream-timeline-slider.stream-timeline-slider::-webkit-slider-runnable-track {
@@ -1162,8 +1163,8 @@
 
 .stream-gantt-lane {
   display: grid;
-  grid-template-columns: 10.5rem minmax(18rem, 1fr);
-  gap: var(--gutter);
+  grid-template-columns: 8.25rem minmax(18rem, 1fr);
+  gap: 0.45rem;
   align-items: stretch;
   min-height: 4.25rem;
   width: 100%;
@@ -1176,7 +1177,7 @@
   gap: 0.18rem;
   min-width: 0;
   border-left: 3px solid color-mix(in srgb, var(--border-strong) 52%, transparent);
-  padding: 0.35rem 0 0.35rem 0.55rem;
+  padding: 0.35rem 0.2rem 0.35rem 0.45rem;
 }
 
 .stream-gantt-lane.is-main .stream-gantt-lane-header {

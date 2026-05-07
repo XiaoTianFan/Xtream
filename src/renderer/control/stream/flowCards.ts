@@ -103,7 +103,7 @@ export function createFlowSceneCard(args: {
   const hover = document.createElement('div');
   hover.className = 'stream-flow-card-hover';
   const run = createButton('', 'icon-button stream-flow-hover-action', () => handlers.runScene(node.sceneId));
-  decorateIconButton(run, node.status === 'running' ? 'Pause' : 'Play', node.status === 'running' ? 'Pause' : 'Run from here');
+  decorateIconButton(run, 'Play', 'Run from here');
   run.disabled = scene.disabled || node.temporarilyDisabled;
   const edit = createButton('', 'icon-button stream-flow-hover-action', () => handlers.editScene(node.sceneId));
   decorateIconButton(edit, 'Settings', 'Edit');

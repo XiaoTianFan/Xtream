@@ -92,8 +92,8 @@ vi.mock('./workspacePaneSignature', () => ({
 }));
 
 vi.mock('./bottomPane', () => ({
-  renderStreamBottomPane: vi.fn((panel) => {
-    panel.textContent = 'STREAM BOTTOM';
+  renderStreamBottomPane: vi.fn((panel, ctx) => {
+    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}`;
   }),
 }));
 
@@ -116,6 +116,19 @@ vi.mock('./flowMode', () => ({
     const root = document.createElement('div');
     root.dataset.testMode = ctx.mode;
     root.textContent = 'STREAM WORKSPACE flow';
+    for (const sceneId of _stream.sceneOrder) {
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.dataset.flowEditSceneId = sceneId;
+      edit.textContent = `Edit ${sceneId}`;
+      edit.addEventListener('click', () => {
+        ctx.setPlaybackAndEditFocus(sceneId);
+        ctx.setBottomTab('scene');
+        ctx.clearDetailPane();
+        ctx.refreshSceneSelectionUi();
+      });
+      root.append(edit);
+    }
     return root;
   }),
   syncStreamFlowModeRuntimeChrome: vi.fn(),
@@ -190,6 +203,22 @@ function streamPublic(): StreamEnginePublicState {
     validationMessages: [],
     runtime: null,
   } as unknown as StreamEnginePublicState;
+}
+
+function twoSceneStreamPublic(): StreamEnginePublicState {
+  const pub = streamPublic();
+  const stream = structuredClone(pub.stream);
+  stream.sceneOrder = ['scene-a', 'scene-b'];
+  stream.scenes['scene-b'] = {
+    ...stream.scenes['scene-a']!,
+    id: 'scene-b',
+    title: 'Scene B',
+  };
+  return {
+    ...pub,
+    stream,
+    playbackStream: stream,
+  };
 }
 
 function runningStreamPublic(cursorMs = 0): StreamEnginePublicState {
@@ -340,6 +369,7 @@ describe('createStreamSurfaceController state hydration', () => {
   it('rerenders the workspace when mode changes during running playback', async () => {
     const { elements } = await import('../shell/elements');
     const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamHeader, syncStreamHeaderRuntime } = await import('./streamHeader');
     const { renderStreamWorkspacePane } = await import('./workspacePane');
     const { createStreamFlowMode } = await import('./flowMode');
     const controller = createStreamSurfaceController({
@@ -355,6 +385,8 @@ describe('createStreamSurfaceController state hydration', () => {
     });
 
     controller.render(director());
+    vi.mocked(renderStreamHeader).mockClear();
+    vi.mocked(syncStreamHeaderRuntime).mockClear();
     vi.mocked(renderStreamWorkspacePane).mockClear();
     vi.mocked(createStreamFlowMode).mockClear();
     [...elements.surfacePanel.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
@@ -363,8 +395,113 @@ describe('createStreamSurfaceController state hydration', () => {
 
     expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
     expect(createStreamFlowMode).toHaveBeenCalledTimes(1);
+    expect(renderStreamHeader).not.toHaveBeenCalled();
+    expect(syncStreamHeaderRuntime).toHaveBeenCalled();
     expect(elements.surfacePanel.querySelector<HTMLElement>('[data-test-mode]')?.dataset.testMode).toBe('flow');
     expect(window.xtream.stream.transport).not.toHaveBeenCalled();
+  });
+
+  it('forces the bottom scene editor to refresh from the Flow card edit button', async () => {
+    const { elements } = await import('../shell/elements');
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { shouldDeferStreamMixerBottomPaneRedraw } = await import('./streamMixerBottomRedrawDefer');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => twoSceneStreamPublic(),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    [...elements.surfacePanel.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === 'Flow')
+      ?.click();
+    expect(elements.surfacePanel.textContent).toContain('STREAM BOTTOM scene-a');
+
+    vi.mocked(shouldDeferStreamMixerBottomPaneRedraw).mockReturnValue(true);
+    const editSceneB = elements.surfacePanel.querySelector<HTMLButtonElement>('[data-flow-edit-scene-id="scene-b"]');
+    expect(editSceneB).not.toBeNull();
+    editSceneB?.click();
+
+    expect(elements.surfacePanel.textContent).toContain('STREAM BOTTOM scene-b');
+  });
+
+  it('does not rebuild the header when switching back to List mode', async () => {
+    const { elements } = await import('../shell/elements');
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamHeader, syncStreamHeaderRuntime } = await import('./streamHeader');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { createStreamFlowMode, syncStreamFlowModeRuntimeChrome } = await import('./flowMode');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    [...elements.surfacePanel.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === 'Flow')
+      ?.click();
+    expect(createStreamFlowMode).toHaveBeenCalled();
+
+    vi.mocked(renderStreamHeader).mockClear();
+    vi.mocked(syncStreamHeaderRuntime).mockClear();
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    vi.mocked(syncStreamFlowModeRuntimeChrome).mockClear();
+    [...elements.surfacePanel.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === 'List')
+      ?.click();
+
+    expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+    expect(elements.surfacePanel.querySelector<HTMLElement>('[data-test-mode]')?.dataset.testMode).toBe('list');
+    expect(renderStreamHeader).not.toHaveBeenCalled();
+    expect(syncStreamHeaderRuntime).toHaveBeenCalled();
+  });
+
+  it('syncs the header without rebuilding it for director-only display updates', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamHeader, syncStreamHeaderRuntime } = await import('./streamHeader');
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+    const nextDirector = {
+      ...director(),
+      displays: {
+        display_a: {
+          id: 'display_a',
+          label: 'Display A',
+          health: 'ready',
+          layout: [],
+        },
+      },
+    } as unknown as DirectorState;
+
+    controller.render(director());
+    vi.mocked(renderStreamHeader).mockClear();
+    vi.mocked(syncStreamHeaderRuntime).mockClear();
+    controller.render(nextDirector);
+
+    expect(renderStreamHeader).not.toHaveBeenCalled();
+    expect(syncStreamHeaderRuntime).toHaveBeenCalled();
   });
 
   it('does not let a runtime-only update bypass an invalidated workspace mode switch', async () => {

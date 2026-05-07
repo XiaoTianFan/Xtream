@@ -161,14 +161,19 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
   return row;
 }
 
-function measureGanttFit(root: HTMLElement): { zoom: number; fixedLaneWidth: number } | undefined {
+function measureGanttFit(root: HTMLElement, mode: 'longest' | 'main' = 'longest'): { zoom: number; fixedLaneWidth: number } | undefined {
   const body = root.querySelector<HTMLElement>('.stream-gantt-body');
   if (!body) {
     return undefined;
   }
+  if (body.clientWidth <= 0) {
+    return undefined;
+  }
   let longestBaseTrackWidth = 0;
   let fixedLaneWidth = 0;
-  for (const lane of root.querySelectorAll<HTMLElement>('.stream-gantt-lane')) {
+  const lanes = [...root.querySelectorAll<HTMLElement>('.stream-gantt-lane')];
+  const mainLanes = mode === 'main' ? lanes.filter((lane) => lane.classList.contains('is-main')) : [];
+  for (const lane of mainLanes.length > 0 ? mainLanes : lanes) {
     const baseMinWidth = Number(lane.dataset.baseMinWidthPx);
     const baseTrackWidth = Number(lane.dataset.baseTrackWidthPx);
     if (!Number.isFinite(baseMinWidth) || !Number.isFinite(baseTrackWidth)) {
@@ -193,6 +198,33 @@ function getMinimumGanttZoom(root: HTMLElement): number {
     return MIN_GANTT_ZOOM;
   }
   return Math.max(MIN_GANTT_ZOOM, Math.min(DEFAULT_GANTT_ZOOM, fit.zoom));
+}
+
+function autoFitMainTimeline(root: HTMLElement): boolean {
+  if (root.dataset.ganttUserZoomed === 'true') {
+    return false;
+  }
+  const body = root.querySelector<HTMLElement>('.stream-gantt-body');
+  const fit = measureGanttFit(root, 'main');
+  if (!body || !fit) {
+    return false;
+  }
+  applyGanttZoom(root, fit.zoom);
+  body.scrollLeft = 0;
+  return true;
+}
+
+function queueAutoFitMainTimeline(root: HTMLElement): void {
+  if (root.dataset.ganttUserZoomed === 'true' || root.dataset.ganttFitScheduled === 'true') {
+    return;
+  }
+  root.dataset.ganttFitScheduled = 'true';
+  requestAnimationFrame(() => {
+    delete root.dataset.ganttFitScheduled;
+    if (root.isConnected) {
+      autoFitMainTimeline(root);
+    }
+  });
 }
 
 function applyGanttZoom(root: HTMLElement, zoom = getRootZoom(root)): void {
@@ -230,6 +262,7 @@ function fitGanttToContent(root: HTMLElement): void {
   if (!fit) {
     return;
   }
+  root.dataset.ganttUserZoomed = 'true';
   applyGanttZoom(root, fit.zoom);
   body.scrollLeft = 0;
 }
@@ -263,6 +296,7 @@ function handleGanttWheel(root: HTMLElement, event: WheelEvent): void {
   const bounds = body.getBoundingClientRect();
   const pointerX = Math.max(0, Math.min(body.clientWidth || bounds.width, event.clientX - bounds.left));
   const logicalX = (body.scrollLeft + pointerX) / previousZoom;
+  root.dataset.ganttUserZoomed = 'true';
   applyGanttZoom(root, nextZoom);
   body.scrollLeft = Math.max(0, logicalX * nextZoom - pointerX);
 }
@@ -283,7 +317,7 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
     playbackTimeline: streamState.playbackTimeline,
     runtime: streamState.runtime,
   });
-  if (!projection.hasRuntime || projection.lanes.length === 0) {
+  if (projection.lanes.length === 0) {
     body.classList.add('stream-gantt-body--centered');
     body.replaceChildren(createEmptyState());
     setFitButtonEnabled(root);
@@ -291,7 +325,10 @@ function renderGanttBody(root: HTMLElement, streamState: StreamEnginePublicState
   }
   body.classList.toggle('stream-gantt-body--centered', projection.lanes.length <= 4);
   body.replaceChildren(...projection.lanes.map(createLane));
-  applyGanttZoom(root);
+  if (!autoFitMainTimeline(root)) {
+    applyGanttZoom(root);
+  }
+  queueAutoFitMainTimeline(root);
   setFitButtonEnabled(root);
 }
 

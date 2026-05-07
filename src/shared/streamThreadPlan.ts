@@ -221,6 +221,19 @@ function enumerateBranches(
   return branches;
 }
 
+function compareBranchLength(left: StreamThreadBranch, right: StreamThreadBranch): number {
+  if (left.durationMs !== undefined && right.durationMs !== undefined && left.durationMs !== right.durationMs) {
+    return left.durationMs - right.durationMs;
+  }
+  if (left.durationMs !== undefined && right.durationMs === undefined) {
+    return 1;
+  }
+  if (left.durationMs === undefined && right.durationMs !== undefined) {
+    return -1;
+  }
+  return left.sceneIds.length - right.sceneIds.length;
+}
+
 export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations: SceneDurationMap): StreamThreadPlan {
   const issues: StreamTimelineIssue[] = [];
   const seenIssues = new Set<string>();
@@ -310,13 +323,7 @@ export function deriveStreamThreadPlan(stream: PersistedStreamConfig, durations:
         if (!best) {
           return branch;
         }
-        if (branch.durationMs === undefined) {
-          return best;
-        }
-        if (best.durationMs === undefined || branch.durationMs > best.durationMs) {
-          return branch;
-        }
-        return best;
+        return compareBranchLength(branch, best) > 0 ? branch : best;
       }, undefined)?.sceneIds ?? [rootSceneId];
     const threadId = threadIdForRoot(rootSceneId);
 

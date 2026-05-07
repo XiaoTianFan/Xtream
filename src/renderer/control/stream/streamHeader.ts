@@ -1,6 +1,6 @@
 import { formatTimecode } from '../../../shared/timeline';
 import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
-import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamCommand, StreamThreadId } from '../../../shared/types';
+import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamCommand } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { createButton, syncSliderProgress } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -32,6 +32,7 @@ let rateDragStart: { clientX: number; rate: number } | undefined;
 let timelineScrubPointerActive = false;
 let timelineScrubDraftUntil = 0;
 let timelineScrubDraftValueSeconds: number | undefined;
+const streamRailSegmentCache = new WeakMap<HTMLElement, { streamId: string; styles: { background: string; foreground: string } }>();
 
 export function deriveStreamTransportUiState(args: {
   runtime: StreamEnginePublicState['runtime'];
@@ -164,17 +165,11 @@ export function createStreamRailSegmentStyles(args: {
   playbackTimeline: StreamEnginePublicState['playbackTimeline'];
 }): { background: string; foreground: string } | undefined {
   const colorMaps = deriveStreamThreadColorMaps(args.playbackTimeline);
-  const runtimeMain = args.runtime?.mainTimelineId ? args.runtime.timelineInstances?.[args.runtime.mainTimelineId] : undefined;
-  const runtimeSegments = (runtimeMain?.orderedThreadInstanceIds
-    ?.map((id) => {
-      const instance = args.runtime?.threadInstances?.[id];
-      return instance ? { threadId: instance.canonicalThreadId, durationMs: instance.durationMs ?? 0 } : undefined;
-    })
-    .filter(Boolean) ?? []) as Array<{ threadId: StreamThreadId; durationMs: number }>;
-  const timelineSegments =
-    runtimeSegments.length > 0
-      ? runtimeSegments
-      : (args.playbackTimeline.mainSegments ?? []).map((segment) => ({ threadId: segment.threadId, durationMs: segment.durationMs }));
+  const playbackSegments = (args.playbackTimeline.mainSegments ?? []).map((segment) => ({
+    threadId: segment.threadId,
+    durationMs: segment.durationMs,
+  }));
+  const timelineSegments = playbackSegments;
   const positive = timelineSegments.filter((segment) => segment.durationMs > 0);
   const total = positive.reduce((sum, segment) => sum + segment.durationMs, 0);
   if (total <= 0) {
@@ -197,15 +192,33 @@ export function createStreamRailSegmentStyles(args: {
   };
 }
 
-function applyStreamRailSegmentStyles(sliderWrap: HTMLElement, args: Parameters<typeof createStreamRailSegmentStyles>[0]): void {
-  const styles = createStreamRailSegmentStyles(args);
+function setStreamRailSegmentProperties(host: HTMLElement, styles: { background: string; foreground: string } | undefined): void {
   if (!styles) {
-    sliderWrap.style.removeProperty('--stream-rail-segments');
-    sliderWrap.style.removeProperty('--stream-rail-progress-segments');
+    host.style.removeProperty('--stream-rail-segments');
+    host.style.removeProperty('--stream-rail-progress-segments');
     return;
   }
-  sliderWrap.style.setProperty('--stream-rail-segments', styles.background);
-  sliderWrap.style.setProperty('--stream-rail-progress-segments', styles.foreground);
+  host.style.setProperty('--stream-rail-segments', styles.background);
+  host.style.setProperty('--stream-rail-progress-segments', styles.foreground);
+}
+
+function applyStreamRailSegmentStyles(
+  headerEl: HTMLElement,
+  args: Parameters<typeof createStreamRailSegmentStyles>[0] & { streamId: string },
+): void {
+  const freshStyles = createStreamRailSegmentStyles(args);
+  const cached = streamRailSegmentCache.get(headerEl);
+  const styles = freshStyles ?? (cached?.streamId === args.streamId ? cached.styles : undefined);
+  if (freshStyles) {
+    streamRailSegmentCache.set(headerEl, { streamId: args.streamId, styles: freshStyles });
+  } else if (!styles) {
+    streamRailSegmentCache.delete(headerEl);
+  }
+  setStreamRailSegmentProperties(headerEl, styles);
+  const sliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control');
+  if (sliderWrap) {
+    setStreamRailSegmentProperties(sliderWrap, styles);
+  }
 }
 
 function syncStreamRailProgress(slider: HTMLInputElement): void {
@@ -286,7 +299,6 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   wrapper.className = 'stream-timeline-row';
   const sliderWrap = document.createElement('div');
   sliderWrap.className = 'timeline-control';
-  applyStreamRailSegmentStyles(sliderWrap, { runtime, playbackTimeline: ctx.playbackTimeline });
   const segmentTrack = document.createElement('div');
   segmentTrack.className = 'stream-timeline-segment-track';
   const segmentProgress = document.createElement('div');
@@ -406,10 +418,7 @@ export function syncStreamHeaderRuntime(
     next.disabled = transportState.nextDisabled;
   }
   const slider = headerEl.querySelector<HTMLInputElement>('[data-stream-timeline-slider="true"]');
-  const sliderWrap = slider?.closest<HTMLElement>('.timeline-control');
-  if (sliderWrap) {
-    applyStreamRailSegmentStyles(sliderWrap, { runtime, playbackTimeline });
-  }
+  applyStreamRailSegmentStyles(headerEl, { streamId: playbackStream.id, runtime, playbackTimeline });
   const durationMs = runtime?.expectedDurationMs ?? playbackTimeline.expectedDurationMs;
   if (!slider) {
     return;
@@ -638,4 +647,5 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
   headerMain.className = 'stream-header-main';
   headerMain.append(timecode, headerCenter, actions);
   headerEl.replaceChildren(headerMain, createStreamTimeline(ctx));
+  applyStreamRailSegmentStyles(headerEl, { streamId: playbackStream.id, runtime, playbackTimeline: ctx.playbackTimeline });
 }

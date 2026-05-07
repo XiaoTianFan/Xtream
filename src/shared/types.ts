@@ -755,6 +755,8 @@ export type StreamRuntimeTimelineInstance = {
   status: 'idle' | 'running' | 'paused' | 'complete' | 'failed';
   orderedThreadInstanceIds: string[];
   cursorMs: number;
+  /** Main-stream time where this timeline was created; used for Gantt alignment only. */
+  spawnedAtStreamMs?: number;
   offsetMs?: number;
   originWallTimeMs?: number;
   pausedAtMs?: number;

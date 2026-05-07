@@ -140,6 +140,35 @@ describe('deriveStreamFlowProjection', () => {
     expect(projection.nodesBySceneId['short-below'].rect.y).toBeGreaterThan(longY);
   });
 
+  it('centers the deepest branch when branch durations tie', () => {
+    const v = 'branch-visual' as VisualId;
+    const stream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['root', 'middle', 'middle-tail', 'bottom', 'deep', 'deep-video', 'deep-tail'],
+      scenes: {
+        root: visualScene('root', { type: 'manual' }, v),
+        middle: visualScene('middle', { type: 'follow-end', followsSceneId: 'root' }, v),
+        'middle-tail': scene('middle-tail', { type: 'follow-end', followsSceneId: 'middle' }),
+        bottom: scene('bottom', { type: 'follow-end', followsSceneId: 'root' }),
+        deep: scene('deep', { type: 'follow-end', followsSceneId: 'root' }),
+        'deep-video': visualScene('deep-video', { type: 'follow-end', followsSceneId: 'deep' }, v),
+        'deep-tail': scene('deep-tail', { type: 'follow-end', followsSceneId: 'deep-video' }),
+      },
+    };
+
+    const projection = deriveStreamFlowProjection({ stream, timeline: timeline(stream, { [v]: 1 }), directorState: undefined });
+    const rootY = projection.nodesBySceneId.root.rect.y;
+    const deepY = projection.nodesBySceneId.deep.rect.y;
+
+    expect(projection.mainCurve.points).toHaveLength(4);
+    expect(deepY).toBe(rootY);
+    expect(projection.nodesBySceneId['deep-video'].rect.y).toBe(rootY);
+    expect(projection.nodesBySceneId['deep-tail'].rect.y).toBe(rootY);
+    expect(projection.nodesBySceneId.middle.rect.y).toBeLessThan(rootY);
+    expect(projection.nodesBySceneId.bottom.rect.y).toBeGreaterThan(rootY);
+  });
+
   it('falls back to branch layout when duplicated auto-follow flow rects would overlap', () => {
     const duplicateFlow = { x: 400, y: 200, width: 214, height: 136 };
     const stream: PersistedStreamConfig = {

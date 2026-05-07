@@ -179,9 +179,71 @@ describe('deriveStreamGanttProjection', () => {
     expect(copy.launchPercent).toBeCloseTo(16.667, 2);
   });
 
-  it('returns a standby projection when no runtime exists', () => {
+  it('uses one shared scale across every Gantt timeline lane', () => {
+    const r = runtime();
+    const copy = r.threadInstances!['c-copy']!;
+    copy.canonicalThreadId = 'thread:a';
+    copy.rootSceneId = 'a';
+    copy.launchSceneId = 'a';
+    copy.durationMs = 1000;
+    r.timelineInstances!['timeline:parallel']!.durationMs = 1500;
+
+    const projection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: r });
+    const main = projection.lanes[0]!;
+    const parallel = projection.lanes[1]!;
+    const mainA = main.bars.find((bar) => bar.canonicalThreadId === 'thread:a')!;
+    const parallelA = parallel.bars.find((bar) => bar.canonicalThreadId === 'thread:a')!;
+
+    expect(main.trackMinWidthPx).toBe(parallel.trackMinWidthPx);
+    expect(mainA.widthPercent).toBeCloseTo(parallelA.widthPercent, 3);
+    expect(parallel.durationMs).toBe(1500);
+    expect(parallel.cursorPercent).toBe(25);
+  });
+
+  it('offsets parallel timelines by their main-stream spawn position', () => {
+    const r = runtime();
+    r.timelineInstances!['timeline:parallel']!.spawnedAtStreamMs = 1500;
+
+    const projection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: r });
+    const parallel = projection.lanes[1]!;
+    const copy = parallel.bars[0]!;
+
+    expect(copy.leftPercent).toBe(50);
+    expect(copy.widthPercent).toBe(50);
+    expect(parallel.cursorPercent).toBe(75);
+  });
+
+  it('projects the planned main timeline when no runtime exists', () => {
     const projection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: null });
 
-    expect(projection).toEqual({ lanes: [], hasRuntime: false });
+    expect(projection.hasRuntime).toBe(false);
+    expect(projection.lanes).toHaveLength(1);
+    expect(projection.lanes[0]).toMatchObject({
+      id: 'timeline:main',
+      kind: 'main',
+      status: 'idle',
+      cursorMs: 0,
+      durationMs: 3000,
+    });
+    expect(projection.lanes[0]?.bars.map((bar) => [bar.id, bar.title, bar.state])).toEqual([
+      ['planned:thread:a', 'Alpha', 'ready'],
+      ['planned:thread:b', 'Beta', 'ready'],
+    ]);
+  });
+
+  it('keeps the planned main timeline visible when runtime only has parallel timelines', () => {
+    const r = runtime();
+    delete r.timelineInstances?.['timeline:main'];
+    r.mainTimelineId = undefined;
+    r.timelineOrder = ['timeline:parallel'];
+    delete r.threadInstances?.['a-inst'];
+    delete r.threadInstances?.['b-inst'];
+
+    const projection = deriveStreamGanttProjection({ stream: stream(), playbackTimeline: playbackTimeline(), runtime: r });
+
+    expect(projection.lanes.map((lane) => [lane.kind, lane.label])).toEqual([
+      ['main', 'Main timeline'],
+      ['parallel', 'Parallel 1'],
+    ]);
   });
 });

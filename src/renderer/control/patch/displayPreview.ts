@@ -1,5 +1,5 @@
 import { getDirectorSeconds, getMediaEffectiveTime } from '../../../shared/timeline';
-import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
+import type { DirectorState, DisplayWindowState, LoopState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
 import { DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS } from '../../../shared/types';
 import { createPreviewLabel } from '../shared/dom';
 import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
@@ -11,6 +11,11 @@ const DISPLAY_PREVIEW_MAX_HEIGHT = 480;
 const DISPLAY_PREVIEW_DURATION_MATCH_TOLERANCE_SECONDS = 0.05;
 const displayPreviewCanvases = new WeakMap<HTMLVideoElement, { canvas: HTMLCanvasElement; lastDrawMs: number }>();
 const livePreviewCleanups = new Map<HTMLVideoElement, () => void>();
+
+type RuntimeVisualState = VisualState & {
+  runtimeOffsetSeconds?: number;
+  runtimeLoop?: LoopState;
+};
 
 export function getDisplayPreviewMinFrameIntervalMs(state: DirectorState): number {
   const fps = state.controlDisplayPreviewMaxFps ?? DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS;
@@ -207,6 +212,22 @@ export function getPreviewVisualIds(layout: VisualLayoutProfile): VisualId[] {
   return layout.type === 'single' ? (layout.visualId ? [layout.visualId] : []) : layout.visualIds.filter(Boolean) as VisualId[];
 }
 
+function getPreviewEffectiveTargetSeconds(
+  directorSeconds: number,
+  visual: VisualState | undefined,
+  fallbackDurationSeconds: number | undefined,
+  stateLoop: LoopState,
+): number {
+  const runtime = visual as RuntimeVisualState | undefined;
+  const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
+  const playbackRate = visual?.playbackRate ?? 1;
+  return getMediaEffectiveTime(
+    (directorSeconds - runtimeOffsetSeconds) * playbackRate,
+    visual?.durationSeconds ?? fallbackDurationSeconds,
+    runtime?.runtimeLoop ?? stateLoop,
+  );
+}
+
 export function syncPreviewElements(state: DirectorState): void {
   cleanupDisconnectedLivePreviews();
   syncDisplayPreviewProgressEdges(state);
@@ -223,8 +244,7 @@ export function syncPreviewElements(state: DirectorState): void {
     }
     const visualId = video.dataset.visualId;
     const visual = visualId ? state.visuals[visualId] : undefined;
-    const visualDuration = visual?.durationSeconds;
-    const effectiveTarget = getMediaEffectiveTime(targetSeconds * (visual?.playbackRate ?? 1), visualDuration ?? video.duration, state.loop);
+    const effectiveTarget = getPreviewEffectiveTargetSeconds(targetSeconds, visual, video.duration, state.loop);
     video.playbackRate = state.rate;
     if (visual) {
       video.playbackRate = state.rate * (visual.playbackRate ?? 1);
@@ -265,7 +285,7 @@ function syncDisplayPreviewProgressEdges(state: DirectorState): void {
     edgeElement.dataset.progressVisualId = edge.visualId;
     edgeElement.dataset.progressDurationSeconds = String(edge.durationSeconds);
     edgeElement.dataset.progressPlaybackRate = String(edge.playbackRate);
-    const effectiveTarget = getMediaEffectiveTime(targetSeconds * edge.playbackRate, edge.durationSeconds, state.loop);
+    const effectiveTarget = getPreviewEffectiveTargetSeconds(targetSeconds, state.visuals[edge.visualId], edge.durationSeconds, state.loop);
     const progress = Math.min(100, Math.max(0, (effectiveTarget / edge.durationSeconds) * 100));
     edgeElement.style.setProperty('--display-preview-progress', `${progress}%`);
   });

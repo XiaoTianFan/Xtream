@@ -344,11 +344,6 @@ function renderCards(args: {
             ctx.refreshSceneSelectionUi();
           },
           runScene: (id) => {
-            const status = ctx.streamState?.runtime?.sceneStates[id]?.status;
-            if (status === 'running') {
-              void window.xtream.stream.transport({ type: 'pause' });
-              return;
-            }
             ctx.setPlaybackAndEditFocus(id);
             ctx.setBottomTab('scene');
             ctx.clearDetailPane();

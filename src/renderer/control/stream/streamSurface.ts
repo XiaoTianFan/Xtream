@@ -96,6 +96,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   let bottomRenderSignature = '';
   let mixerRenderSignature = '';
   let displayRenderSignature = '';
+  let headerRenderSignature = '';
   let lastWorkspacePaneSignature = '';
   const expandedListSceneIds = new Set<SceneId>();
   let listDragSceneId: SceneId | undefined;
@@ -194,6 +195,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     mounted = false;
     window.removeEventListener('resize', layoutCtl.syncSplitterAria);
     elements.surfacePanel.classList.remove('stream-surface-panel');
+    headerRenderSignature = '';
     lastWorkspacePaneSignature = '';
     refs.root?.remove();
   }
@@ -519,7 +521,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       return;
     }
     bottomRenderSignature = '';
-    renderBottomPaneIfNeeded();
+    renderBottomPaneIfNeeded({ force: true });
   }
 
   function syncSelectedScene(previousStreamState?: StreamEnginePublicState): void {
@@ -639,8 +641,46 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return shell.root;
   }
 
+  function createHeaderRenderSignature(pub: StreamEnginePublicState): string {
+    const selectedScene = sceneEditSceneId ? pub.stream.scenes[sceneEditSceneId] : undefined;
+    return JSON.stringify({
+      sceneEditSceneId,
+      selectedSceneTitle: selectedScene?.title,
+      selectedSceneNote: selectedScene?.note,
+      headerEditField,
+      playbackTimeline: {
+        status: pub.playbackTimeline.status,
+        revision: pub.playbackTimeline.revision,
+        expectedDurationMs: pub.playbackTimeline.expectedDurationMs,
+        notice: pub.playbackTimeline.notice,
+        mainSegments: pub.playbackTimeline.mainSegments?.map((segment) => ({
+          threadId: segment.threadId,
+          rootSceneId: segment.rootSceneId,
+          startMs: segment.startMs,
+          durationMs: segment.durationMs,
+          endMs: segment.endMs,
+        })),
+        threads: pub.playbackTimeline.threadPlan?.threads.map((thread) => ({
+          threadId: thread.threadId,
+          rootSceneId: thread.rootSceneId,
+          rootTriggerType: thread.rootTriggerType,
+          durationMs: thread.durationMs,
+          sceneIds: thread.sceneIds,
+        })),
+      },
+      validationMessages: pub.validationMessages,
+      playbackSettings: pub.playbackStream.playbackSettings,
+      rate: currentState?.rate,
+    });
+  }
+
   function renderHeader(streamPublicOverride?: StreamEnginePublicState): void {
     const pub = streamPublicOverride ?? streamState!;
+    const nextSignature = createHeaderRenderSignature(pub);
+    if (headerRenderSignature === nextSignature) {
+      syncStreamHeaderRuntime(requireRef('header'), pub.runtime, pub.playbackStream, pub.playbackTimeline, playbackFocusSceneId, currentState);
+      return;
+    }
     renderStreamHeader({
       headerEl: requireRef('header'),
       stream: pub.stream,
@@ -663,6 +703,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       refreshChrome: refreshWorkspaceChromeUi,
       requestRender: renderCurrent,
     });
+    headerRenderSignature = nextSignature;
   }
 
   function renderWorkspacePane(): void {
@@ -829,24 +870,27 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     );
   }
 
-  function renderBottomPaneIfNeeded(): void {
+  function renderBottomPaneIfNeeded(options: { force?: boolean } = {}): void {
     const signature = createBottomRenderSignature();
-    if (bottomRenderSignature === signature) {
+    if (!options.force && bottomRenderSignature === signature) {
       syncSceneEditRunningLock();
       return;
     }
     const streamOutputPanel = refs.outputPanel;
-    if (shouldDeferStreamMixerBottomPaneRedraw(
-      detailPane,
-      bottomTab,
-      streamOutputPanel ?? undefined,
-      isPanelInteractionActive,
-      refs.bottom ?? undefined,
-    )) {
+    if (
+      !options.force &&
+      shouldDeferStreamMixerBottomPaneRedraw(
+        detailPane,
+        bottomTab,
+        streamOutputPanel ?? undefined,
+        isPanelInteractionActive,
+        refs.bottom ?? undefined,
+      )
+    ) {
       return;
     }
     // Also defer while a pointer gesture in the scene-edit bottom pane is still settling.
-    if (bottomTab === 'scene' && bottomPaneInteractionGuardUntil > performance.now()) {
+    if (!options.force && bottomTab === 'scene' && bottomPaneInteractionGuardUntil > performance.now()) {
       return;
     }
     bottomRenderSignature = signature;
