@@ -72,7 +72,7 @@ type WaveformTheme = {
   labelShadow: string;
 };
 
-const DEFAULT_WAVEFORM_THEME: WaveformTheme = {
+const DARK_WAVEFORM_THEME: WaveformTheme = {
   background: 'rgba(11, 18, 27, 0.74)',
   grid: 'rgba(255, 255, 255, 0.08)',
   placeholder: 'rgba(174, 196, 215, 0.32)',
@@ -88,6 +88,24 @@ const DEFAULT_WAVEFORM_THEME: WaveformTheme = {
   automationMuted: 'rgb(210, 220, 226)',
   playhead: 'rgba(255, 255, 255, 0.96)',
   labelShadow: 'rgba(0, 0, 0, 0.65)',
+};
+
+const LIGHT_WAVEFORM_THEME: WaveformTheme = {
+  background: 'rgba(227, 224, 219, 0.92)',
+  grid: 'rgba(70, 77, 82, 0.16)',
+  placeholder: 'rgba(88, 104, 112, 0.28)',
+  text: 'rgba(61, 58, 54, 0.74)',
+  peak: 'rgba(71, 105, 128, 0.62)',
+  rangeFill: 'rgba(74, 124, 133, 0.13)',
+  rangeLine: 'rgba(42, 105, 116, 0.9)',
+  fadeFill: 'rgba(154, 122, 74, 0.18)',
+  fadeLine: 'rgba(134, 99, 42, 0.92)',
+  fadeEnvelope: 'rgba(134, 99, 42, 0.96)',
+  levelActive: 'rgba(22, 132, 109, 0.94)',
+  panActive: 'rgba(166, 67, 111, 0.94)',
+  automationMuted: 'rgb(70, 77, 82)',
+  playhead: 'rgba(33, 31, 29, 0.92)',
+  labelShadow: 'rgba(255, 255, 255, 0.75)',
 };
 
 export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorDeps): HTMLElement {
@@ -107,6 +125,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   let previewSourceTimeMs: number | undefined;
   let previewFrame: number | undefined;
   let previewStopTimer: number | undefined;
+  let themeRenderFrame: number | undefined;
   let disposed = false;
 
   const previewId = `subcue-preview:${sub.id}`;
@@ -190,8 +209,9 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const section = createSubCueSection('Timing', root);
   const resizeObserver = new ResizeObserver(() => render());
   resizeObserver.observe(stage);
-  const themeObserver = new MutationObserver(() => render());
+  const themeObserver = new MutationObserver(() => scheduleThemeRender());
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  window.addEventListener('xtream-theme-change', scheduleThemeRender);
   const disconnectObserver = createDisconnectObserver(section, () => cleanup());
   const unsubscribePreviewPosition = window.xtream.audioRuntime.onSubCuePreviewPosition?.((position) => {
     if (position.previewId !== previewId) {
@@ -298,6 +318,26 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
     if (playTimesGrip) {
       playTimesGrip.disabled = isInfinite;
+    }
+  }
+
+  function scheduleThemeRender(): void {
+    if (disposed) {
+      return;
+    }
+    cancelThemeRender();
+    themeRenderFrame = window.requestAnimationFrame(() => {
+      themeRenderFrame = window.requestAnimationFrame(() => {
+        themeRenderFrame = undefined;
+        render();
+      });
+    });
+  }
+
+  function cancelThemeRender(): void {
+    if (themeRenderFrame !== undefined) {
+      window.cancelAnimationFrame(themeRenderFrame);
+      themeRenderFrame = undefined;
     }
   }
 
@@ -417,7 +457,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, hostWidth, WAVEFORM_HEIGHT);
     const rect = waveformRect();
-    const theme = readWaveformTheme(stage);
+    const theme = readWaveformTheme();
     drawBackground(ctx, rect, theme);
     drawPeaks(ctx, rect, loadState, peaks, theme);
     drawRangeAndFades(ctx, rect, theme);
@@ -832,6 +872,8 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     disconnectObserver.disconnect();
     resizeObserver.disconnect();
     themeObserver.disconnect();
+    window.removeEventListener('xtream-theme-change', scheduleThemeRender);
+    cancelThemeRender();
     window.removeEventListener('beforeunload', cleanup);
     stopPreview(true);
   }
@@ -875,29 +917,8 @@ function createDisconnectObserver(element: HTMLElement, cleanup: () => void): { 
   };
 }
 
-function readWaveformTheme(element: HTMLElement): WaveformTheme {
-  const styles = getComputedStyle(element);
-  return {
-    background: readWaveformColor(styles, '--waveform-bg', DEFAULT_WAVEFORM_THEME.background),
-    grid: readWaveformColor(styles, '--waveform-grid', DEFAULT_WAVEFORM_THEME.grid),
-    placeholder: readWaveformColor(styles, '--waveform-placeholder', DEFAULT_WAVEFORM_THEME.placeholder),
-    text: readWaveformColor(styles, '--waveform-text', DEFAULT_WAVEFORM_THEME.text),
-    peak: readWaveformColor(styles, '--waveform-peak', DEFAULT_WAVEFORM_THEME.peak),
-    rangeFill: readWaveformColor(styles, '--waveform-range-fill', DEFAULT_WAVEFORM_THEME.rangeFill),
-    rangeLine: readWaveformColor(styles, '--waveform-range-line', DEFAULT_WAVEFORM_THEME.rangeLine),
-    fadeFill: readWaveformColor(styles, '--waveform-fade-fill', DEFAULT_WAVEFORM_THEME.fadeFill),
-    fadeLine: readWaveformColor(styles, '--waveform-fade-line', DEFAULT_WAVEFORM_THEME.fadeLine),
-    fadeEnvelope: readWaveformColor(styles, '--waveform-fade-envelope', DEFAULT_WAVEFORM_THEME.fadeEnvelope),
-    levelActive: readWaveformColor(styles, '--waveform-level-active', DEFAULT_WAVEFORM_THEME.levelActive),
-    panActive: readWaveformColor(styles, '--waveform-pan-active', DEFAULT_WAVEFORM_THEME.panActive),
-    automationMuted: readWaveformColor(styles, '--waveform-automation-muted', DEFAULT_WAVEFORM_THEME.automationMuted),
-    playhead: readWaveformColor(styles, '--waveform-playhead', DEFAULT_WAVEFORM_THEME.playhead),
-    labelShadow: readWaveformColor(styles, '--waveform-label-shadow', DEFAULT_WAVEFORM_THEME.labelShadow),
-  };
-}
-
-function readWaveformColor(styles: CSSStyleDeclaration, name: string, fallback: string): string {
-  return styles.getPropertyValue(name).trim() || fallback;
+function readWaveformTheme(): WaveformTheme {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? LIGHT_WAVEFORM_THEME : DARK_WAVEFORM_THEME;
 }
 
 function createRailButton(label: string, onClick: () => void): HTMLButtonElement {

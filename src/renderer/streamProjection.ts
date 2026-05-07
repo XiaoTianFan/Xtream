@@ -175,9 +175,13 @@ function createStreamVisualLayer(args: {
   const zoneId = cue.target.zoneId ?? 'single';
   const absoluteStartMs = cue.streamStartMs + cue.localStartMs;
   const timelineSort = runtimeTimelineSort(streamState, cue);
+  const temporalSuffix =
+    cue.runtimeInstanceId && cue.orphaned !== true
+      ? ''
+      : `:${cue.streamStartMs}:${cue.localStartMs}${cue.orphaned ? `:${cue.fadeOutStartedWallTimeMs ?? 'orphan'}` : ''}`;
   const layerId = `stream-visual:${timelineSort.timelineId ?? 'canonical'}:${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${
     cue.target.displayId
-  }:${zoneId}:${cue.streamStartMs}:${cue.localStartMs}`;
+  }:${zoneId}${temporalSuffix}`;
   const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
   const projectedVisual = {
     ...visual,

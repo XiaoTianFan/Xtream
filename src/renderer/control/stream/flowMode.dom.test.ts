@@ -2,6 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { describe, expect, it, vi } from 'vitest';
+import { buildStreamSchedule } from '../../../shared/streamSchedule';
 import type { CalculatedStreamTimeline, DirectorState, PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
 import { createStreamFlowMode, syncStreamFlowModeRuntimeChrome } from './flowMode';
 
@@ -140,6 +141,66 @@ function streamPublicWithFlow(flow: { x: number; y: number; width: number; heigh
         },
       },
     },
+  };
+}
+
+function threadedStream(flow?: {
+  root?: { x: number; y: number; width: number; height: number };
+  child?: { x: number; y: number; width: number; height: number };
+}): PersistedStreamConfig {
+  return {
+    id: 'stream',
+    label: 'Threaded stream',
+    sceneOrder: ['root', 'child'],
+    scenes: {
+      root: {
+        id: 'root',
+        title: 'Root',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: [],
+        subCues: {},
+        flow: flow?.root,
+      },
+      child: {
+        id: 'child',
+        title: 'Child',
+        trigger: { type: 'follow-end', followsSceneId: 'root' },
+        loop: { enabled: false },
+        preload: { enabled: false },
+        subCueOrder: [],
+        subCues: {},
+        flow: flow?.child,
+      },
+    },
+  };
+}
+
+function publicForStream(s: PersistedStreamConfig): StreamEnginePublicState {
+  const schedule = buildStreamSchedule(s, { visualDurations: {}, audioDurations: {} });
+  const t: CalculatedStreamTimeline = {
+    ...schedule,
+    revision: 1,
+    calculatedAtWallTimeMs: 0,
+  };
+  return {
+    stream: s,
+    playbackStream: s,
+    editTimeline: t,
+    playbackTimeline: t,
+    validationMessages: [],
+    runtime: null,
+  };
+}
+
+function wrapperRect(root: HTMLElement, sceneId: string): { x: number; y: number; width: number; height: number } {
+  const wrapper = root.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${sceneId}"]`)!;
+  return {
+    x: Number.parseInt(wrapper.style.left, 10),
+    y: Number.parseInt(wrapper.style.top, 10),
+    width: Number.parseInt(wrapper.style.width, 10),
+    height: Number.parseInt(wrapper.style.height, 10),
   };
 }
 
@@ -290,6 +351,83 @@ describe('createStreamFlowMode', () => {
 
     expect(wrapper.style.left).toBe(droppedLeft);
     expect(wrapper.style.top).toBe(droppedTop);
+  });
+
+  it('keeps branch curves aligned to a dragged root after syncing persisted layout and then dragging a child', async () => {
+    installPointerCapturePolyfill();
+    const initialState = publicForStream(threadedStream());
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(initialState)),
+        transport: vi.fn(() => Promise.resolve(initialState)),
+      },
+    } as unknown as typeof window.xtream;
+    const root = createStreamFlowMode(initialState.stream, {
+      playbackFocusSceneId: undefined,
+      sceneEditSceneId: undefined,
+      currentState: director(),
+      streamState: initialState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    const rootCard = root.querySelector<HTMLElement>('.stream-flow-card-node[data-scene-id="root"] .stream-flow-card')!;
+    rootCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 10, clientY: 10 }));
+    rootCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 90, clientY: 10 }));
+    rootCard.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 90, clientY: 10 }));
+
+    const persistedState = publicForStream(threadedStream({ root: wrapperRect(root, 'root'), child: wrapperRect(root, 'child') }));
+    syncStreamFlowModeRuntimeChrome(root, persistedState, director(), undefined, undefined);
+
+    const rootAfterSync = wrapperRect(root, 'root');
+    const expectedLinkStart = `M ${rootAfterSync.x + rootAfterSync.width} ${rootAfterSync.y + rootAfterSync.height / 2}`;
+    const childCard = root.querySelector<HTMLElement>('.stream-flow-card-node[data-scene-id="child"] .stream-flow-card')!;
+    childCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 2, clientX: 20, clientY: 10 }));
+    childCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 2, clientX: 60, clientY: 10 }));
+
+    expect(root.querySelector<SVGPathElement>('.stream-flow-trigger-link')?.getAttribute('d')).toContain(expectedLinkStart);
+  });
+
+  it('starts card drag from the synced wrapper position instead of snapping back to the original projection', async () => {
+    installPointerCapturePolyfill();
+    const initialState = publicForStream(threadedStream());
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(initialState)),
+        transport: vi.fn(() => Promise.resolve(initialState)),
+      },
+    } as unknown as typeof window.xtream;
+    const root = createStreamFlowMode(initialState.stream, {
+      playbackFocusSceneId: undefined,
+      sceneEditSceneId: undefined,
+      currentState: director(),
+      streamState: initialState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    const syncedState = publicForStream(threadedStream({ child: { x: 800, y: 300, width: 214, height: 136 } }));
+    syncStreamFlowModeRuntimeChrome(root, syncedState, director(), undefined, undefined);
+    const childWrapper = root.querySelector<HTMLElement>('.stream-flow-card-node[data-scene-id="child"]')!;
+    const childCard = childWrapper.querySelector<HTMLElement>('.stream-flow-card')!;
+
+    childCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 805, clientY: 305 }));
+    childCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 806, clientY: 305 }));
+
+    expect(childWrapper.style.left).toBe('801px');
+    expect(childWrapper.style.top).toBe('300px');
   });
 
   it('dispatches run-from-here from a running Flow card instead of pausing', async () => {

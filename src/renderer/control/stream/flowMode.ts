@@ -67,6 +67,8 @@ function createProjection(stream: PersistedStreamConfig, ctx: StreamFlowModeCont
 }
 
 const flowLayoutOverrides = new WeakMap<HTMLElement, Map<SceneId, FlowRect>>();
+const liveFlowStreams = new WeakMap<HTMLElement, PersistedStreamConfig>();
+const liveFlowProjectionRefs = new WeakMap<HTMLElement, { current: FlowProjection }>();
 
 function rectsMatch(a: FlowRect | undefined, b: FlowRect | undefined): boolean {
   if (!a || !b) {
@@ -86,6 +88,10 @@ function getFlowLayoutOverrides(root: HTMLElement): Map<SceneId, FlowRect> {
 
 function setFlowLayoutOverride(root: HTMLElement, sceneId: SceneId, rect: FlowRect): void {
   getFlowLayoutOverrides(root).set(sceneId, flowRectPatch(rect));
+}
+
+function latestFlowStream(root: HTMLElement, fallback: PersistedStreamConfig): PersistedStreamConfig {
+  return liveFlowStreams.get(root) ?? fallback;
 }
 
 function clearFlowLayoutOverrides(root: HTMLElement, sceneIds?: Iterable<SceneId>): void {
@@ -188,6 +194,23 @@ function applyRectToCard(root: HTMLElement, sceneId: SceneId, rect: FlowRect): v
   node.style.top = `${rect.y}px`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+function currentCardRect(root: HTMLElement, sceneId: SceneId, fallback: FlowRect): FlowRect {
+  const node = root.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(sceneId)}"]`);
+  if (!node) {
+    return fallback;
+  }
+  const x = Number.parseFloat(node.style.left);
+  const y = Number.parseFloat(node.style.top);
+  const width = Number.parseFloat(node.style.width);
+  const height = Number.parseFloat(node.style.height);
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+    width: Number.isFinite(width) ? width : fallback.width,
+    height: Number.isFinite(height) ? height : fallback.height,
+  };
 }
 
 function applyOverlayBounds(overlay: SVGSVGElement, bounds: FlowRect): void {
@@ -310,6 +333,8 @@ function renderCards(args: {
     event.preventDefault();
     event.stopPropagation();
     const start = canvas.screenToFlow(event);
+    const activeStream = latestFlowStream(root, stream);
+    projectionRef.current = createProjectionWithFlowOverrides(root, activeStream, ctx);
     const projection = projectionRef.current;
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
@@ -319,7 +344,10 @@ function renderCards(args: {
       node.rootSceneId === sceneId && node.threadId
         ? projection.nodes.filter((candidate) => candidate.threadId === node.threadId).map((candidate) => candidate.sceneId)
         : [sceneId];
-    const initial = Object.fromEntries(movedIds.map((id) => [id, { ...projection.nodesBySceneId[id].rect }]));
+    const initial = Object.fromEntries(movedIds.map((id) => [id, currentCardRect(root, id, projection.nodesBySceneId[id].rect)]));
+    for (const id of movedIds) {
+      setFlowLayoutOverride(root, id, initial[id]);
+    }
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
@@ -335,7 +363,7 @@ function renderCards(args: {
         movedRects[id] = moveFlowRect(initial[id], dx, dy);
         setFlowLayoutOverride(root, id, movedRects[id]);
       }
-      projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+      projectionRef.current = createProjectionWithFlowOverrides(root, latestFlowStream(root, stream), ctx);
       for (const id of movedIds) {
         const rect = projectionRef.current.nodesBySceneId[id]?.rect ?? movedRects[id];
         if (rect) {
@@ -362,7 +390,7 @@ function renderCards(args: {
         ),
       ).catch(() => {
         clearFlowLayoutOverrides(root, movedIds);
-        projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+        projectionRef.current = createProjectionWithFlowOverrides(root, latestFlowStream(root, stream), ctx);
         for (const id of movedIds) {
           const rect = projectionRef.current.nodesBySceneId[id]?.rect;
           if (rect) {
@@ -382,12 +410,16 @@ function renderCards(args: {
     event.preventDefault();
     event.stopPropagation();
     const start = canvas.screenToFlow(event);
+    const activeStream = latestFlowStream(root, stream);
+    projectionRef.current = createProjectionWithFlowOverrides(root, activeStream, ctx);
     const projection = projectionRef.current;
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
       return;
     }
-    const initial = { ...node.rect };
+    const initial = currentCardRect(root, sceneId, node.rect);
+    node.rect = initial;
+    setFlowLayoutOverride(root, sceneId, initial);
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
@@ -399,7 +431,7 @@ function renderCards(args: {
       };
       setFlowLayoutOverride(root, sceneId, node.rect);
       applyRectToCard(root, sceneId, node.rect);
-      projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+      projectionRef.current = createProjectionWithFlowOverrides(root, latestFlowStream(root, stream), ctx);
       canvas.setOverlayBounds(projectionRef.current.bounds);
       renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
     };
@@ -412,7 +444,7 @@ function renderCards(args: {
       target.removeEventListener('pointercancel', cleanup);
       void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(projectionRef.current.nodesBySceneId[sceneId]?.rect ?? node.rect) } }).catch(() => {
         clearFlowLayoutOverrides(root, [sceneId]);
-        projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+        projectionRef.current = createProjectionWithFlowOverrides(root, latestFlowStream(root, stream), ctx);
         const rect = projectionRef.current.nodesBySceneId[sceneId]?.rect;
         if (rect) {
           applyRectToCard(root, sceneId, rect);
@@ -485,6 +517,7 @@ function renderCards(args: {
 export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): HTMLElement {
   const root = document.createElement('div');
   root.className = 'stream-flow-root';
+  liveFlowStreams.set(root, stream);
   const canvasHost = document.createElement('div');
   canvasHost.className = 'stream-flow-canvas';
   root.append(canvasHost);
@@ -499,6 +532,7 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
     }
     initialized = true;
     const projectionRef = { current: createProjectionWithFlowOverrides(root, stream, ctx) };
+    liveFlowProjectionRefs.set(root, projectionRef);
     canvas = new FlowReteCanvas(canvasHost, {
       initialViewport: stream.flowViewport,
       onViewportChange: (flowViewport) => {
@@ -520,6 +554,8 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
         canvas?.destroy();
         canvas = undefined;
         clearFlowLayoutOverrides(root);
+        liveFlowStreams.delete(root);
+        liveFlowProjectionRefs.delete(root);
         dismissFlowContextMenu();
         destroyObserver?.disconnect();
       }
@@ -545,6 +581,7 @@ export function syncStreamFlowModeRuntimeChrome(
     return;
   }
   syncFocusClasses(flowRoot, playbackFocusSceneId, sceneEditSceneId);
+  liveFlowStreams.set(flowRoot, streamState.stream);
   const stream = streamWithFlowLayoutOverrides(streamState.stream, reconcileFlowLayoutOverrides(flowRoot, streamState.stream));
   const projection = deriveStreamFlowProjection({
     stream,
@@ -558,6 +595,10 @@ export function syncStreamFlowModeRuntimeChrome(
       streamState.playbackTimeline,
     ).scenesWithErrors,
   });
+  const projectionRef = liveFlowProjectionRefs.get(flowRoot);
+  if (projectionRef) {
+    projectionRef.current = projection;
+  }
   for (const node of projection.nodes) {
     const wrapper = flowRoot.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(node.sceneId)}"]`);
     const card = wrapper?.querySelector<HTMLElement>('.stream-flow-card');

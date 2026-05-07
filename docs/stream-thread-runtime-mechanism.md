@@ -716,6 +716,10 @@ Audio renderers consume `deriveDirectorStateForStream()`, which clones active St
 
 Display renderers consume `buildStreamDisplayFrames()`, which groups active Stream visual sub-cues into deterministic per-display/per-zone layer frames. The display window must apply these frames atomically but incrementally: preserve zone containers and media elements when layer identity is unchanged, update opacity/blend/ordering in place, and only remove the specific layer that actually ended. This is required for multi-thread and multi-timeline playback because unrelated zones can change at different times.
 
+For runtime-instance visual cues, display layer identity must come from stable runtime identity (`timelineId`, `runtimeInstanceId`, scene, sub-cue, display, and zone), not from projected `streamStartMs`. Parallel timelines derive a main-stream projection offset so the display can sync media against one local director clock; that offset can legitimately shift after seeks or by sub-frame clock sampling. It must update `runtimeOffsetSeconds`, not force a new DOM/video layer.
+
+Display drift correction during Stream playback must use the renderer-reported derived Stream `directorSeconds`, not the Patch `Director` timeline clock. Otherwise a transient Stream drift report can seek a display toward unrelated Patch time.
+
 ## Flow Mode Relationship
 
 Flow mode naturally visualizes the derived thread graph:

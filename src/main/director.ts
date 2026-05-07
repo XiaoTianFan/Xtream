@@ -1144,7 +1144,9 @@ export class Director extends EventEmitter {
   }
 
   ingestDrift(report: DriftReport): DirectorState {
-    const correction = this.createCorrection(`${report.kind}:${report.displayId ?? 'control'}`, report.driftSeconds);
+    const correctionTargetSeconds =
+      this.streamPlaybackGate() && Number.isFinite(report.directorSeconds) ? report.directorSeconds : undefined;
+    const correction = this.createCorrection(`${report.kind}:${report.displayId ?? 'control'}`, report.driftSeconds, correctionTargetSeconds);
     if (report.kind === 'display' && report.displayId) {
       const display = this.state.displays[report.displayId];
       if (display) {
@@ -1583,7 +1585,7 @@ export class Director extends EventEmitter {
     }
   }
 
-  private createCorrection(railKey: string, driftSeconds: number): RailCorrection {
+  private createCorrection(railKey: string, driftSeconds: number, targetSeconds = this.getPlaybackTimeSeconds()): RailCorrection {
     const absoluteDrift = Math.abs(driftSeconds);
     const issuedAtWallTimeMs = this.now();
     if (absoluteDrift <= DRIFT_WARN_THRESHOLD_SECONDS) {
@@ -1618,7 +1620,7 @@ export class Director extends EventEmitter {
     if (attempts > MAX_CORRECTION_ATTEMPTS && absoluteDrift >= DRIFT_DEGRADE_THRESHOLD_SECONDS) {
       return {
         action: 'degraded',
-        targetSeconds: this.getPlaybackTimeSeconds(),
+        targetSeconds,
         driftSeconds,
         issuedAtWallTimeMs,
         reason: `${DRIFT_DEGRADATION_REASON_PREFIX} ${(DRIFT_DEGRADE_THRESHOLD_SECONDS * 1000).toFixed(0)}ms after repeated corrections.`,
@@ -1628,7 +1630,7 @@ export class Director extends EventEmitter {
     this.lastCorrectionWallTimeMs.set(railKey, issuedAtWallTimeMs);
     return {
       action: 'seek',
-      targetSeconds: this.getPlaybackTimeSeconds(),
+      targetSeconds,
       driftSeconds,
       issuedAtWallTimeMs,
       reason: 'Drift exceeded sustained correction threshold.',

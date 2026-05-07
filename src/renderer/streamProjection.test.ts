@@ -529,6 +529,44 @@ describe('deriveDirectorStateForStream', () => {
     expect(layers.map((layer) => layer.runtimeInstanceId)).toEqual(['inst-1', 'inst-copy']);
   });
 
+  it('keeps a runtime visual layer id stable when only the projected stream offset jitters', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState();
+    const base = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+    ]);
+    const jittered = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1007 },
+    ]);
+
+    const baseLayer = buildStreamDisplayFrames(state, base).d1?.zones[0]?.layers[0];
+    const jitteredLayer = buildStreamDisplayFrames(state, jittered).d1?.zones[0]?.layers[0];
+
+    expect(jitteredLayer?.layerId).toBe(baseLayer?.layerId);
+    expect(jitteredLayer?.visual.runtimeOffsetSeconds).toBe(1.007);
+  });
+
+  it('keeps orphaned visual layers distinct from relaunched active layers on the same runtime instance', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState({
+      displayVisualMingle: {
+        d1: { mode: 'layered', algorithm: 'alpha-over', defaultTransitionMs: 0 },
+      },
+    });
+    const streamState = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 3000 },
+    ]);
+    streamState.runtime!.activeVisualSubCues![0]!.orphaned = true;
+    streamState.runtime!.activeVisualSubCues![0]!.fadeOutStartedWallTimeMs = 9000;
+    streamState.runtime!.activeVisualSubCues![0]!.fadeOutDurationMs = 2000;
+
+    const layers = buildStreamDisplayFrames(state, streamState).d1?.zones[0]?.layers ?? [];
+
+    expect(layers).toHaveLength(2);
+    expect(new Set(layers.map((layer) => layer.layerId)).size).toBe(2);
+  });
+
   it('keeps split display zones independent', () => {
     vi.spyOn(Date, 'now').mockReturnValue(10_000);
     const state = streamDisplayFrameDirectorState({

@@ -13,6 +13,7 @@ class FakeResizeObserver {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  document.documentElement.removeAttribute('data-theme');
   (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
   window.xtream = {
     audioRuntime: { preview: vi.fn(), onSubCuePreviewPosition: vi.fn() },
@@ -21,6 +22,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  document.documentElement.removeAttribute('data-theme');
 });
 
 describe('audioSubCueWaveformEditor', () => {
@@ -155,6 +158,29 @@ describe('audioSubCueWaveformEditor', () => {
     expect(patches).toEqual([{ levelAutomation: undefined }]);
   });
 
+  it('repaints the waveform canvas with the active theme palette after theme changes', () => {
+    const canvas = installCanvasContextRecorder();
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
+      callback(performance.now());
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue(),
+      currentState: directorState({ noUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    expect(canvas.fillStyles[0]).toBe('rgba(11, 18, 27, 0.74)');
+    canvas.fillStyles.length = 0;
+
+    document.documentElement.setAttribute('data-theme', 'light');
+    window.dispatchEvent(new CustomEvent('xtream-theme-change', { detail: { theme: 'light' } }));
+
+    expect(canvas.fillStyles[0]).toBe('rgba(227, 224, 219, 0.92)');
+  });
+
   it('disables preview transport when no output bus can be selected', () => {
     const editor = createAudioSubCueWaveformEditor({
       sub: audioSubCue({ outputIds: [] }),
@@ -190,6 +216,47 @@ describe('audioSubCueWaveformEditor', () => {
     expect(preview).toHaveBeenCalledWith({ type: 'stop-audio-subcue-preview', previewId: 'subcue-preview:sub-a' });
   });
 });
+
+function installCanvasContextRecorder(): { fillStyles: string[] } {
+  const fillStyles: string[] = [];
+  const strokeStyles: string[] = [];
+  const context = {
+    setTransform: vi.fn(),
+    clearRect: vi.fn(),
+    fillRect: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    fillText: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    arc: vi.fn(),
+    setLineDash: vi.fn(),
+    fill: vi.fn(),
+    set fillStyle(value: string) {
+      fillStyles.push(String(value));
+    },
+    get fillStyle() {
+      return fillStyles[fillStyles.length - 1] ?? '';
+    },
+    set strokeStyle(value: string) {
+      strokeStyles.push(String(value));
+    },
+    get strokeStyle() {
+      return strokeStyles[strokeStyles.length - 1] ?? '';
+    },
+    lineWidth: 1,
+    font: '',
+    textBaseline: 'alphabetic',
+    textAlign: 'start',
+    shadowColor: '',
+    shadowBlur: 0,
+    globalAlpha: 1,
+  } as unknown as CanvasRenderingContext2D;
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context);
+  return { fillStyles };
+}
 
 function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): PersistedAudioSubCueConfig {
   return {

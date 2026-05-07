@@ -1850,9 +1850,10 @@ export class StreamEngine extends EventEmitter {
     if (!this.runtime) {
       return;
     }
+    const now = Date.now();
     const schedule = this.playbackTimeline;
     const stream = this.playbackStream;
-    const currentMs = this.getRuntimeStreamMs();
+    const currentMs = this.getRuntimeStreamMs(now);
     this.runtime.currentStreamMs = currentMs;
     this.runtime.expectedDurationMs = this.runtimeMainDurationMs();
     this.runtime.timelineNotice = schedule.notice;
@@ -1883,8 +1884,8 @@ export class StreamEngine extends EventEmitter {
       }
       if (timeline.status === 'running') {
         const rate = this.getGlobalRate();
-        const anchor = timeline.originWallTimeMs ?? Date.now();
-        timeline.cursorMs = (timeline.offsetMs ?? timeline.cursorMs ?? 0) + (Date.now() - anchor) * rate;
+        const anchor = timeline.originWallTimeMs ?? now;
+        timeline.cursorMs = (timeline.offsetMs ?? timeline.cursorMs ?? 0) + (now - anchor) * rate;
       } else if (timeline.status === 'paused') {
         timeline.cursorMs = timeline.pausedAtMs ?? timeline.cursorMs;
       }
@@ -2228,7 +2229,7 @@ export class StreamEngine extends EventEmitter {
     this.stopTicking();
   }
 
-  private getRuntimeStreamMs(): number {
+  private getRuntimeStreamMs(atWallTimeMs = Date.now()): number {
     if (!this.runtime) {
       return 0;
     }
@@ -2237,8 +2238,8 @@ export class StreamEngine extends EventEmitter {
         return this.runtime.offsetStreamMs ?? this.runtime.currentStreamMs ?? 0;
       }
       const rate = this.getGlobalRate();
-      const anchor = this.runtime.originWallTimeMs ?? Date.now();
-      return (this.runtime.offsetStreamMs ?? 0) + (Date.now() - anchor) * rate;
+      const anchor = this.runtime.originWallTimeMs ?? atWallTimeMs;
+      return (this.runtime.offsetStreamMs ?? 0) + (atWallTimeMs - anchor) * rate;
     }
     return this.runtime.pausedAtStreamMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
   }

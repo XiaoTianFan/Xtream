@@ -34,6 +34,7 @@ function applyTheme(theme: Theme): void {
   } else {
     html.removeAttribute('data-theme');
   }
+  window.dispatchEvent(new CustomEvent('xtream-theme-change', { detail: { theme } }));
 }
 
 function updateButtonIcon(button: HTMLButtonElement, theme: Theme): void {

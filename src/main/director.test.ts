@@ -573,6 +573,27 @@ describe('Director', () => {
     expect(director.getState().displays['display-0'].health).toBe('ready');
   });
 
+  it('uses renderer-reported derived time for drift correction while Stream playback is active', () => {
+    const director = new Director(() => 1000);
+    director.setStreamPlaybackGate(() => true);
+    addReadyVideo(director, 'visual-a', 10);
+    director.registerDisplay({ id: 'display-0', fullscreen: false, layout: { type: 'single', visualId: 'visual-a' }, health: 'ready' });
+
+    director.ingestDrift({
+      kind: 'display',
+      displayId: 'display-0',
+      observedSeconds: 43,
+      directorSeconds: 42,
+      driftSeconds: 1,
+      reportedAtWallTimeMs: 1000,
+    });
+
+    expect(director.getState().corrections.displays['display-0']).toMatchObject({
+      action: 'seek',
+      targetSeconds: 42,
+    });
+  });
+
   it('blocks output readiness on missing sources and routing fallback', () => {
     const director = new Director(() => 1000);
     const output = director.createVirtualOutput();
