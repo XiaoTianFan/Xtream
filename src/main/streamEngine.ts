@@ -25,6 +25,7 @@ import type {
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlaybackSettings, normalizeStreamPersistence } from '../shared/streamWorkspace';
 import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
+import { getAudioSubCueBaseDurationMs, normalizeAudioSourceRange } from '../shared/audioSubCueAutomation';
 import {
   buildStreamSchedule,
   resolveFollowsSceneId,
@@ -2420,11 +2421,18 @@ export class StreamEngine extends EventEmitter {
             streamStartMs: scenePhase.phaseZeroStreamMs,
             localStartMs,
             localEndMs,
+            sourceStartMs: sub.sourceStartMs,
+            sourceEndMs: sub.sourceEndMs,
             levelDb: sub.levelDb ?? 0,
             pan: sub.pan ?? 0,
             muted: sub.muted,
             solo: sub.solo,
             playbackRate: sub.playbackRate ?? 1,
+            fadeIn: sub.fadeIn,
+            fadeOut: sub.fadeOut,
+            levelAutomation: sub.levelAutomation,
+            panAutomation: sub.panAutomation,
+            pitchShiftSemitones: sub.pitchShiftSemitones,
             mediaLoop,
           });
         }
@@ -2678,7 +2686,7 @@ export class StreamEngine extends EventEmitter {
       base = d === undefined ? undefined : (d * 1000) / (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
     } else if (sub.kind === 'audio') {
       const d = audioDurations[sub.audioSourceId];
-      base = d === undefined ? undefined : (d * 1000) / (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
+      base = getAudioSubCueBaseDurationMs(sub, d);
     } else {
       return 0;
     }
@@ -2741,6 +2749,13 @@ export class StreamEngine extends EventEmitter {
       return undefined;
     }
     const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
+    const sourceStartMs =
+      sub.kind === 'audio'
+        ? normalizeAudioSourceRange({
+            sourceStartMs: sub.sourceStartMs,
+            sourceEndMs: sub.sourceEndMs,
+          }).startMs
+        : 0;
     const loopStartMs = Math.max(0, sub.loop.range?.startMs ?? 0);
     const loopEndMs = Math.max(loopStartMs, sub.loop.range?.endMs ?? baseDurationMs);
     if (loopEndMs <= loopStartMs) {
@@ -2748,8 +2763,8 @@ export class StreamEngine extends EventEmitter {
     }
     return {
       enabled: true,
-      startSeconds: (loopStartMs * rate) / 1000,
-      endSeconds: (loopEndMs * rate) / 1000,
+      startSeconds: (sourceStartMs + loopStartMs * rate) / 1000,
+      endSeconds: (sourceStartMs + loopEndMs * rate) / 1000,
     };
   }
 
@@ -2802,6 +2817,9 @@ export class StreamEngine extends EventEmitter {
         ]),
       ),
       audioSourceLabels: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, s.label])),
+      audioDurations: new Map(
+        Object.values(state.audioSources ?? {}).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds] as const] : [])),
+      ),
       visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
     };
   }

@@ -15,6 +15,7 @@ export type ValidateStreamContentContext = {
   outputs?: ReadonlySet<VirtualOutputId>;
   displayZones?: ReadonlyMap<string, ReadonlySet<DisplayZoneId>>;
   audioSourceLabels?: ReadonlyMap<AudioSourceId, string>;
+  audioDurations?: ReadonlyMap<AudioSourceId, number>;
   visualLabels?: ReadonlyMap<VisualId, string>;
 };
 

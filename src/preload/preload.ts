@@ -10,6 +10,7 @@ import type {
   AudioSourceSplitResult,
   AudioSourceState,
   AudioSourceUpdate,
+  AudioSubCuePreviewCommand,
   DirectorEventName,
   DirectorState,
   DisplayCreateOptions,
@@ -149,6 +150,12 @@ const api = {
   audioRuntime: {
     setSoloOutputIds: (outputIds: VirtualOutputId[]): Promise<void> => ipcRenderer.invoke('audio:set-solo-output-ids', outputIds),
     reportMeter: (report: OutputMeterReport): Promise<void> => ipcRenderer.invoke('audio:meter-report', report),
+    preview: (command: AudioSubCuePreviewCommand): Promise<void> => ipcRenderer.invoke('audio:subcue-preview', command),
+    onSubCuePreviewCommand: (callback: (command: AudioSubCuePreviewCommand) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: AudioSubCuePreviewCommand) => callback(command);
+      ipcRenderer.on('audio:subcue-preview-command', listener);
+      return () => ipcRenderer.removeListener('audio:subcue-preview-command', listener);
+    },
     onMeterLanes: (callback: (report: OutputMeterReport) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, report: OutputMeterReport) => callback(report);
       ipcRenderer.on('audio:meter-lanes', listener);

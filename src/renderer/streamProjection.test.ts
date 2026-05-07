@@ -80,8 +80,16 @@ describe('deriveDirectorStateForStream', () => {
             outputId: 'output-main',
             streamStartMs: 2_000,
             localStartMs: 500,
+            sourceStartMs: 1_000,
+            sourceEndMs: 9_000,
             levelDb: -6,
+            pan: -0.25,
             playbackRate: 1.5,
+            fadeIn: { durationMs: 250, curve: 'linear' },
+            fadeOut: { durationMs: 500, curve: 'equal-power' },
+            levelAutomation: [{ timeMs: 0, value: -12 }, { timeMs: 1000, value: -3 }],
+            panAutomation: [{ timeMs: 0, value: -1 }, { timeMs: 1000, value: 1 }],
+            pitchShiftSemitones: 3,
             mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 12 },
           },
         ],
@@ -111,7 +119,22 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.loop.enabled).toBe(false);
     expect(derived.outputs['output-main'].sources).toMatchObject([{ levelDb: -6 }]);
     const audioId = derived.outputs['output-main'].sources[0]?.audioSourceId ?? '';
-    expect(derived.audioSources[audioId]).toMatchObject({ playbackRate: 0.75, runtimeOffsetSeconds: 2.5, runtimeLoop: { enabled: true, endSeconds: 12 } });
+    expect(derived.audioSources[audioId]).toMatchObject({
+      playbackRate: 0.75,
+      runtimeOffsetSeconds: 2.5,
+      runtimeSourceStartSeconds: 1,
+      runtimeSourceEndSeconds: 9,
+      runtimePitchShiftSemitones: 3,
+      runtimeLoop: { enabled: true, endSeconds: 12 },
+    });
+    expect(derived.outputs['output-main'].sources[0]).toMatchObject({
+      pan: -0.25,
+      runtimeSubCueStartMs: 2500,
+      runtimeFadeIn: { durationMs: 250, curve: 'linear' },
+      runtimeFadeOut: { durationMs: 500, curve: 'equal-power' },
+      runtimeLevelAutomation: [{ timeMs: 0, value: -12 }, { timeMs: 1000, value: -3 }],
+      runtimePanAutomation: [{ timeMs: 0, value: -1 }, { timeMs: 1000, value: 1 }],
+    });
     expect(derived.displays.d1.layout).toMatchObject({ type: 'single' });
     const visualId = derived.displays.d1.layout.type === 'single' ? derived.displays.d1.layout.visualId ?? '' : '';
     expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3, runtimeLoop: { enabled: true, endSeconds: 10 } });

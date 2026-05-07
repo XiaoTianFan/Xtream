@@ -201,6 +201,25 @@ describe('streamSchedule', () => {
     expect(estimateLinearManualStreamDurationMs(stream, {}, { aud: 5 })).toBe(5000);
   });
 
+  it('uses audio source range when estimating stream duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'Audio trim'),
+      subCueOrder: ['a1'],
+      subCues: {
+        a1: {
+          id: 'a1',
+          kind: 'audio' as const,
+          audioSourceId: 'aud',
+          outputIds: ['output-main'],
+          sourceStartMs: 2000,
+          sourceEndMs: 8000,
+          playbackRate: 2,
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, {}, { aud: 12 })).toBe(3000);
+  });
+
   it('builds an absolute linear schedule for all-manual scenes', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'A'),
@@ -480,5 +499,43 @@ describe('streamSchedule', () => {
     expect(line).toContain('Audio | Room tone');
     expect(line).not.toContain('sub-4935d0668cca');
     expect(line).not.toContain('scene-0a75149089ac');
+  });
+
+  it('validates audio source range, pitch shift, fades, and automation', () => {
+    const scene = {
+      ...createEmptyUserScene('scene-user', 'User'),
+      subCueOrder: ['a1'],
+      subCues: {
+        a1: {
+          id: 'a1',
+          kind: 'audio' as const,
+          audioSourceId: 'aud',
+          outputIds: ['output-main'],
+          sourceStartMs: 6000,
+          sourceEndMs: 5000,
+          pitchShiftSemitones: 18,
+          fadeIn: { durationMs: -1 },
+          levelAutomation: [{ timeMs: -1, value: 20 }],
+          panAutomation: [{ timeMs: 0, value: 2 }],
+        },
+      },
+    };
+    const stream = streamWithScenes({ 'scene-user': scene }, ['scene-user']);
+    const msgs = validateStreamContent(stream, {
+      audioSources: new Set(['aud']),
+      outputs: new Set(['output-main']),
+      audioDurations: new Map([['aud', 5]]),
+    });
+    expect(msgs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('source end must be after source start'),
+        expect.stringContaining('source start exceeds audio duration'),
+        expect.stringContaining('pitch shift outside -12..12'),
+        expect.stringContaining('invalid fade in duration'),
+        expect.stringContaining('invalid level automation point 1 time'),
+        expect.stringContaining('invalid level automation point 1 value'),
+        expect.stringContaining('invalid pan automation point 1 value'),
+      ]),
+    );
   });
 });

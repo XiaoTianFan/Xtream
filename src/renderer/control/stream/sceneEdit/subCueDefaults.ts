@@ -25,6 +25,7 @@ export function buildDefaultAudioSubCue(
     audioSourceId: firstAudio,
     outputIds: firstOutput ? [firstOutput] : [],
     playbackRate: 1,
+    pitchShiftSemitones: 0,
   };
 }
 

@@ -1297,14 +1297,42 @@ describe('StreamEngine', () => {
     stream.scenes['scene-1'].subCueOrder = ['vis', 'aud'];
     stream.scenes['scene-1'].subCues = {
       vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }], playbackRate: 1.5 },
-      aud: { id: 'aud', kind: 'audio', audioSourceId: 'a1', outputIds: ['output-main'], levelDb: -6, playbackRate: 0.5 },
+      aud: {
+        id: 'aud',
+        kind: 'audio',
+        audioSourceId: 'a1',
+        outputIds: ['output-main'],
+        sourceStartMs: 1000,
+        sourceEndMs: 4000,
+        levelDb: -6,
+        playbackRate: 0.5,
+        fadeIn: { durationMs: 250, curve: 'linear' },
+        fadeOut: { durationMs: 500, curve: 'equal-power' },
+        levelAutomation: [{ timeMs: 0, value: -12 }, { timeMs: 1000, value: -3 }],
+        panAutomation: [{ timeMs: 0, value: -1 }, { timeMs: 1000, value: 1 }],
+        pitchShiftSemitones: -2,
+      },
     };
     engine.loadFromShow({ stream });
 
     const state = engine.applyTransport({ type: 'play' });
 
     expect(state.runtime?.activeVisualSubCues).toMatchObject([{ sceneId: 'scene-1', subCueId: 'vis', playbackRate: 1.5 }]);
-    expect(state.runtime?.activeAudioSubCues).toMatchObject([{ sceneId: 'scene-1', subCueId: 'aud', outputId: 'output-main', levelDb: -6 }]);
+    expect(state.runtime?.activeAudioSubCues).toMatchObject([
+      {
+        sceneId: 'scene-1',
+        subCueId: 'aud',
+        outputId: 'output-main',
+        sourceStartMs: 1000,
+        sourceEndMs: 4000,
+        levelDb: -6,
+        fadeIn: { durationMs: 250, curve: 'linear' },
+        fadeOut: { durationMs: 500, curve: 'equal-power' },
+        levelAutomation: [{ timeMs: 0, value: -12 }, { timeMs: 1000, value: -3 }],
+        panAutomation: [{ timeMs: 0, value: -1 }, { timeMs: 1000, value: 1 }],
+        pitchShiftSemitones: -2,
+      },
+    ]);
   });
 
   it('follow-end tracks a manual predecessor’s actual end when that predecessor is started before its stacked schedule', () => {

@@ -19,6 +19,16 @@ import type {
   VirtualOutputId,
   VirtualOutputSourceSelection,
 } from './types';
+import {
+  AUDIO_SUBCUE_LEVEL_MAX_DB,
+  AUDIO_SUBCUE_LEVEL_MIN_DB,
+  AUDIO_SUBCUE_PAN_MAX,
+  AUDIO_SUBCUE_PAN_MIN,
+  clampAudioAutomationPoints,
+  clampPitchShiftSemitones,
+  normalizeFadeSpec,
+  normalizeAudioSourceRange,
+} from './audioSubCueAutomation';
 
 export const STREAM_MAIN_ID: StreamId = 'stream-main';
 export const SCENE_FIRST_ID: SceneId = 'scene-1';
@@ -114,6 +124,38 @@ export function normalizeStreamPersistence(stream: PersistedStreamConfig): Persi
     const scene = next.scenes[id];
     if (scene) {
       scene.trigger = migrateSceneTriggerLoose(scene.trigger);
+      for (const subCueId of Object.keys(scene.subCues)) {
+        const subCue = scene.subCues[subCueId];
+        if (subCue?.kind !== 'audio') {
+          continue;
+        }
+        if (subCue.sourceStartMs !== undefined || subCue.sourceEndMs !== undefined) {
+          const range = normalizeAudioSourceRange({
+            sourceStartMs: subCue.sourceStartMs,
+            sourceEndMs: subCue.sourceEndMs,
+          });
+          subCue.sourceStartMs = range.startMs > 0 ? range.startMs : undefined;
+          subCue.sourceEndMs = range.endMs !== undefined && range.endMs > range.startMs ? range.endMs : undefined;
+        }
+        if (subCue.pitchShiftSemitones !== undefined) {
+          const pitch = clampPitchShiftSemitones(subCue.pitchShiftSemitones);
+          subCue.pitchShiftSemitones = pitch === 0 ? undefined : pitch;
+        }
+        subCue.fadeIn = normalizeFadeSpec(subCue.fadeIn, undefined);
+        subCue.fadeOut = normalizeFadeSpec(subCue.fadeOut, undefined);
+        subCue.levelAutomation = clampAudioAutomationPoints(
+          subCue.levelAutomation,
+          undefined,
+          AUDIO_SUBCUE_LEVEL_MIN_DB,
+          AUDIO_SUBCUE_LEVEL_MAX_DB,
+        );
+        subCue.panAutomation = clampAudioAutomationPoints(
+          subCue.panAutomation,
+          undefined,
+          AUDIO_SUBCUE_PAN_MIN,
+          AUDIO_SUBCUE_PAN_MAX,
+        );
+      }
     }
   }
   return {

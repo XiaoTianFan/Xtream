@@ -8,6 +8,7 @@ import {
   computeAudioGraphSignature,
   findOutputSourceSelectionForRuntime,
   getAudioRuntimeDebugSnapshot,
+  getRuntimeAudioTarget,
   getEffectiveOutputGain,
   resetAudioRuntimeForTests,
   syncVirtualAudioGraph,
@@ -244,6 +245,43 @@ describe('computeAudioGraphSignature', () => {
       },
     };
     expect(computeAudioGraphSignature(a)).not.toBe(computeAudioGraphSignature(c));
+  });
+
+  it('ignores stream automation values so per-frame edits do not rebuild the graph', () => {
+    const a = graphTestState();
+    const b: DirectorState = {
+      ...a,
+      outputs: {
+        ...a.outputs,
+        o1: {
+          ...a.outputs.o1,
+          sources: [
+            {
+              ...a.outputs.o1.sources[0],
+              runtimeLevelAutomation: [{ timeMs: 0, value: -12 }],
+              runtimePanAutomation: [{ timeMs: 500, value: 1 }],
+            },
+          ],
+        },
+      },
+    };
+    expect(computeAudioGraphSignature(a)).toBe(computeAudioGraphSignature(b));
+  });
+});
+
+describe('getRuntimeAudioTarget', () => {
+  it('uses selected Stream source range for target time and audible gating', () => {
+    const source = {
+      ...graphTestState().audioSources.s1,
+      durationSeconds: 4,
+      playbackRate: 1,
+      runtimeOffsetSeconds: 10,
+      runtimeSourceStartSeconds: 2,
+      runtimeSourceEndSeconds: 6,
+    };
+
+    expect(getRuntimeAudioTarget(source, 11, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 3, audible: true });
+    expect(getRuntimeAudioTarget(source, 15, { enabled: false, startSeconds: 0 }).audible).toBe(false);
   });
 });
 

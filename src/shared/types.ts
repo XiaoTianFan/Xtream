@@ -159,6 +159,12 @@ export type AudioSourceState =
       channelMode?: AudioChannelMode;
       derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
+      /** Runtime-only Stream projection: selected source-media in point. */
+      runtimeSourceStartSeconds?: number;
+      /** Runtime-only Stream projection: selected source-media out point. */
+      runtimeSourceEndSeconds?: number;
+      /** Runtime-only Stream projection: pitch shift, independent from playbackRate. */
+      runtimePitchShiftSemitones?: number;
       ready: boolean;
       error?: string;
     }
@@ -179,6 +185,12 @@ export type AudioSourceState =
       channelMode?: AudioChannelMode;
       derivedFromAudioSourceId?: AudioSourceId;
       fileSizeBytes?: number;
+      /** Runtime-only Stream projection: selected source-media in point. */
+      runtimeSourceStartSeconds?: number;
+      /** Runtime-only Stream projection: selected source-media out point. */
+      runtimeSourceEndSeconds?: number;
+      /** Runtime-only Stream projection: pitch shift, independent from playbackRate. */
+      runtimePitchShiftSemitones?: number;
       ready: boolean;
       error?: string;
     };
@@ -191,7 +203,43 @@ export type VirtualOutputSourceSelection = {
   pan?: number;
   muted?: boolean;
   solo?: boolean;
+  /** Runtime-only Stream audio automation metadata; not authored on Patch output sources. */
+  runtimeSubCueStartMs?: number;
+  runtimeFadeIn?: FadeSpec;
+  runtimeFadeOut?: FadeSpec;
+  runtimeLevelAutomation?: CurvePoint[];
+  runtimePanAutomation?: CurvePoint[];
 };
+
+export type AudioSubCuePreviewPayload = {
+  previewId: string;
+  audioSourceId: AudioSourceId;
+  url: string;
+  outputId: VirtualOutputId;
+  outputSinkId?: string;
+  outputBusLevelDb?: number;
+  outputPan?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  levelDb?: number;
+  sourceLevelDb?: number;
+  pan?: number;
+  levelAutomation?: CurvePoint[];
+  panAutomation?: CurvePoint[];
+  playbackRate?: number;
+  pitchShiftSemitones?: number;
+  loop?: SceneLoopPolicy;
+  playTimeMs?: number;
+  channelMode?: AudioChannelMode;
+  channelCount?: number;
+};
+
+export type AudioSubCuePreviewCommand =
+  | { type: 'play-audio-subcue-preview'; payload: AudioSubCuePreviewPayload }
+  | { type: 'pause-audio-subcue-preview'; previewId: string }
+  | { type: 'stop-audio-subcue-preview'; previewId: string };
 
 export type MeterLaneState = {
   id: string;
@@ -460,6 +508,10 @@ export type PersistedAudioSubCueConfig = {
   audioSourceId: AudioSourceId;
   outputIds: VirtualOutputId[];
   startOffsetMs?: number;
+  /** Source-media in point in milliseconds. Scene delay remains `startOffsetMs`. */
+  sourceStartMs?: number;
+  /** Source-media out point in milliseconds. Omitted means source duration when known. */
+  sourceEndMs?: number;
   durationOverrideMs?: number;
   loop?: SceneLoopPolicy;
   fadeIn?: FadeSpec;
@@ -474,6 +526,8 @@ export type PersistedAudioSubCueConfig = {
   levelAutomation?: CurvePoint[];
   panAutomation?: CurvePoint[];
   playbackRate?: number;
+  /** Independent pitch shift in semitones. Playback speed remains controlled by `playbackRate`. */
+  pitchShiftSemitones?: number;
 };
 
 export type PersistedVisualSubCueConfig = {
@@ -727,11 +781,18 @@ export type StreamRuntimeAudioSubCue = {
   streamStartMs: number;
   localStartMs: number;
   localEndMs?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
   levelDb: number;
   pan?: number;
   muted?: boolean;
   solo?: boolean;
   playbackRate: number;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  levelAutomation?: CurvePoint[];
+  panAutomation?: CurvePoint[];
+  pitchShiftSemitones?: number;
   mediaLoop?: LoopState;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;

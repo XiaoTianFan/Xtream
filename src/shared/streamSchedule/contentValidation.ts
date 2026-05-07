@@ -2,6 +2,14 @@ import type { CalculatedStreamTimeline, DirectorState, PersistedStreamConfig, Su
 import { createLoopValidationMessages } from '../streamLoopTiming';
 import { PATCH_COMPAT_SCENE_ID } from '../streamWorkspace';
 import {
+  AUDIO_SUBCUE_LEVEL_MAX_DB,
+  AUDIO_SUBCUE_LEVEL_MIN_DB,
+  AUDIO_SUBCUE_PAN_MAX,
+  AUDIO_SUBCUE_PAN_MIN,
+  AUDIO_SUBCUE_PITCH_MAX_SEMITONES,
+  AUDIO_SUBCUE_PITCH_MIN_SEMITONES,
+} from '../audioSubCueAutomation';
+import {
   audioSubCueValidationLabel,
   scenePrimaryLabel,
   subCueOrdinalKind,
@@ -34,8 +42,47 @@ export function validateStreamContextFromDirector(state: DirectorState | undefin
       ]),
     ),
     audioSourceLabels: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, s.label])),
+    audioDurations: new Map(
+      Object.values(state.audioSources ?? {}).flatMap((s) => (s.durationSeconds !== undefined ? [[s.id, s.durationSeconds] as const] : [])),
+    ),
     visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
   };
+}
+
+function validateCurvePoints(args: {
+  out: StreamScheduleIssue[];
+  stream: PersistedStreamConfig;
+  sceneId: string;
+  subCueId: SubCueId;
+  points: readonly { timeMs: number; value: number }[] | undefined;
+  label: string;
+  min: number;
+  max: number;
+}): void {
+  const { out, stream, sceneId, subCueId, points, label, min, max } = args;
+  if (!points) {
+    return;
+  }
+  const sceneLabel = scenePrimaryLabel(stream, sceneId);
+  const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'audio');
+  for (const [index, point] of points.entries()) {
+    if (!Number.isFinite(point.timeMs) || point.timeMs < 0) {
+      out.push({
+        severity: 'error',
+        sceneId,
+        subCueId,
+        message: `${sceneLabel} · ${ordLabel} has invalid ${label} automation point ${index + 1} time`,
+      });
+    }
+    if (!Number.isFinite(point.value) || point.value < min || point.value > max) {
+      out.push({
+        severity: 'error',
+        sceneId,
+        subCueId,
+        message: `${sceneLabel} · ${ordLabel} has invalid ${label} automation point ${index + 1} value`,
+      });
+    }
+  }
 }
 
 /** Authoring issues for Stream UI (structure, triggers, content, optional playback timeline projection). */
@@ -175,6 +222,105 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
             sceneId,
             subCueId,
             message: `${sceneLabel} · ${ordLabel} references missing audio source ${subCue.audioSourceId}`,
+          });
+        }
+        if (subCue.sourceStartMs !== undefined && (!Number.isFinite(subCue.sourceStartMs) || subCue.sourceStartMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid source start`,
+          });
+        }
+        if (subCue.sourceEndMs !== undefined && (!Number.isFinite(subCue.sourceEndMs) || subCue.sourceEndMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid source end`,
+          });
+        }
+        if (
+          subCue.sourceStartMs !== undefined &&
+          subCue.sourceEndMs !== undefined &&
+          Number.isFinite(subCue.sourceStartMs) &&
+          Number.isFinite(subCue.sourceEndMs) &&
+          subCue.sourceEndMs <= subCue.sourceStartMs
+        ) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} source end must be after source start`,
+          });
+        }
+        const sourceDurationSeconds = context.audioDurations?.get(subCue.audioSourceId);
+        const sourceDurationMs = sourceDurationSeconds === undefined ? undefined : sourceDurationSeconds * 1000;
+        if (sourceDurationMs !== undefined) {
+          if (subCue.sourceStartMs !== undefined && Number.isFinite(subCue.sourceStartMs) && subCue.sourceStartMs > sourceDurationMs) {
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} source start exceeds audio duration`,
+            });
+          }
+          if (subCue.sourceEndMs !== undefined && Number.isFinite(subCue.sourceEndMs) && subCue.sourceEndMs > sourceDurationMs) {
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} source end exceeds audio duration`,
+            });
+          }
+        }
+        if (
+          subCue.pitchShiftSemitones !== undefined &&
+          (!Number.isFinite(subCue.pitchShiftSemitones) ||
+            subCue.pitchShiftSemitones < AUDIO_SUBCUE_PITCH_MIN_SEMITONES ||
+            subCue.pitchShiftSemitones > AUDIO_SUBCUE_PITCH_MAX_SEMITONES)
+        ) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has pitch shift outside -12..12 semitones`,
+          });
+        }
+        validateCurvePoints({
+          out,
+          stream,
+          sceneId,
+          subCueId,
+          points: subCue.levelAutomation,
+          label: 'level',
+          min: AUDIO_SUBCUE_LEVEL_MIN_DB,
+          max: AUDIO_SUBCUE_LEVEL_MAX_DB,
+        });
+        validateCurvePoints({
+          out,
+          stream,
+          sceneId,
+          subCueId,
+          points: subCue.panAutomation,
+          label: 'pan',
+          min: AUDIO_SUBCUE_PAN_MIN,
+          max: AUDIO_SUBCUE_PAN_MAX,
+        });
+        if (subCue.fadeIn !== undefined && (!Number.isFinite(subCue.fadeIn.durationMs) || subCue.fadeIn.durationMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid fade in duration`,
+          });
+        }
+        if (subCue.fadeOut !== undefined && (!Number.isFinite(subCue.fadeOut.durationMs) || subCue.fadeOut.durationMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid fade out duration`,
           });
         }
         if (sceneId !== PATCH_COMPAT_SCENE_ID && subCue.outputIds.length === 0) {

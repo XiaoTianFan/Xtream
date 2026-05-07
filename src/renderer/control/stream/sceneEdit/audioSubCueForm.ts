@@ -3,19 +3,15 @@ import type {
   DirectorState,
   PersistedAudioSubCueConfig,
   SceneId,
-  SceneLoopPolicy,
   SubCueId,
   VirtualOutputId,
 } from '../../../../shared/types';
 import { createDbFader, createPanKnob, createSelect } from '../../shared/dom';
 import { formatAudioChannelLabel, formatDuration } from '../../shared/formatters';
 import { createStreamDetailLine } from '../streamDom';
-import { createFadeFields } from './fadeFields';
-import { createLoopPolicyEditor } from './loopPolicyEditors';
-import { createOptionalNumberField, createRequiredNumberField } from './numericField';
+import { createAudioSubCueWaveformEditor } from './audioSubCueWaveformEditor';
 import {
   createSubCueEmptyNote,
-  createSubCueFieldGrid,
   createSubCueSection,
   createSubCueToggleButton,
 } from './subCueFormControls';
@@ -89,27 +85,7 @@ export function createAudioSubCueForm(deps: AudioSubCueFormDeps): HTMLElement {
 
   form.append(createSubCueSection('Levels', createAudioLevelStrip(sub, patchSubCue)));
 
-  const loopPol: SceneLoopPolicy = sub.loop ?? { enabled: false };
-  form.append(
-    createSubCueSection(
-      'Timing',
-      createSubCueFieldGrid(
-        createRequiredNumberField(
-          'Playback rate',
-          sub.playbackRate ?? 1,
-          (v) => patchSubCue({ playbackRate: Math.max(0.01, v) }),
-          0.01,
-        ),
-        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
-        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), {
-          min: 0,
-        }),
-        createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })),
-        createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })),
-      ),
-      createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })),
-    ),
-  );
+  form.append(createAudioSubCueWaveformEditor({ sub, currentState, patchSubCue }));
 
   form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));
 

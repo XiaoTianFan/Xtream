@@ -1,5 +1,20 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
-import type { AudioSourceState, DirectorState, LoopState, MeterLaneState, VirtualOutputSourceSelection, VirtualOutputState } from '../../../shared/types';
+import {
+  clampPitchShiftSemitones,
+  evaluateAudioSubCueLevelDb,
+  evaluateAudioSubCuePan,
+  evaluateFadeGain,
+} from '../../../shared/audioSubCueAutomation';
+import type {
+  AudioSourceState,
+  AudioSubCuePreviewCommand,
+  AudioSubCuePreviewPayload,
+  DirectorState,
+  LoopState,
+  MeterLaneState,
+  VirtualOutputSourceSelection,
+  VirtualOutputState,
+} from '../../../shared/types';
 import { createPlaybackSyncKey, requestMediaPlay, syncTimedMediaElement } from './mediaSync';
 
 type SinkCapableAudioElement = HTMLAudioElement & {
@@ -12,6 +27,7 @@ type OutputSourceRuntime = {
   graphKey: string;
   element: HTMLMediaElement;
   sourceNode: MediaElementAudioSourceNode;
+  pitchNode?: AudioNode;
   gainNode: GainNode;
   sourcePanner: StereoPannerNode;
   meterLanes: SourceMeterLaneRuntime[];
@@ -71,11 +87,33 @@ const METER_SPAN_DB = METER_DISPLAY_CEIL_DB - METER_DISPLAY_FLOOR_DB;
 
 const METER_FLOOR_DB = METER_DISPLAY_FLOOR_DB;
 const METER_CLIP_DB = METER_DISPLAY_CEIL_DB;
+const PITCH_SHIFT_WORKLET_NAME = 'xtream-audio-subcue-pitch-shift';
+let pitchShiftWorkletUrl: string | undefined;
+const pitchShiftWorkletLoads = new WeakMap<AudioContext, Promise<void>>();
 
 let audioGraphSignature = '';
 let outputRuntimes = new Map<string, OutputRuntime>();
 let soloOutputIds = new Set<string>();
 let lastGlobalAudioMuted: boolean | undefined;
+let previewRuntimes = new Map<string, AudioSubCuePreviewRuntime>();
+
+type AudioSubCuePreviewRuntime = {
+  payload: AudioSubCuePreviewPayload;
+  context: AudioContext;
+  element: HTMLAudioElement;
+  sourceNode: MediaElementAudioSourceNode;
+  pitchNode?: AudioNode;
+  gainNode: GainNode;
+  panner: StereoPannerNode;
+  busGain: GainNode;
+  busPanner: StereoPannerNode;
+  destination?: MediaStreamAudioDestinationNode;
+  sinkElement?: SinkCapableAudioElement;
+  startedAtContextSeconds: number;
+  pausedAtMs: number;
+  stopTimer?: number;
+  automationTimer?: number;
+};
 
 export function setSoloOutputIds(outputIds: Iterable<string>): void {
   soloOutputIds = new Set(outputIds);
@@ -94,7 +132,11 @@ export async function resetAudioRuntimeForTests(): Promise<void> {
   for (const runtime of outputRuntimes.values()) {
     await disposeOutputRuntime(runtime, { immediate: true });
   }
+  for (const preview of previewRuntimes.values()) {
+    disposePreviewRuntime(preview);
+  }
   outputRuntimes = new Map();
+  previewRuntimes = new Map();
   audioGraphSignature = '';
   soloOutputIds = new Set();
   lastGlobalAudioMuted = undefined;
@@ -263,7 +305,7 @@ function createSourceRuntime(
   const sourceNode = runtime.context.createMediaElementSource(element);
   const gainNode = runtime.context.createGain();
   gainNode.gain.value = 0;
-  connectAudioSourceToGain(runtime.context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
+  const pitchNode = connectAudioSourceToGain(runtime.context, sourceNode, gainNode, state.audioSources[selection.audioSourceId]);
   const sourcePanner = runtime.context.createStereoPanner();
   sourcePanner.pan.value = clampAudioPan(selection.pan);
   gainNode.connect(sourcePanner);
@@ -305,6 +347,7 @@ function createSourceRuntime(
     graphKey,
     element,
     sourceNode,
+    pitchNode,
     gainNode,
     sourcePanner,
     meterLanes,
@@ -335,6 +378,7 @@ function disposeSourceRuntime(source: OutputSourceRuntime, options: { immediate?
     source.element.pause();
     source.element.remove();
     source.sourceNode.disconnect();
+    source.pitchNode?.disconnect();
     source.gainNode.disconnect();
     source.sourcePanner.disconnect();
     for (const lane of source.meterLanes) {
@@ -375,19 +419,23 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
         continue;
       }
       const runtimeSource = source as AudioSourceState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
-      const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
-      const target = getAudioEffectiveTime(
-        (directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1),
-        source.durationSeconds,
-        runtimeSource.runtimeLoop ?? state.loop,
-      );
+      const target = getRuntimeAudioTarget(source, directorSeconds, state.loop);
+      const localMs = Math.max(0, (directorSeconds - (runtimeSource.runtimeOffsetSeconds ?? 0)) * 1000);
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
+      const automatedLevelDb = evaluateAudioSubCueLevelDb(selection.levelDb, selection.runtimeLevelAutomation, localMs);
+      const fadeGain = evaluateFadeGain({
+        timeMs: localMs,
+        durationMs: source.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined,
+        fadeIn: selection.runtimeFadeIn,
+        fadeOut: selection.runtimeFadeOut,
+      });
       setSourceRuntimeGain(
         sourceRuntime,
-        sourceMuted || !target.audible ? 0 : dbToGain(selection.levelDb) * dbToGain(source.levelDb ?? 0),
+        sourceMuted || !target.audible ? 0 : dbToGain(automatedLevelDb) * dbToGain(source.levelDb ?? 0) * fadeGain,
       );
-      sourceRuntime.sourcePanner.pan.value = clampAudioPan(selection.pan);
+      sourceRuntime.sourcePanner.pan.value = clampAudioPan(evaluateAudioSubCuePan(selection.pan, selection.runtimePanAutomation, localMs));
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
+      updatePitchShiftNode(sourceRuntime.pitchNode, source.runtimePitchShiftSemitones);
       if (transportMode === 'fading-out') {
         void runtime.context.resume();
         requestMediaPlay(sourceRuntime.element);
@@ -539,13 +587,7 @@ function pauseRuntimeAtDirectorTarget(runtime: OutputRuntime, state: DirectorSta
       sourceRuntime.element.pause();
       continue;
     }
-    const runtimeSource = source as AudioSourceState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
-    const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
-    const target = getAudioEffectiveTime(
-      (directorSeconds - runtimeOffsetSeconds) * (source.playbackRate ?? 1),
-      source.durationSeconds,
-      runtimeSource.runtimeLoop ?? state.loop,
-    );
+    const target = getRuntimeAudioTarget(source, directorSeconds, state.loop);
     sourceRuntime.element.pause();
     sourceRuntime.element.currentTime = clampElementTime(target.seconds, sourceRuntime.element);
   }
@@ -612,6 +654,84 @@ export function findOutputSourceSelectionForRuntime(
 ): VirtualOutputSourceSelection | undefined {
   return selections.find((selection, index) => getOutputSourceSelectionRuntimeId(selection, index) === selectionId)
     ?? selections.find((selection) => selection.audioSourceId === audioSourceId);
+}
+
+export function handleAudioSubCuePreviewCommand(command: AudioSubCuePreviewCommand): void {
+  if (command.type === 'play-audio-subcue-preview') {
+    playAudioSubCuePreview(command.payload);
+  } else if (command.type === 'pause-audio-subcue-preview') {
+    pauseAudioSubCuePreview(command.previewId);
+  } else {
+    stopAudioSubCuePreview(command.previewId);
+  }
+}
+
+export function playAudioSubCuePreview(payload: AudioSubCuePreviewPayload): void {
+  stopAudioSubCuePreview(payload.previewId);
+  const context = new AudioContext();
+  const element = createHiddenAudioOutput();
+  element.preload = 'auto';
+  element.src = payload.url;
+  element.currentTime = Math.max(0, (payload.sourceStartMs ?? 0) / 1000);
+  element.playbackRate = Math.max(0.01, payload.playbackRate ?? 1);
+
+  const sourceNode = context.createMediaElementSource(element);
+  const gainNode = context.createGain();
+  gainNode.gain.value = 0;
+  const sourceForChannel = { channelMode: payload.channelMode, channelCount: payload.channelCount } as unknown as AudioSourceState;
+  const pitchNode = connectAudioSourceToGain(context, sourceNode, gainNode, sourceForChannel);
+  updatePitchShiftNode(pitchNode, payload.pitchShiftSemitones);
+  const panner = context.createStereoPanner();
+  const busGain = context.createGain();
+  const busPanner = context.createStereoPanner();
+  gainNode.connect(panner).connect(busGain).connect(busPanner);
+  const runtime: AudioSubCuePreviewRuntime = {
+    payload,
+    context,
+    element,
+    sourceNode,
+    pitchNode,
+    gainNode,
+    panner,
+    busGain,
+    busPanner,
+    startedAtContextSeconds: context.currentTime,
+    pausedAtMs: 0,
+  };
+  previewRuntimes.set(payload.previewId, runtime);
+  void configurePreviewRouting(runtime);
+  syncPreviewAutomation(runtime);
+  runtime.automationTimer = window.setInterval(() => syncPreviewAutomation(runtime), 25);
+  if (!payload.loop?.enabled && payload.playTimeMs !== undefined) {
+    runtime.stopTimer = window.setTimeout(() => stopAudioSubCuePreview(payload.previewId), Math.max(0, payload.playTimeMs));
+  }
+  void context.resume();
+  requestMediaPlay(element);
+}
+
+export function pauseAudioSubCuePreview(previewId: string): void {
+  const runtime = previewRuntimes.get(previewId);
+  if (!runtime) {
+    return;
+  }
+  runtime.pausedAtMs = getPreviewLocalMs(runtime);
+  runtime.element.pause();
+  if (runtime.sinkElement) {
+    runtime.sinkElement.pause();
+  }
+  if (runtime.stopTimer !== undefined) {
+    window.clearTimeout(runtime.stopTimer);
+    runtime.stopTimer = undefined;
+  }
+}
+
+export function stopAudioSubCuePreview(previewId: string): void {
+  const runtime = previewRuntimes.get(previewId);
+  if (!runtime) {
+    return;
+  }
+  previewRuntimes.delete(previewId);
+  disposePreviewRuntime(runtime);
 }
 
 export function playAudioSourcePreview(source: AudioSourceState, state: DirectorState, setStatus: (message: string) => void): void {
@@ -750,6 +870,45 @@ function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string 
   return state.visuals[source.visualId]?.url ?? '';
 }
 
+export function getRuntimeAudioTarget(source: AudioSourceState, directorSeconds: number, fallbackLoop: LoopState): { seconds: number; audible: boolean } {
+  const runtimeSource = source as AudioSourceState & {
+    runtimeOffsetSeconds?: number;
+    runtimeLoop?: LoopState;
+    runtimeSourceStartSeconds?: number;
+    runtimeSourceEndSeconds?: number;
+  };
+  const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
+  const localSeconds = Math.max(0, directorSeconds - runtimeOffsetSeconds);
+  const rate = source.playbackRate ?? 1;
+  const sourceStartSeconds = runtimeSource.runtimeSourceStartSeconds ?? 0;
+  if (runtimeSource.runtimeSourceStartSeconds === undefined && runtimeSource.runtimeSourceEndSeconds === undefined) {
+    return getAudioEffectiveTime(localSeconds * rate, source.durationSeconds, runtimeSource.runtimeLoop ?? fallbackLoop);
+  }
+  const sourceSeconds = sourceStartSeconds + localSeconds * rate;
+  const loop = runtimeSource.runtimeLoop ?? { enabled: false, startSeconds: sourceStartSeconds };
+  const limited = getAudioEffectiveTime(sourceSeconds, runtimeSource.runtimeSourceEndSeconds, loop);
+  const playTimeAudible = source.durationSeconds === undefined || localSeconds < source.durationSeconds;
+  const rangeAudible = runtimeSource.runtimeSourceEndSeconds === undefined || limited.seconds < runtimeSource.runtimeSourceEndSeconds;
+  return {
+    seconds: Math.max(sourceStartSeconds, limited.seconds),
+    audible: limited.audible && playTimeAudible && rangeAudible,
+  };
+}
+
+function updatePitchShiftNode(node: AudioNode | undefined, semitones: number | undefined): void {
+  if (!node) {
+    return;
+  }
+  const pitch = clampPitchShiftSemitones(semitones);
+  const pitchInput = node as PitchShiftInputNode;
+  pitchInput.pitchSemitones = pitch;
+  const ratio = 2 ** (pitch / 12);
+  const parameter = pitchInput.pitchWorklet?.parameters.get('pitchRatio');
+  if (parameter) {
+    parameter.setTargetAtTime(ratio, pitchInput.context.currentTime, 0.03);
+  }
+}
+
 function isStreamRuntimeAudioSourceId(audioSourceId: string): boolean {
   return audioSourceId.startsWith('stream-audio:');
 }
@@ -759,15 +918,153 @@ function connectAudioSourceToGain(
   sourceNode: MediaElementAudioSourceNode,
   gainNode: GainNode,
   source: AudioSourceState | undefined,
-): void {
+): AudioNode {
+  const pitchNode = createPitchShiftNode(context, gainNode);
   if (source?.channelMode === 'left' || source?.channelMode === 'right') {
     const splitter = context.createChannelSplitter(2);
     sourceNode.connect(splitter);
-    splitter.connect(gainNode, source.channelMode === 'left' ? 0 : 1);
-    return;
+    splitter.connect(pitchNode, source.channelMode === 'left' ? 0 : 1);
+    return pitchNode;
   }
-  sourceNode.connect(gainNode);
+  sourceNode.connect(pitchNode);
+  return pitchNode;
 }
+
+type PitchShiftInputNode = GainNode & {
+  pitchWorklet?: AudioWorkletNode;
+  pitchDestination?: AudioNode;
+  pitchSemitones?: number;
+};
+
+function createPitchShiftNode(context: AudioContext, destination: AudioNode): AudioNode {
+  const input = context.createGain() as PitchShiftInputNode;
+  input.pitchDestination = destination;
+  input.connect(destination);
+  if (!context.audioWorklet || typeof AudioWorkletNode === 'undefined') {
+    return input;
+  }
+  void ensurePitchShiftWorklet(context)
+    .then(() => {
+      const worklet = new AudioWorkletNode(context, PITCH_SHIFT_WORKLET_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+      });
+      input.disconnect(destination);
+      input.connect(worklet).connect(destination);
+      input.pitchWorklet = worklet;
+      updatePitchShiftNode(input, input.pitchSemitones);
+    })
+    .catch(() => {
+      input.connect(destination);
+    });
+  return input;
+}
+
+function ensurePitchShiftWorklet(context: AudioContext): Promise<void> {
+  const existing = pitchShiftWorkletLoads.get(context);
+  if (existing) {
+    return existing;
+  }
+  pitchShiftWorkletUrl ??= URL.createObjectURL(new Blob([PITCH_SHIFT_WORKLET_SOURCE], { type: 'text/javascript' }));
+  const load = context.audioWorklet.addModule(pitchShiftWorkletUrl);
+  pitchShiftWorkletLoads.set(context, load);
+  return load;
+}
+
+const PITCH_SHIFT_WORKLET_SOURCE = `
+class XtreamAudioSubCuePitchShift extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [{ name: 'pitchRatio', defaultValue: 1, minValue: 0.5, maxValue: 2, automationRate: 'k-rate' }];
+  }
+
+  constructor() {
+    super();
+    this.size = 32768;
+    this.mask = this.size - 1;
+    this.grainSize = 1024;
+    this.delay = 2048;
+    this.write = 0;
+    this.channels = [];
+    this.grains = [];
+  }
+
+  channel(index) {
+    if (!this.channels[index]) {
+      this.channels[index] = new Float32Array(this.size);
+      this.grains[index] = [
+        { read: this.size - this.delay, phase: 0 },
+        { read: this.size - this.delay - this.grainSize / 2, phase: this.grainSize / 2 },
+      ];
+    }
+    return this.channels[index];
+  }
+
+  sample(buffer, read) {
+    const base = Math.floor(read);
+    const frac = read - base;
+    const a = buffer[base & this.mask];
+    const b = buffer[(base + 1) & this.mask];
+    return a + (b - a) * frac;
+  }
+
+  grainWindow(phase) {
+    return Math.sin(Math.PI * Math.max(0, Math.min(1, phase / this.grainSize)));
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    const output = outputs[0];
+    const ratio = parameters.pitchRatio[0] || 1;
+    const channelCount = Math.max(input.length, output.length);
+    if (Math.abs(ratio - 1) < 0.001) {
+      for (let c = 0; c < output.length; c += 1) {
+        const source = input[c] || input[0];
+        if (source) {
+          output[c].set(source);
+        } else {
+          output[c].fill(0);
+        }
+      }
+      return true;
+    }
+
+    const frames = output[0]?.length || 0;
+    const writeBase = this.write;
+    for (let c = 0; c < channelCount; c += 1) {
+      const source = input[c] || input[0];
+      const target = output[c];
+      if (!target) {
+        continue;
+      }
+      const buffer = this.channel(c);
+      const grains = this.grains[c];
+      for (let i = 0; i < frames; i += 1) {
+        const writeIndex = writeBase + i;
+        buffer[writeIndex & this.mask] = source ? source[i] || 0 : 0;
+        let sum = 0;
+        let weight = 0;
+        for (const grain of grains) {
+          const w = this.grainWindow(grain.phase);
+          sum += this.sample(buffer, grain.read) * w;
+          weight += w;
+          grain.read += ratio;
+          grain.phase += 1;
+          if (grain.phase >= this.grainSize) {
+            grain.phase = 0;
+            grain.read = writeIndex - this.delay;
+          }
+        }
+        target[i] = weight > 0 ? sum / weight : 0;
+      }
+    }
+    this.write = (this.write + frames) & this.mask;
+    return true;
+  }
+}
+
+registerProcessor('${PITCH_SHIFT_WORKLET_NAME}', XtreamAudioSubCuePitchShift);
+`;
 
 function createSourceMeterLanes(
   context: AudioContext,
@@ -839,6 +1136,81 @@ function createHiddenAudioOutput(): SinkCapableAudioElement {
   output.style.display = 'none';
   document.body.append(output);
   return output;
+}
+
+async function configurePreviewRouting(runtime: AudioSubCuePreviewRuntime): Promise<void> {
+  runtime.busGain.gain.value = dbToGain(runtime.payload.outputBusLevelDb ?? 0);
+  runtime.busPanner.pan.value = clampAudioPan(runtime.payload.outputPan);
+  if (runtime.context.setSinkId) {
+    runtime.busPanner.connect(runtime.context.destination);
+    try {
+      await runtime.context.setSinkId(runtime.payload.outputSinkId ?? '');
+      return;
+    } catch {
+      runtime.busPanner.disconnect(runtime.context.destination);
+    }
+  }
+  const destination = runtime.context.createMediaStreamDestination();
+  runtime.busPanner.connect(destination);
+  const sinkElement = createHiddenAudioOutput();
+  sinkElement.srcObject = destination.stream;
+  runtime.destination = destination;
+  runtime.sinkElement = sinkElement;
+  if (sinkElement.setSinkId) {
+    await sinkElement.setSinkId(runtime.payload.outputSinkId ?? '').catch(() => undefined);
+  }
+  await sinkElement.play().catch(() => undefined);
+}
+
+function getPreviewLocalMs(runtime: AudioSubCuePreviewRuntime): number {
+  if (runtime.element.paused && runtime.pausedAtMs > 0) {
+    return runtime.pausedAtMs;
+  }
+  return Math.max(0, (runtime.context.currentTime - runtime.startedAtContextSeconds) * 1000);
+}
+
+function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
+  const localMs = getPreviewLocalMs(runtime);
+  const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
+  const sourceEndMs = runtime.payload.sourceEndMs;
+  if (sourceEndMs !== undefined && runtime.element.currentTime * 1000 >= sourceEndMs && runtime.payload.loop?.enabled) {
+    runtime.element.currentTime = sourceStartMs / 1000;
+  }
+  const durationMs =
+    runtime.payload.playTimeMs ??
+    (sourceEndMs !== undefined ? Math.max(0, sourceEndMs - sourceStartMs) / Math.max(0.01, runtime.payload.playbackRate ?? 1) : undefined);
+  const fadeGain = evaluateFadeGain({
+    timeMs: localMs,
+    durationMs,
+    fadeIn: runtime.payload.fadeIn,
+    fadeOut: runtime.payload.fadeOut,
+  });
+  const levelDb = evaluateAudioSubCueLevelDb(runtime.payload.levelDb, runtime.payload.levelAutomation, localMs);
+  const gain = dbToGain(levelDb) * dbToGain(runtime.payload.sourceLevelDb ?? 0) * fadeGain;
+  const now = runtime.context.currentTime;
+  runtime.gainNode.gain.setTargetAtTime(gain, now, SOURCE_GAIN_SMOOTH_SECONDS);
+  runtime.panner.pan.setTargetAtTime(clampAudioPan(evaluateAudioSubCuePan(runtime.payload.pan, runtime.payload.panAutomation, localMs)), now, SOURCE_GAIN_SMOOTH_SECONDS);
+  updatePitchShiftNode(runtime.pitchNode, runtime.payload.pitchShiftSemitones);
+}
+
+function disposePreviewRuntime(runtime: AudioSubCuePreviewRuntime): void {
+  if (runtime.stopTimer !== undefined) {
+    window.clearTimeout(runtime.stopTimer);
+  }
+  if (runtime.automationTimer !== undefined) {
+    window.clearInterval(runtime.automationTimer);
+  }
+  runtime.element.pause();
+  runtime.element.remove();
+  runtime.sinkElement?.pause();
+  runtime.sinkElement?.remove();
+  runtime.sourceNode.disconnect();
+  runtime.pitchNode?.disconnect();
+  runtime.gainNode.disconnect();
+  runtime.panner.disconnect();
+  runtime.busGain.disconnect();
+  runtime.busPanner.disconnect();
+  void runtime.context.close();
 }
 
 async function configureOutputRouting(

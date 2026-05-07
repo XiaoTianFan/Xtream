@@ -1,8 +1,10 @@
 /// <reference path="./global.d.ts" />
-import { getAudioEffectiveTime, getDirectorSeconds } from '../shared/timeline';
-import type { DirectorState, LoopState, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
+import { getDirectorSeconds } from '../shared/timeline';
+import type { DirectorState, StreamEnginePublicState, VirtualOutputId } from '../shared/types';
 import {
   getFirstMeteredAudioSource,
+  getRuntimeAudioTarget,
+  handleAudioSubCuePreviewCommand,
   sampleMeters,
   setSoloOutputIds,
   syncAudioRuntimeToDirector,
@@ -54,6 +56,7 @@ function tick(): void {
 window.xtream.director.onState(handleState);
 window.xtream.stream.onState(handleStreamState);
 window.xtream.audioRuntime.onSoloOutputIds(handleSoloOutputIds);
+window.xtream.audioRuntime.onSubCuePreviewCommand(handleAudioSubCuePreviewCommand);
 void window.xtream.renderer.ready({ kind: 'audio' });
 void window.xtream.director.getState().then(handleState);
 void window.xtream.stream.getState().then(handleStreamState);
@@ -71,11 +74,8 @@ driftTimer = window.setInterval(() => {
   if (!source) {
     return;
   }
-  const sourceRate = source.playbackRate ?? 1;
   const directorSeconds = getDirectorSeconds(currentState);
-  const runtimeSource = source as typeof source & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
-  const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
-  const target = getAudioEffectiveTime((directorSeconds - runtimeOffsetSeconds) * sourceRate, source.durationSeconds, runtimeSource.runtimeLoop ?? currentState.loop);
+  const target = getRuntimeAudioTarget(source, directorSeconds, currentState.loop);
   if (!target.audible) {
     return;
   }

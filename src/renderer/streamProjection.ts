@@ -17,6 +17,7 @@ import type {
   VisualMingleSettings,
   VisualState,
 } from '../shared/types';
+import { clampPitchShiftSemitones, normalizeAudioSourceRange } from '../shared/audioSubCueAutomation';
 
 type RuntimeOffset = {
   runtimeOffsetSeconds?: number;
@@ -362,6 +363,11 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
     }
     const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
     const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}${cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''}`;
+    const sourceRange = normalizeAudioSourceRange({
+      sourceStartMs: cue.sourceStartMs,
+      sourceEndMs: cue.sourceEndMs,
+      sourceDurationMs: source.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined,
+    });
     derived.audioSources[cloneId] = {
       ...source,
       id: cloneId,
@@ -371,6 +377,9 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       ready: source.ready,
       error: source.error,
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,
+      runtimeSourceStartSeconds: sourceRange.startMs / 1000,
+      runtimeSourceEndSeconds: sourceRange.endMs !== undefined ? sourceRange.endMs / 1000 : undefined,
+      runtimePitchShiftSemitones: clampPitchShiftSemitones(cue.pitchShiftSemitones),
       runtimeLoop: cue.mediaLoop,
     } as AudioSourceState & RuntimeOffset;
     const selection: VirtualOutputSourceSelection = {
@@ -378,6 +387,11 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       audioSourceId: cloneId,
       levelDb: cue.levelDb + gainFactorToDb(fadeFactor),
       pan: cue.pan ?? 0,
+      runtimeSubCueStartMs: cue.streamStartMs + cue.localStartMs,
+      runtimeFadeIn: cue.fadeIn,
+      runtimeFadeOut: cue.fadeOut,
+      runtimeLevelAutomation: cue.levelAutomation,
+      runtimePanAutomation: cue.panAutomation,
     };
     if (cue.muted !== undefined) {
       selection.muted = cue.muted;

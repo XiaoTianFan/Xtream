@@ -1,5 +1,6 @@
 import type { AudioSourceId, PersistedSceneConfig, PersistedStreamConfig, VisualId } from '../types';
 import { resolveLoopTiming } from '../streamLoopTiming';
+import { getAudioSubCueBaseDurationMs } from '../audioSubCueAutomation';
 
 function subCueBaseDurationMs(
   sub: PersistedSceneConfig['subCues'][string],
@@ -15,12 +16,11 @@ function subCueBaseDurationMs(
     }
     base = d === undefined ? sub.durationOverrideMs : (d * 1000) / rate;
   } else if (sub.kind === 'audio') {
-    const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
     const d = audioDurations[sub.audioSourceId];
-    if (d === undefined && sub.durationOverrideMs === undefined) {
+    base = getAudioSubCueBaseDurationMs(sub, d);
+    if (base === undefined) {
       return undefined;
     }
-    base = d === undefined ? sub.durationOverrideMs : (d * 1000) / rate;
   } else {
     return 0;
   }
