@@ -3,8 +3,6 @@ import type {
   MeterLaneState,
   OutputMeterReport,
   VirtualOutputId,
-  VirtualOutputSourceSelection,
-  VirtualOutputSourceSelectionUpdate,
   VirtualOutputState,
 } from '../../../shared/types';
 import {
@@ -17,26 +15,15 @@ import {
   smoothMeterDb,
   STALE_METER_REPORT_MS,
 } from '../meters/meterBallistics';
-import {
-  busDbToFaderSliderValue,
-  faderMaxSteps,
-  faderSliderMax,
-  faderSliderMin,
-  faderSliderValueToBusDb,
-  faderZeroSliderValue,
-  quantizeBusFaderDb,
-} from '../meters/busFaderLaw';
-import { createButton, createDbFader, createHint, createPanKnob, createSelect, createSlider, syncSliderProgress } from '../shared/dom';
-import { formatAudioChannelLabel } from '../shared/formatters';
+import { createOutputDetailMixerStrip as createOutputDetailMixerStripElement, createMixerStrip as createMixerStripElement, type MixerStripDeps } from './mixerPanel/mixerStrip';
 import {
   labelCountFromHeight,
   observeElementHeight,
-  renderAudioFaderGraticule,
   renderOutputMeterGraticule,
 } from '../meters/graticuleLayout';
 import type { SelectedEntity } from '../shared/types';
 import { deriveOutputMeterLanes } from './meterLanes';
-import { showMixerOutputContextMenu } from './mixerPanel/contextMenu';
+import { createOutputSourceControls as createOutputSourceControlsElement } from './mixerPanel/outputSourceControls';
 import { createMixerRenderSignature } from './mixerPanel/signatures';
 
 export type MixerPanelController = {
@@ -265,9 +252,24 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     return soloOutputIds.size;
   }
 
+  function createMixerStripDeps(): MixerStripDeps {
+    return {
+      isSelected: options.isSelected,
+      soloOutputIds,
+      setSoloOutputIds,
+      selectEntity: options.selectEntity,
+      clearSelectionIf: options.clearSelectionIf,
+      renderState: options.renderState,
+      refreshDetails: options.refreshDetails,
+      renderOutputs,
+      syncOutputMeters,
+      createOutputMeter,
+    };
+  }
+
   function renderOutputs(state: DirectorState): void {
     pruneSmoothedState(state);
-    const strips = Object.values(state.outputs).map((output) => createMixerStrip(output, state));
+    const strips = Object.values(state.outputs).map((output) => createMixerStripElement(output, createMixerStripDeps()));
     elements.outputPanel.replaceChildren(...strips);
   }
 
@@ -340,110 +342,9 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     }
   }
 
-  function mountMixerStripContents(container: HTMLElement, output: VirtualOutputState, state: DirectorState): void {
-    container.replaceChildren();
-    const busPan = createPanKnob({
-      name: `${output.label} bus pan`,
-      value: output.pan ?? 0,
-      variant: 'mixer',
-      onChange: (pan) => {
-        void window.xtream.outputs.update(output.id, { pan });
-      },
-    });
-    const panWrap = document.createElement('div');
-    panWrap.className = 'mixer-strip-pan';
-    panWrap.append(busPan);
-    const db = document.createElement('strong');
-    db.className = 'mixer-db';
-    db.textContent = `${quantizeBusFaderDb(output.busLevelDb).toFixed(1)} dB`;
-    const body = document.createElement('div');
-    body.className = 'mixer-strip-body';
-    const track = document.createElement('div');
-    track.className = 'mixer-strip-track';
-    const meter = createOutputMeter(output);
-    const fader = createAudioFader(output, (busLevelDb) => {
-      db.textContent = `${busLevelDb.toFixed(1)} dB`;
-      void window.xtream.outputs.update(output.id, { busLevelDb });
-    });
-    track.append(meter, fader);
-    body.append(track);
-    const toggles = document.createElement('div');
-    toggles.className = 'mixer-toggles';
-    const isSoloed = soloOutputIds.has(output.id);
-    const solo = createButton('S', isSoloed ? 'secondary active' : 'secondary', () => {
-      const nextSoloOutputIds = new Set(soloOutputIds);
-      if (nextSoloOutputIds.has(output.id)) {
-        nextSoloOutputIds.delete(output.id);
-      } else {
-        nextSoloOutputIds.add(output.id);
-      }
-      setSoloOutputIds(nextSoloOutputIds);
-    });
-    solo.title = `${isSoloed ? 'Unsolo' : 'Solo'} ${output.label}`;
-    solo.setAttribute('aria-label', solo.title);
-    solo.setAttribute('aria-pressed', String(isSoloed));
-    const mute = createButton('M', output.muted ? 'secondary active' : 'secondary', async () => {
-      await window.xtream.outputs.update(output.id, { muted: !output.muted });
-      const nextState = await window.xtream.director.getState();
-      options.renderState(nextState);
-      renderOutputs(nextState);
-      syncOutputMeters(nextState);
-    });
-    mute.title = `${output.muted ? 'Unmute' : 'Mute'} ${output.label}`;
-    mute.setAttribute('aria-label', mute.title);
-    mute.setAttribute('aria-pressed', String(Boolean(output.muted)));
-    toggles.append(solo, mute);
-    toggles.addEventListener('click', (event) => event.stopPropagation());
-    const label = document.createElement('span');
-    label.className = 'mixer-label';
-    label.textContent = output.label;
-    const status = document.createElement('span');
-    status.className = `status-dot ${output.ready ? 'ready' : output.sources.length > 0 ? 'blocked' : 'standby'}`;
-    const labelRow = document.createElement('div');
-    labelRow.className = 'mixer-label-row';
-    labelRow.append(status, label);
-    container.append(panWrap, db, body, toggles, labelRow);
-  }
-
-  function attachMixerStripSelectionHandlers(strip: HTMLElement, outputId: VirtualOutputId): void {
-    strip.tabIndex = 0;
-    strip.addEventListener('click', () => options.selectEntity({ type: 'output', id: outputId }));
-    strip.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        options.selectEntity({ type: 'output', id: outputId });
-      }
-    });
-  }
-
-  function attachMixerStripContextMenu(strip: HTMLElement, output: VirtualOutputState): void {
-    strip.addEventListener('contextmenu', (event) =>
-      showMixerOutputContextMenu(event, output, {
-        clearSelectionIf: options.clearSelectionIf,
-        renderState: options.renderState,
-        refreshDetails: options.refreshDetails,
-      }),
-    );
-  }
-
-  function createMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
-    const strip = document.createElement('article');
-    strip.className = `mixer-strip${options.isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
-    strip.dataset.outputStrip = output.id;
-    attachMixerStripSelectionHandlers(strip, output.id);
-    attachMixerStripContextMenu(strip, output);
-    mountMixerStripContents(strip, output, state);
-    return strip;
-  }
-
   function createOutputDetailMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
-    const strip = document.createElement('article');
-    strip.className = `mixer-strip mixer-strip--detail${options.isSelected('output', output.id) ? ' selected' : ''}${soloOutputIds.has(output.id) ? ' solo' : ''}`;
-    strip.dataset.outputStrip = output.id;
-    attachMixerStripSelectionHandlers(strip, output.id);
-    attachMixerStripContextMenu(strip, output);
-    mountMixerStripContents(strip, output, state);
-    return strip;
+    void state;
+    return createOutputDetailMixerStripElement(output, createMixerStripDeps());
   }
 
   function createOutputMeter(output: VirtualOutputState): HTMLElement {
@@ -566,183 +467,17 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     return connected;
   }
 
-  function createAudioFader(output: VirtualOutputState, onChange: (busLevelDb: number) => void): HTMLElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'audio-fader';
-    const rail = document.createElement('div');
-    rail.className = 'audio-fader-rail';
-    const cap = document.createElement('div');
-    cap.className = 'audio-fader-cap';
-    const faderScale = document.createElement('div');
-    faderScale.className = 'audio-fader-scale';
-    faderScale.setAttribute('aria-hidden', 'true');
-    const input = createSlider({
-      min: faderSliderMin(),
-      max: faderSliderMax(),
-      step: '1',
-      value: String(busDbToFaderSliderValue(quantizeBusFaderDb(output.busLevelDb))),
-      ariaLabel: `${output.label} bus level`,
-      className: 'audio-fader-input vertical-slider',
-    });
-    input.setAttribute('orient', 'vertical');
-    syncAudioFaderPosition(wrapper, input);
-    input.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (event.altKey) {
-        event.preventDefault();
-        const z = faderZeroSliderValue();
-        input.value = String(z);
-        syncSliderProgress(input);
-        syncAudioFaderPosition(wrapper, input);
-        onChange(quantizeBusFaderDb(faderSliderValueToBusDb(z)));
-      }
-    });
-    input.addEventListener('input', () => {
-      syncAudioFaderPosition(wrapper, input);
-      onChange(quantizeBusFaderDb(faderSliderValueToBusDb(Number(input.value))));
-    });
-    wrapper.append(rail, cap, faderScale, input);
-    observeElementHeight(wrapper, (h) => {
-      renderAudioFaderGraticule(faderScale, labelCountFromHeight(h));
-    });
-    return wrapper;
-  }
-
-  function syncAudioFaderPosition(wrapper: HTMLElement, input: HTMLInputElement): void {
-    const min = Number(input.min || 0);
-    const max = Number(input.max || faderMaxSteps());
-    const value = Number(input.value || 0);
-    const percent = max === min ? 0 : ((value - min) / (max - min)) * 100;
-    wrapper.style.setProperty('--fader-position', `${Math.min(100, Math.max(0, percent))}%`);
-  }
-
   function getOutputMeterLanes(output: VirtualOutputState): MeterLaneState[] {
     const meteringState = options.getMeteringState?.() ?? options.getState();
     const laneOutput = meteringState?.outputs[output.id] ?? output;
     return deriveOutputMeterLanes(laneOutput, meteringState, latestMeterReports.get(output.id));
   }
 
-  async function resolveOutputSourceSelectionId(outputId: VirtualOutputId, selection: VirtualOutputSourceSelection, selectionIndex: number): Promise<string> {
-    if (selection.id) {
-      return selection.id;
-    }
-    const currentOutput = (await window.xtream.director.getState()).outputs[outputId];
-    const currentSelection = currentOutput?.sources[selectionIndex];
-    if (currentSelection?.id) {
-      return currentSelection.id;
-    }
-    throw new Error(`Unable to resolve output source selection for ${selection.audioSourceId}.`);
-  }
-
-  async function updateOutputSourceSelection(
-    outputId: VirtualOutputId,
-    selection: VirtualOutputSourceSelection,
-    selectionIndex: number,
-    update: VirtualOutputSourceSelectionUpdate,
-  ): Promise<VirtualOutputState> {
-    const selectionId = await resolveOutputSourceSelectionId(outputId, selection, selectionIndex);
-    return window.xtream.outputs.updateSource(outputId, selectionId, update);
-  }
-
   function createOutputSourceControls(output: VirtualOutputState, state: DirectorState): HTMLElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'output-source-list';
-    const availableSources = Object.values(state.audioSources).filter(
-      (source) => !output.sources.some((selection) => selection.audioSourceId === source.id),
-    );
-    const addSourceControl =
-      availableSources.length > 0
-        ? createSelect(
-            'Add source',
-            [['', 'Choose source'], ...availableSources.map((source): [string, string] => [source.id, source.label])],
-            '',
-            (audioSourceId) => {
-              if (audioSourceId) {
-                if (document.activeElement instanceof HTMLElement) {
-                  document.activeElement.blur();
-                }
-                void window.xtream.outputs
-                  .addSource(output.id, audioSourceId)
-                  .then(async () => {
-                    const nextState = await window.xtream.director.getState();
-                    options.renderState(nextState);
-                    options.refreshDetails(nextState);
-                  });
-              }
-            },
-          )
-        : undefined;
-    if (output.sources.length === 0) {
-      wrapper.append(createHint('No sources selected.'));
-    }
-    for (const [selectionIndex, selection] of output.sources.entries()) {
-      const source = state.audioSources[selection.audioSourceId];
-      const row = document.createElement('div');
-      row.className = 'output-source-row';
-
-      const sourceInfo = document.createElement('div');
-      sourceInfo.className = 'output-source-info';
-      const label = document.createElement('strong');
-      label.textContent = source?.label ?? selection.audioSourceId;
-      label.title = source?.label ?? selection.audioSourceId;
-      const meta = document.createElement('small');
-      meta.textContent = source ? `${source.type === 'external-file' ? 'file' : 'embedded'}${formatAudioChannelLabel(source)}` : 'missing source';
-      sourceInfo.append(label, meta);
-
-      const levelControl = createDbFader('Level dB', selection.levelDb, (levelDb) => {
-        void updateOutputSourceSelection(output.id, selection, selectionIndex, { levelDb });
-      });
-      levelControl.classList.add('output-source-level');
-
-      const sourcePan = createPanKnob({
-        name: `Pan ${source?.label ?? selection.audioSourceId}`,
-        value: selection.pan ?? 0,
-        variant: 'row',
-        onChange: (pan) => {
-          void updateOutputSourceSelection(output.id, selection, selectionIndex, { pan });
-        },
-      });
-      sourcePan.classList.add('output-source-pan');
-
-      const removeButton = createButton('Remove', 'secondary', async () => {
-        await window.xtream.outputs.removeSource(output.id, await resolveOutputSourceSelectionId(output.id, selection, selectionIndex));
-        const nextState = await window.xtream.director.getState();
-        options.renderState(nextState);
-        options.refreshDetails(nextState);
-      });
-      const soloButton = createButton('S', selection.solo ? 'secondary active' : 'secondary', async () => {
-        const nextOutput = await updateOutputSourceSelection(output.id, selection, selectionIndex, { solo: !selection.solo });
-        const nextState = await window.xtream.director.getState();
-        nextState.outputs[nextOutput.id] = nextOutput;
-        options.renderState(nextState);
-        options.refreshDetails(nextState);
-      });
-      soloButton.title = `${selection.solo ? 'Unsolo' : 'Solo'} ${source?.label ?? selection.audioSourceId}`;
-      soloButton.setAttribute('aria-label', soloButton.title);
-      soloButton.setAttribute('aria-pressed', String(Boolean(selection.solo)));
-      const muteButton = createButton('M', selection.muted ? 'secondary active' : 'secondary', async () => {
-        const nextOutput = await updateOutputSourceSelection(output.id, selection, selectionIndex, { muted: !selection.muted });
-        const nextState = await window.xtream.director.getState();
-        nextState.outputs[nextOutput.id] = nextOutput;
-        options.renderState(nextState);
-        options.refreshDetails(nextState);
-      });
-      muteButton.title = `${selection.muted ? 'Unmute' : 'Mute'} ${source?.label ?? selection.audioSourceId}`;
-      muteButton.setAttribute('aria-label', muteButton.title);
-      muteButton.setAttribute('aria-pressed', String(Boolean(selection.muted)));
-      const actions = document.createElement('div');
-      actions.className = 'button-row compact output-source-actions';
-      actions.append(soloButton, muteButton, removeButton);
-      const mid = document.createElement('div');
-      mid.className = 'output-source-mid';
-      mid.append(levelControl, sourcePan);
-      row.append(sourceInfo, mid, actions);
-      wrapper.append(row);
-    }
-    if (addSourceControl) {
-      wrapper.append(addSourceControl);
-    }
-    return wrapper;
+    return createOutputSourceControlsElement(output, state, {
+      renderState: options.renderState,
+      refreshDetails: options.refreshDetails,
+    });
   }
 
   return {

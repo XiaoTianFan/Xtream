@@ -5,13 +5,10 @@ import type {
   PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
-  SceneRuntimeState,
   StreamEnginePublicState,
   SubCueId,
   VirtualOutputId,
 } from '../../../shared/types';
-import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
-import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
 import { syncPreviewElements } from '../patch/displayPreview';
 import { createDisplayWorkspaceController, type DisplayWorkspaceController } from '../patch/displayWorkspace';
 import { createEmbeddedAudioImportController } from '../patch/embeddedAudioImport';
@@ -35,49 +32,29 @@ import {
 import { scenesExplicitlyFollowing } from './listMode';
 import { createStreamMediaPoolElements, createStreamShellLayout } from './shell';
 import { createStreamDetailOverlay } from './streamDetailOverlay';
-import { formatSceneStateLabelForSceneList, sceneListRowRuntimeStatus } from './formatting';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { syncStreamFlowModeRuntimeChrome } from './flowMode';
 import { syncStreamGanttRuntimeChrome } from './ganttMode';
 import { syncOutputBusGanttRuntimeChrome } from './outputBusGantt';
-import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
 import { createStreamWorkspacePaneSignature } from './workspacePaneSignature';
+import {
+  createSceneEditRenderModel as createSceneEditRenderModelSignature,
+  createStreamProjectUiSnapshot,
+  createStreamSurfaceRenderSignature,
+  createStructuralStreamRenderModel,
+  isStreamRuntimeAudioSourceId,
+  isStreamRuntimeVisualId,
+  stripRuntimeMediaFromState,
+} from './streamSurface/signatures';
+import {
+  syncListDragAppearance,
+  syncListRuntimeChrome,
+  syncWorkspaceSceneSelection,
+} from './streamSurface/runtimeChrome';
 
 export type { StreamSurfaceController } from './streamTypes';
-
-const LIST_ROW_RUNTIME_STATUSES = new Set<SceneRuntimeState['status'] | 'disabled'>([
-  'disabled',
-  'failed',
-  'error',
-  'paused',
-  'preloading',
-  'ready',
-  'running',
-  'complete',
-  'skipped',
-]);
-
-function stripWrapTimelineStatusClasses(wrap: HTMLElement): void {
-  for (const cl of [...wrap.classList]) {
-    if (cl.startsWith('status-')) {
-      wrap.classList.remove(cl);
-    }
-  }
-}
-
-function replaceWrapListRuntimeStatus(wrap: HTMLElement, statusClass: string): void {
-  stripWrapTimelineStatusClasses(wrap);
-  wrap.classList.add(`status-${statusClass}`);
-}
-
-function replaceRowListRuntimeStatus(row: HTMLElement, statusClass: string): void {
-  for (const s of LIST_ROW_RUNTIME_STATUSES) {
-    row.classList.remove(s);
-  }
-  row.classList.add(statusClass);
-}
 
 export function createStreamSurfaceController(options: StreamSurfaceOptions): StreamSurfaceController {
   let currentState: DirectorState | undefined;
@@ -108,29 +85,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   const layoutCtl = createStreamLayoutController(refs);
   /** Timestamp (from performance.now()) until which scene-edit bottom pane rebuilds are deferred. */
   let bottomPaneInteractionGuardUntil = 0;
-
-  function outputTopologyDirectorSlice(state: DirectorState): unknown {
-    return Object.values(state.outputs)
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((output) => ({
-        id: output.id,
-        label: output.label,
-        sinkId: output.sinkId,
-        muted: output.muted,
-        outputDelaySeconds: output.outputDelaySeconds,
-        ready: output.ready,
-        physicalRoutingAvailable: output.physicalRoutingAvailable,
-        fallbackAccepted: output.fallbackAccepted,
-        fallbackReason: output.fallbackReason,
-        error: output.error,
-        sources: output.sources.map((sel) => ({
-          id: sel.id,
-          audioSourceId: sel.audioSourceId,
-          muted: sel.muted,
-          solo: sel.solo,
-        })),
-      }));
-  }
 
   const embeddedAudioImport = createEmbeddedAudioImportController({
     getState: () => currentState,
@@ -211,9 +165,9 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function createRenderSignature(state: DirectorState): string {
-    const signatureState = stripRuntimeMediaFromState(state);
-    return JSON.stringify({
-      stream: createStructuralStreamRenderModel(streamState),
+    return createStreamSurfaceRenderSignature({
+      directorState: state,
+      streamState,
       sceneEditSceneId,
       playbackFocusSceneId,
       sceneEditSelection,
@@ -221,160 +175,8 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       bottomTab,
       detailPane,
       headerEditField,
-      mediaPool: mediaPool?.createStreamSurfaceShellSignature(),
-      director: {
-        visuals: Object.values(signatureState.visuals).map((visual) => ({
-          id: visual.id,
-          label: visual.label,
-          ready: visual.ready,
-          durationSeconds: visual.durationSeconds,
-          type: visual.type,
-          kind: visual.kind,
-          url: visual.kind === 'file' ? visual.url : undefined,
-        })),
-        audioSources: Object.values(signatureState.audioSources).map((source) => ({
-          id: source.id,
-          label: source.label,
-          ready: source.ready,
-          durationSeconds: source.durationSeconds,
-          type: source.type,
-        })),
-        outputs: outputTopologyDirectorSlice(state),
-        displays: snapshotDisplaysForStreamSignature(state.displays),
-      },
+      mediaPoolShellSignature: mediaPool?.createStreamSurfaceShellSignature(),
     });
-  }
-
-  function createStructuralStreamRenderModel(state: StreamEnginePublicState | undefined): unknown {
-    if (!state) {
-      return undefined;
-    }
-    return {
-      stream: createStreamContentRenderModel(state.stream),
-      playbackStream: createStreamContentRenderModel(state.playbackStream),
-      playbackTimeline: createStableTimelineRenderModel(state.playbackTimeline),
-      validationMessages: state.validationMessages,
-    };
-  }
-
-  function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown {
-    const { flowViewport: _flowViewport, scenes, ...rest } = stream;
-    return {
-      ...rest,
-      scenes: Object.fromEntries(
-        Object.entries(scenes).map(([id, scene]) => {
-          const { flow: _flow, ...sceneWithoutFlow } = scene;
-          return [id, sceneWithoutFlow];
-        }),
-      ),
-    };
-  }
-
-  function createStableTimelineRenderModel(timeline: StreamEnginePublicState['playbackTimeline']): unknown {
-    return {
-      status: timeline.status,
-      expectedDurationMs: timeline.expectedDurationMs,
-      entries: timeline.entries,
-      threadPlan: timeline.threadPlan,
-      mainSegments: timeline.mainSegments,
-      issues: timeline.issues,
-      notice: timeline.notice,
-    };
-  }
-
-  function stripRuntimeMediaFromState(state: DirectorState): DirectorState {
-    const visualEntries = Object.entries(state.visuals).filter(([id]) => !isStreamRuntimeVisualId(id));
-    const audioSourceEntries = Object.entries(state.audioSources).filter(([id]) => !isStreamRuntimeAudioSourceId(id));
-    if (visualEntries.length === Object.keys(state.visuals).length && audioSourceEntries.length === Object.keys(state.audioSources).length) {
-      return state;
-    }
-    return {
-      ...state,
-      visuals: Object.fromEntries(visualEntries),
-      audioSources: Object.fromEntries(audioSourceEntries),
-    };
-  }
-
-  function isStreamRuntimeVisualId(id: string): boolean {
-    return id.startsWith('stream-visual:');
-  }
-
-  function isStreamRuntimeAudioSourceId(id: string): boolean {
-    return id.startsWith('stream-audio:');
-  }
-
-  function syncListRuntimeChrome(root: HTMLElement, state: StreamEnginePublicState, directorState: DirectorState | undefined): void {
-    const stream = state.stream;
-    const highlights = getStreamAuthoringErrorHighlights(
-      stream,
-      validateStreamContextFromDirector(directorState),
-      state.playbackTimeline,
-    );
-    const threadColors = deriveStreamThreadColorMaps(state.playbackTimeline);
-    const runtime = state.runtime;
-    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
-      const sceneId = wrap.dataset.sceneId as SceneId | undefined;
-      if (!sceneId) {
-        continue;
-      }
-      const scene = stream.scenes[sceneId];
-      if (!scene) {
-        continue;
-      }
-      const runtimeState = runtime?.sceneStates[sceneId];
-      const threadColor = threadColors.bySceneId[sceneId];
-      if (threadColor) {
-        wrap.classList.add('stream-scene-row-wrap--threaded');
-        wrap.dataset.threadColor = threadColor.token;
-        wrap.style.setProperty('--stream-thread-base', threadColor.base);
-        wrap.style.setProperty('--stream-thread-bright', threadColor.bright);
-        wrap.style.setProperty('--stream-thread-dim', threadColor.dim);
-      }
-      const authoringErr = highlights.scenesWithErrors.has(sceneId);
-      const statusClass = sceneListRowRuntimeStatus(runtimeState, scene, authoringErr);
-      replaceWrapListRuntimeStatus(wrap, statusClass);
-
-      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
-      if (row) {
-        replaceRowListRuntimeStatus(row, statusClass);
-        const stateCell = row.querySelector<HTMLElement>('.stream-list-col-state');
-        if (stateCell) {
-          stateCell.textContent = formatSceneStateLabelForSceneList(runtimeState, scene, authoringErr);
-        }
-      }
-
-      let bar = wrap.querySelector<HTMLElement>('.stream-scene-row-progress');
-      if (runtimeState?.status === 'running') {
-        const progress = runtimeState.progress;
-        if (!bar) {
-          bar = document.createElement('div');
-          wrap.append(bar);
-        }
-        if (progress !== undefined && Number.isFinite(progress)) {
-          bar.className = 'stream-scene-row-progress';
-          bar.style.setProperty('--stream-row-progress', `${Math.min(100, Math.max(0, progress * 100))}%`);
-        } else {
-          bar.className = 'stream-scene-row-progress stream-scene-row-progress--indeterminate';
-          bar.style.removeProperty('--stream-row-progress');
-        }
-        if (threadColor) {
-          bar.style.setProperty('--stream-row-progress-color', threadColor.bright);
-        }
-      } else {
-        bar?.remove();
-      }
-    }
-  }
-
-  function syncListDragAppearance(root: HTMLElement, draggingSceneId: SceneId | undefined): void {
-    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
-      const id = wrap.dataset.sceneId as SceneId | undefined;
-      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
-      if (!id || !row) {
-        continue;
-      }
-      row.classList.toggle('dragging', draggingSceneId !== undefined && id === draggingSceneId);
-    }
   }
 
   function render(state: DirectorState): void {
@@ -465,38 +267,6 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     syncOutputBusGanttRuntimeChrome(requireRef('bottom'), { streamState, directorState: currentState });
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
-  }
-
-  function syncWorkspaceSceneSelection(
-    root: HTMLElement,
-    playbackId: SceneId | undefined,
-    editId: SceneId | undefined,
-  ): void {
-    for (const node of root.querySelectorAll<HTMLElement>('.stream-flow-card-node[data-scene-id]')) {
-      const id = node.dataset.sceneId as SceneId | undefined;
-      if (!id) {
-        continue;
-      }
-      const card = node.querySelector<HTMLElement>('.stream-flow-card');
-      if (!card) {
-        continue;
-      }
-      card.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
-      card.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
-    }
-    for (const wrap of root.querySelectorAll<HTMLElement>('.stream-scene-row-wrap[data-scene-id]')) {
-      const id = wrap.dataset.sceneId as SceneId | undefined;
-      if (!id) {
-        continue;
-      }
-      wrap.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
-      wrap.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
-      const row = wrap.querySelector<HTMLElement>(':scope > .stream-scene-row');
-      if (row) {
-        row.classList.toggle('stream-playback-focus', playbackId !== undefined && id === playbackId);
-        row.classList.toggle('stream-edit-focus', editId !== undefined && id === editId);
-      }
-    }
   }
 
   /** Header, media pool highlight, workspace selection + list runtime chrome, meters — does not rebuild list/flow or bottom pane DOM. */
@@ -997,26 +767,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function createSceneEditRenderModel(): unknown {
-    const stream = streamState!.stream;
-    const scene = sceneEditSceneId ? stream.scenes[sceneEditSceneId] : undefined;
-    return {
-      stream,
-      validationMessages: streamState!.validationMessages,
+    return createSceneEditRenderModelSignature({
+      streamState: streamState!,
+      sceneEditSceneId,
+      currentState,
       selectedSceneRunning: isSelectedSceneRunning(),
-      media: currentState
-        ? {
-          visuals: Object.values(currentState.visuals)
-            .filter((visual) => !isStreamRuntimeVisualId(visual.id))
-            .map((visual) => ({ id: visual.id, label: visual.label, kind: visual.kind, type: visual.type })),
-          audioSources: Object.values(currentState.audioSources)
-            .filter((source) => !isStreamRuntimeAudioSourceId(source.id))
-            .map((source) => ({ id: source.id, label: source.label, type: source.type })),
-          outputs: Object.values(currentState.outputs).map((output) => ({ id: output.id, label: output.label })),
-          displays: Object.values(currentState.displays).map((display) => ({ id: display.id, label: display.label, layout: display.layout })),
-        }
-        : undefined,
-      selectedScene: scene?.id,
-    };
+    });
   }
 
   function isSelectedSceneRunning(): boolean {
@@ -1127,24 +883,15 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
   }
 
   function exportProjectUiSnapshot(): ControlProjectUiStreamState {
-    return {
+    return createStreamProjectUiSnapshot({
       mode,
       bottomTab,
       selectedSceneId: sceneEditSceneId,
-      sceneEditSelection:
-        sceneEditSelection.kind === 'subcue'
-          ? { kind: 'subcue', subCueId: sceneEditSelection.subCueId }
-          : { kind: 'scene' },
-      expandedListSceneIds: [...expandedListSceneIds],
+      sceneEditSelection,
+      expandedListSceneIds,
       layout: readStreamLayoutPrefs(),
-      detailPane: detailPane
-        ? {
-          type: detailPane.type,
-          id: detailPane.id,
-          returnTab: detailPane.returnTab,
-        }
-        : undefined,
-    };
+      detailPane,
+    });
   }
 
   function applyImportedProjectUi(
