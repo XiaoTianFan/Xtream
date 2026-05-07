@@ -69,18 +69,25 @@ export function createStructuralStreamRenderModel(state: StreamEnginePublicState
 }
 
 function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown {
+  return createStreamContentRenderModelWithOptions(stream, { omitAudioTimingEditorFields: false });
+}
+
+function createStreamContentRenderModelWithOptions(
+  stream: PersistedStreamConfig,
+  options: { omitAudioTimingEditorFields: boolean },
+): unknown {
   const { flowViewport: _flowViewport, scenes, ...rest } = stream;
   return {
     ...rest,
     scenes: Object.fromEntries(
       Object.entries(scenes).map(([id, scene]) => {
-        return [id, stableSceneForRenderSignature(scene)];
+        return [id, stableSceneForRenderSignature(scene, options)];
       }),
     ),
   };
 }
 
-function stableSceneForRenderSignature(scene: PersistedSceneConfig): unknown {
+function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { omitAudioTimingEditorFields: boolean }): unknown {
   const { flow: _flow, subCues, ...sceneWithoutFlow } = scene;
   return {
     ...sceneWithoutFlow,
@@ -96,9 +103,26 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig): unknown {
           fadeOut: _fadeOut,
           levelAutomation: _levelAutomation,
           panAutomation: _panAutomation,
+          startOffsetMs: _startOffsetMs,
+          durationOverrideMs: _durationOverrideMs,
+          loop: _loop,
+          playbackRate: _playbackRate,
+          pitchShiftSemitones: _pitchShiftSemitones,
           ...stableAudioSubCue
         } = subCue;
-        return [id, stableAudioSubCue];
+        return [
+          id,
+          options.omitAudioTimingEditorFields
+            ? stableAudioSubCue
+            : {
+                ...stableAudioSubCue,
+                startOffsetMs: _startOffsetMs,
+                durationOverrideMs: _durationOverrideMs,
+                loop: _loop,
+                playbackRate: _playbackRate,
+                pitchShiftSemitones: _pitchShiftSemitones,
+              },
+        ];
       }),
     ),
   };
@@ -168,7 +192,7 @@ export function createSceneEditRenderModel(params: {
   const stream = params.streamState.stream;
   const scene = params.sceneEditSceneId ? stream.scenes[params.sceneEditSceneId] : undefined;
   return {
-    stream: createStreamContentRenderModel(stream),
+    stream: createStreamContentRenderModelWithOptions(stream, { omitAudioTimingEditorFields: true }),
     validationMessages: params.streamState.validationMessages,
     selectedSceneRunning: params.selectedSceneRunning,
     media: params.currentState

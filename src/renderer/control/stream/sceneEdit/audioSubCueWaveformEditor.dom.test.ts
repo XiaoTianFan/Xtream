@@ -88,6 +88,8 @@ describe('audioSubCueWaveformEditor', () => {
       { loop: { enabled: true, iterations: { type: 'count', count: 3 } } },
       { loop: { enabled: true, iterations: { type: 'infinite' } } },
     ]);
+    expect(loop.classList.contains('active')).toBe(true);
+    expect(playTimes!.disabled).toBe(true);
   });
 
   it('does not patch persisted stream state until a waveform drag commits', () => {
@@ -135,6 +137,22 @@ describe('audioSubCueWaveformEditor', () => {
     const points = patches[0].levelAutomation ?? [];
     expect(points).toHaveLength(1);
     expect(points[0].timeMs % 100).toBe(0);
+  });
+
+  it('clears active automation from the waveform clear button', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ levelAutomation: [{ timeMs: 0, value: -6 }], panAutomation: [{ timeMs: 0, value: 0.5 }] }),
+      currentState: directorState(),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+
+    const clear = editor.querySelector<HTMLButtonElement>('.stream-audio-waveform-clear-automation');
+    expect(clear?.getAttribute('aria-label')).toBe('Clear automation');
+    clear?.click();
+
+    expect(patches).toEqual([{ levelAutomation: undefined }]);
   });
 
   it('disables preview transport when no output bus can be selected', () => {
