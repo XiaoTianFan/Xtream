@@ -2,6 +2,7 @@ import { formatTimecode } from '../../../shared/timeline';
 import type { PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
 import { createButton } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
+import { sendLoggedStreamTransport } from '../shared/sessionTransportLog';
 import { deriveStreamGanttProjection, type StreamGanttBarProjection, type StreamGanttLaneProjection } from './ganttProjection';
 
 export type StreamGanttModeContext = {
@@ -75,7 +76,7 @@ function showTimelineContextMenu(event: MouseEvent, lane: StreamGanttLaneProject
   menu.addEventListener('click', (e) => e.stopPropagation());
   const remove = createButton('Remove timeline', 'secondary context-menu-item', () => {
     dismissGanttContextMenu();
-    void window.xtream.stream.transport({ type: 'remove-timeline', timelineId: lane.id });
+    void sendLoggedStreamTransport({ type: 'remove-timeline', timelineId: lane.id }, 'stream');
   });
   remove.setAttribute('role', 'menuitem');
   menu.append(remove);

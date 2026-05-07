@@ -53,6 +53,7 @@ import {
   syncListRuntimeChrome,
   syncWorkspaceSceneSelection,
 } from './streamSurface/runtimeChrome';
+import { sendLoggedStreamTransport } from '../shared/sessionTransportLog';
 
 export type { StreamSurfaceController } from './streamTypes';
 
@@ -1015,18 +1016,19 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         if (transportState.pauseDisabled) {
           return false;
         }
-        void window.xtream.stream.transport({ type: 'pause' });
+        void sendLoggedStreamTransport({ type: 'pause' }, 'stream');
       } else {
         if (transportState.playDisabled) {
           return false;
         }
-        void window.xtream.stream.transport(
+        void sendLoggedStreamTransport(
           createGlobalStreamPlayCommand({
             runtime: streamState.runtime,
             playbackStream: streamState.playbackStream,
             playbackTimeline: streamState.playbackTimeline,
             playbackFocusSceneId,
           }),
+          'stream',
         );
       }
       event.preventDefault();
@@ -1036,7 +1038,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     if (transportState.backDisabled) {
       return false;
     }
-    void window.xtream.stream.transport({ type: 'back-to-first' }).then(syncReferenceFromTransport);
+    void sendLoggedStreamTransport({ type: 'back-to-first' }, 'stream').then(syncReferenceFromTransport);
     event.preventDefault();
     event.stopPropagation();
     return true;

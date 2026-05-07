@@ -192,8 +192,8 @@ const api = {
   show: {
     promptUnsavedIfNeeded: (kind: ShowUnsavedPromptKind): Promise<boolean> =>
       ipcRenderer.invoke('show:prompt-unsaved-if-needed', kind),
-    save: (): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save'),
-    saveAs: (): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as'),
+    save: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult> => ipcRenderer.invoke('show:save', opts),
+    saveAs: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => ipcRenderer.invoke('show:save-as', opts),
     createProject: (opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> =>
       ipcRenderer.invoke('show:create-project', opts),
     getLaunchData: (): Promise<LaunchShowData> => ipcRenderer.invoke('show:get-launch-data'),

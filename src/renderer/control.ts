@@ -225,6 +225,10 @@ function tick(): void {
   animationFrame = window.requestAnimationFrame(tick);
 }
 
+function createOperationId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /** Replaced after surfaces exist; always called only after full init. */
 let hydrateControlShellAfterShow: (result: ShowConfigOperationResult, ctx?: ShowOpenProfileFlowContext) => Promise<void> = async () => undefined;
 
@@ -537,12 +541,27 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('scroll', patchSurface.dismissContextMenu, true);
 installRailNavigation(surfaceRouter.setActiveSurface);
 elements.launchOpenShowButton.addEventListener('click', async () => {
+  const operationId = createOperationId('so');
+  logSessionEvent({
+    runId: operationId,
+    checkpoint: 'ui_open_show_invoked',
+    domain: 'config',
+    kind: 'operation',
+    extra: { route: 'launch_dashboard' },
+  });
   if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_open_show_aborted_unsaved',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'launch_dashboard' },
+    });
     return;
   }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.open({ skipUnsavedPrompt: true });
+    const result = await window.xtream.show.open({ skipUnsavedPrompt: true, operationId, route: 'launch_dashboard' });
     if (result) {
       setShownProjectPath(result.filePath);
       await launchDashboard.complete(result, `Opened show config: ${result.filePath ?? 'selected file'}`);
@@ -556,12 +575,27 @@ elements.launchOpenShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchCreateShowButton.addEventListener('click', async () => {
+  const operationId = createOperationId('create');
+  logSessionEvent({
+    runId: operationId,
+    checkpoint: 'ui_create_show_invoked',
+    domain: 'config',
+    kind: 'operation',
+    extra: { route: 'launch_dashboard' },
+  });
   if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('create'))) {
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_create_show_aborted_unsaved',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'launch_dashboard' },
+    });
     return;
   }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.createProject({ skipUnsavedPrompt: true });
+    const result = await window.xtream.show.createProject({ skipUnsavedPrompt: true, operationId, route: 'launch_dashboard' });
     if (result) {
       await launchDashboard.complete(result, `Created show project: ${result.filePath ?? 'selected folder'}`);
       return;
@@ -574,12 +608,27 @@ elements.launchCreateShowButton.addEventListener('click', async () => {
   }
 });
 elements.launchOpenDefaultButton.addEventListener('click', async () => {
+  const operationId = createOperationId('so');
+  logSessionEvent({
+    runId: operationId,
+    checkpoint: 'ui_open_default_invoked',
+    domain: 'config',
+    kind: 'operation',
+    extra: { route: 'launch_dashboard' },
+  });
   if (!launchDashboard.consumeUnsavedClearedFlag() && !(await window.xtream.show.promptUnsavedIfNeeded('openDefault'))) {
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_open_default_aborted_unsaved',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'launch_dashboard' },
+    });
     return;
   }
   setLaunchDashboardLoadingUi(true);
   try {
-    const result = await window.xtream.show.openDefault({ skipUnsavedPrompt: true });
+    const result = await window.xtream.show.openDefault({ skipUnsavedPrompt: true, operationId, route: 'launch_dashboard' });
     if (!result) {
       setLaunchDashboardLoadingUi(false);
       await launchDashboard.load();

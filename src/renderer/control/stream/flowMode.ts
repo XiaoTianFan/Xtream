@@ -2,6 +2,7 @@ import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicS
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { createButton } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
+import { sendLoggedStreamTransport } from '../shared/sessionTransportLog';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { sceneWorkspaceFocusFlags } from './workspaceFocusModel';
 import { createFlowSceneCard } from './flowCards';
@@ -508,7 +509,7 @@ function renderCards(args: {
             ctx.setBottomTab('scene');
             ctx.clearDetailPane();
             ctx.refreshSceneSelectionUi();
-            void window.xtream.stream.transport({ type: 'play', sceneId: id, source: 'flow-card' });
+            void sendLoggedStreamTransport({ type: 'play', sceneId: id, source: 'flow-card' }, 'stream');
           },
           addFollower: (id, _anchor) => {
             void window.xtream.stream

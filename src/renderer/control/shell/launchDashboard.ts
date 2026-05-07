@@ -1,5 +1,5 @@
 import type { DirectorState, LaunchShowData, RecentShowEntry, ShowConfigOperationResult } from '../../../shared/types';
-import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
+import { logSessionEvent, logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
 import type { ControlSurface } from '../shared/types';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 import { elements } from './elements';
@@ -19,6 +19,10 @@ export function setLaunchDashboardLoadingUi(active: boolean): void {
 
 function waitForUiHydrationTurn(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function createOperationId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function isHydratedSurfaceMounted(surface: ControlSurface): boolean {
@@ -170,15 +174,30 @@ export function createLaunchDashboardController({
     filePath.textContent = entry.filePath;
     row.replaceChildren(name, filePath);
     row.addEventListener('click', async () => {
+      const operationId = createOperationId('so');
+      logSessionEvent({
+        runId: operationId,
+        checkpoint: 'ui_open_recent_invoked',
+        domain: 'config',
+        kind: 'operation',
+        extra: { route: 'launch_dashboard', filePath: entry.filePath },
+      });
       // If the unsaved-changes check was already done before showing the dashboard, skip it here.
       const skipPrompt = unsavedClearedForSession;
       if (!skipPrompt && !(await window.xtream.show.promptUnsavedIfNeeded('openRecent'))) {
+        logSessionEvent({
+          runId: operationId,
+          checkpoint: 'ui_open_recent_aborted_unsaved',
+          domain: 'config',
+          kind: 'operation',
+          extra: { route: 'launch_dashboard', filePath: entry.filePath },
+        });
         return;
       }
       unsavedClearedForSession = false;
       setLaunchDashboardLoadingUi(true);
       try {
-        const result = await window.xtream.show.openRecent(entry.filePath, { skipUnsavedPrompt: true });
+        const result = await window.xtream.show.openRecent(entry.filePath, { skipUnsavedPrompt: true, operationId, route: 'launch_dashboard' });
         if (result) {
           await complete(result, `Opened show config: ${result.filePath ?? entry.filePath}`);
           return;

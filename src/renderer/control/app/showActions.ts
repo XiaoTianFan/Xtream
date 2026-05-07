@@ -1,5 +1,5 @@
 import type { DirectorState, MediaValidationIssue, ShowConfigOperationResult } from '../../../shared/types';
-import { logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
+import { logSessionEvent, logShowOpenProfile, type ShowOpenProfileFlowContext } from '../../../shared/showOpenProfile';
 import { setShownProjectPath } from './showProjectPath';
 import { clearLiveVisualPoolThumbnailCache } from '../patch/visualPoolThumbnailCache';
 
@@ -26,16 +26,36 @@ function waitForUiHydrationTurn(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
+function createOperationId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function createShowActions(options: ShowActionsOptions) {
   async function saveShow(): Promise<void> {
-    const result = await window.xtream.show.save();
+    const operationId = createOperationId('save');
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_save_show_clicked',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'workspace_header' },
+    });
+    const result = await window.xtream.show.save({ operationId, route: 'workspace_header' });
     setShownProjectPath(result.filePath);
     options.renderState(result.state);
     options.setShowStatus(`Saved show config: ${result.filePath ?? 'default location'}`, result.issues);
   }
 
   async function saveShowAs(): Promise<void> {
-    const result = await window.xtream.show.saveAs();
+    const operationId = createOperationId('save-as');
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_save_as_invoked',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'workspace_header' },
+    });
+    const result = await window.xtream.show.saveAs({ operationId, route: 'workspace_header' });
     if (result) {
       setShownProjectPath(result.filePath);
       options.renderState(result.state);
@@ -44,11 +64,26 @@ export function createShowActions(options: ShowActionsOptions) {
   }
 
   async function openShow(): Promise<void> {
+    const operationId = createOperationId('so');
+    logSessionEvent({
+      runId: operationId,
+      checkpoint: 'ui_open_show_invoked',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'workspace_header' },
+    });
     if (!(await window.xtream.show.promptUnsavedIfNeeded('open'))) {
+      logSessionEvent({
+        runId: operationId,
+        checkpoint: 'ui_open_show_aborted_unsaved',
+        domain: 'config',
+        kind: 'operation',
+        extra: { route: 'workspace_header' },
+      });
       return;
     }
     options.beginLaunchPresentationLoad?.();
-    const result = await window.xtream.show.open({ skipUnsavedPrompt: true });
+    const result = await window.xtream.show.open({ skipUnsavedPrompt: true, operationId, route: 'workspace_header' });
     if (!result) {
       options.clearLaunchPresentationLoading?.();
       return;
@@ -107,6 +142,13 @@ export function createShowActions(options: ShowActionsOptions) {
   }
 
   async function createShow(): Promise<void> {
+    logSessionEvent({
+      runId: createOperationId('create'),
+      checkpoint: 'ui_create_show_invoked',
+      domain: 'config',
+      kind: 'operation',
+      extra: { route: 'workspace_header' },
+    });
     await options.presentLaunchDashboardForCreate();
   }
 

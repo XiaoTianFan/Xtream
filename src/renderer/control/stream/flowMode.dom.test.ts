@@ -556,7 +556,7 @@ describe('createStreamFlowMode', () => {
 
     root.querySelector<HTMLButtonElement>('button[aria-label="Run from here"]')?.click();
 
-    expect(transport).toHaveBeenCalledWith({ type: 'play', sceneId: 'scene-a', source: 'flow-card' });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ type: 'play', sceneId: 'scene-a', source: 'flow-card' }));
     expect(transport).not.toHaveBeenCalledWith({ type: 'pause' });
   });
 });

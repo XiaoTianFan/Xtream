@@ -4,6 +4,7 @@ import { decorateIconButton, type ControlIcon } from '../shared/icons';
 import { syncSliderProgress } from '../shared/dom';
 import { patchElements as elements } from './elements';
 import { derivePatchTransportUiState } from './patchTransportUiState';
+import { sendLoggedPatchTransport } from '../shared/sessionTransportLog';
 
 type TransportControllerOptions = {
   getState: () => DirectorState | undefined;
@@ -115,7 +116,7 @@ export function createTransportController({ getState, getIsStreamPlaybackActive,
   };
 
   const sendTransport = async (command: TransportCommand): Promise<DirectorState> => {
-    const state = await window.xtream.director.transport(command);
+    const state = await sendLoggedPatchTransport(command, 'patch');
     renderState(state);
     return state;
   };

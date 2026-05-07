@@ -324,7 +324,7 @@ describe('createStreamGanttMode', () => {
     parallelLane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 32, clientY: 44 }));
     document.querySelector<HTMLButtonElement>('.stream-gantt-menu .context-menu-item')?.click();
 
-    expect(transport).toHaveBeenCalledWith({ type: 'remove-timeline', timelineId: 'timeline:parallel' });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ type: 'remove-timeline', timelineId: 'timeline:parallel' }));
   });
 
   it('does not show remove timeline on the main lane context menu', () => {

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Config surface includes a bottom pane that today shows the **Show open profile log**: structured checkpoints while a show is opening (and related readiness timing). The product goal is to **evolve this into a single global session log** for the control runtime: one mechanism, one buffer, one export story—recording meaningful operations, validation transitions, and backend effects across Patch, Stream, Config, and main—**without dumping high-frequency noise** into the pane.
+The Config surface includes a bottom pane that started as the **Show open profile log** and now renders the unified **Session log**: structured checkpoints while a show is opening, plus selected validation and operation rows. The product goal is to finish evolving this into a complete global session log for the control runtime: one mechanism, one buffer, one export story—recording meaningful operations, validation transitions, and backend effects across Patch, Stream, Config, and main—**without dumping high-frequency noise** into the pane.
 
 Work proceeds **in stages**. This document is the **canonical checklist**: what we want to log, what is already implemented, what must change first, and what remains. Implementation details (exact TypeScript names, IPC shape) can follow the intent here.
 
@@ -18,13 +18,13 @@ Work proceeds **in stages**. This document is the **canonical checklist**: what 
 | `src/shared/showOpenProfile.ts`                | Session log types, `logShowOpenProfile`, `logSessionEvent`, `normalizeSessionLogEntry`, domain/kind |
 | `src/renderer/control/shell/sessionLogUi.ts`   | Session log ring buffer (400 rows), clear + subscribe; `installSessionLogBridge`                    |
 | `src/renderer/control/config/configSurface.ts` | Session log pane, line format, diagnostics export attach                                            |
-| `src/main/main.ts`                             | Forwards main rows via IPC (`session-log:entry`, `forwardSessionLogFromMain`) during open path      |
+| `src/main/main.ts`                             | Forwards main rows via IPC (`session-log:entry`, `forwardSessionLogFromMain`) for open, lifecycle, autosave, and shutdown rows |
 | `src/preload/preload.ts`                       | `sessionLog.onEntry`; `showOpenProfile.onLog` alias (same IPC)                                      |
 
 
 ### Row format today
 
-Each entry carries `loggedAt` (wall time, ms), `source` (`renderer`  `main`), `runId`, `checkpoint`, `sinceRunStartMs`, optional `segmentMs`, optional `extra`. The UI prints ISO-derived time-of-day, source, truncated `runId`, checkpoint, offsets, and JSON `extra`.
+Each entry carries `loggedAt` (wall time, ms), `source` (`renderer`  `main`), `domain`, `kind`, `runId`, `checkpoint`, `sinceRunStartMs`, optional `segmentMs`, optional `extra`. The UI prints ISO-derived time-of-day, source, domain, kind, truncated `runId`, checkpoint, offsets, and JSON `extra`.
 
 ### Checkpoints already implemented (show open / readiness pipeline)
 
@@ -69,6 +69,24 @@ These are **done** for the open-show flow. They assume a per-open `runId`; rende
 - Explicit **“user chose to open / create / save”** at the instant of UI interaction (before dialogs or IPC), including chosen path or project identity where safe to record.
 - **Save** and **Save as** operations (no profile rows).
 - **Create new project** flow end-to-end (only partially overlaps open flow once a path exists).
+
+### Session rows already added after the original baseline
+
+These are implemented in the unified session buffer, but they do **not** replace the endpoint-level roadmap below.
+
+| Checkpoint / row                   | Domain   | Kind         | Current behavior                                                                                 |
+| ---------------------------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------ |
+| `patch_readiness_blocked`          | `patch`  | `validation` | Emitted on readiness ready → blocked edge, with current readiness issue count.                   |
+| `patch_readiness_cleared`          | `patch`  | `validation` | Emitted on readiness blocked → ready edge.                                                       |
+| `stream_validation_changed`        | `stream` | `validation` | Emitted when stream validation messages or playback timeline status/notice fingerprint changes.  |
+| `operation_status`                 | `global` | `operation`  | Emitted from `setShowStatus` for user-visible success/failure/status copy; duplicate text is suppressed. |
+| `renderer_hydrated_surface_not_mounted` | `config` | `checkpoint` | Launch-dashboard diagnostic when the persisted active surface does not mount after hydration.     |
+| `ui_*` lifecycle rows              | `config` | `operation`  | Emitted before open/default/recent/create/save/save-as dialogs or IPC effects.                   |
+| `main_*` lifecycle rows            | `config` / `main` | `operation` / `checkpoint` | Emitted for save/save-as/create/open dialog selection/cancel/fail, autosave, shutdown save, and create-project backend steps. |
+| `ui_patch_transport_*` / `engine_patch_transport_*` | `patch` | `operation` | Emitted for Patch transport intent + main-process acknowledgement/failure with shared `operationId`. |
+| `ui_stream_transport_*` / `engine_stream_transport_*` | `stream` | `operation` | Emitted for Stream transport intent + main-process acknowledgement/failure with shared `operationId`. |
+
+The `operation_status` row means save/open/create/export successes often leave **some** audit trail, but it is only the final UI status string. It does not carry a stable operation id, a canceled/failed dialog outcome, a backend start row, or structured counts.
 
 ### Baseline problem surfacing (pre–Stage 1)
 
@@ -141,7 +159,7 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 
 | Requirement                 | Notes                                                                                                                                                                                                     |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **One append path**         | Generalize `logShowOpenProfile` / `forwardShowOpenProfileFromMain` into a **session log API** (name TBD: e.g. `logSessionEvent`) with `**domain`** + `**kind`** (`checkpoint`                             |
+| **One append path**         | Generalize `logShowOpenProfile` / `forwardShowOpenProfileFromMain` into a **session log API** (e.g. `logSessionEvent`) with `**domain`** + `**kind`** (`checkpoint`, `validation`, `operation`, `info`). |
 | **Same buffer + Config UI** | Keep ring buffer + clear + subscribe; **rename** pane from “Show open profile log” to **“Session log”** (or “Activity log”) and empty-state copy.                                                         |
 | **Emit high-value events**  | At minimum in Stage 1, log **transitions** (not per-frame): e.g. stream validation set changed, readiness blocked/unblocked, save/open completed. Exact checklist in implementation; throttle duplicates. |
 | **Diagnostics export**      | Attach full session buffer (alias `showOpenProfile` in JSON for backward compatibility or bump export `schemaVersion` field if present).                                                                  |
@@ -160,7 +178,7 @@ When the **Patch** rail is active, the strip may **prioritize** Patch + Shared r
 - Remove stream header **static** problem line and scene-edit **validation banner**; feed stream problems into global strip (+ optional session log rows).
 - Unify persistence-backed stream validation with engine `**validationMessages`** in the **operator model** consumed by the strip (implementation may normalize to a shared `SessionProblem` type with `domain: 'stream'`).
 - Rename and extend profile log → **session log** (buffer, Config pane title, preload/API naming where user-facing).
-- Update diagnostics export and `docs/stream-workspace-and-runtime-plan.md` cross-links if they reference old locations.
+- Update diagnostics export and archived stream-roadmap cross-links if they reference old locations.
 
 **Status:** **Implemented** (Stage 1 deliverables above). Lifecycle UI/backend beats are **Stage 2** below.
 
@@ -182,23 +200,56 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 
 **Goal:** Extend logging so the **first** checkpoint in a session is not “inside restore” but **the operator’s decision**, then chain into existing open/hydrate/wait-ready rows.
 
-### Desired events
+### Desired lifecycle events
 
 
 | Event                                     | UI checkpoint (proposed)                               | Backend / effect checkpoint (proposed)     | Status          |
 | ----------------------------------------- | ------------------------------------------------------ | ------------------------------------------ | --------------- |
-| User initiates **Open**                   | e.g. `ui_open_show_invoked`                            | —                                          | Not implemented |
-| User picks file / confirms open dialog    | e.g. `ui_open_show_path_selected`                      | *(already)* `main_open_path_enter` …       | Partially       |
-| User initiates **Create**                 | e.g. `ui_create_show_invoked`                          | main/create path start                     | Not implemented |
-| New project path chosen & project created | e.g. `ui_create_show_committed`                        | e.g. `main_create_project_done`            | Not implemented |
-| User **Save**                             | e.g. `ui_save_show_clicked`                            | e.g. `main_save_done` / `main_save_failed` | Not implemented |
-| User **Save as**                          | e.g. `ui_save_as_invoked` → `ui_save_as_path_selected` | same as save with path                     | Not implemented |
+| User initiates **Open**                   | `ui_open_show_invoked` with route (`workspace_header`, `launch_dashboard`) | —                                          | **Implemented** |
+| User picks file / confirms open dialog    | main dialog rows (`main_open_dialog_path_selected` / `main_open_dialog_canceled`) | existing `main_open_path_enter` …          | **Implemented** |
+| User opens **default** show               | `ui_open_default_invoked`                              | `main_default_show_created` if default did not exist, then existing open path rows | **Implemented** |
+| User opens **recent** show                | `ui_open_recent_invoked`                               | existing open path rows or `main_recent_missing` | **Implemented** |
+| User initiates **Create**                 | `ui_create_show_invoked`                               | `main_create_project_request_enter`        | **Implemented** |
+| New project path chosen & project created | main dialog rows (`main_create_project_directory_selected` / `main_create_project_canceled`) | `main_create_project_structure_done`, `main_create_project_director_reset_done`, `main_create_project_stream_reset_done`, `main_create_project_write_done`, `main_create_project_exit` | **Implemented** |
+| User **Save**                             | `ui_save_show_clicked`                                 | `main_save_enter` → `main_save_done` / `main_save_failed` | **Implemented** |
+| User **Save as**                          | `ui_save_as_invoked`                                   | `main_save_as_path_selected` / `main_save_as_canceled`, then save-as done/failed | **Implemented** |
+| Autosave / shutdown flush                 | —                                                      | `main_autosave_done` / `main_autosave_failed`, `main_shutdown_save_done` / failed | **Implemented** |
 
 
 **Notes:**
 
 - Rows use the **same session log buffer** as Stage 1.
 - Preserve `runId` behavior for open; mint early so main and renderer share it.
+- Prefer a general `operationId` for create/save/import/relink where there is no open-profile `runId`.
+- Log safe path data consistently: full path is acceptable only where diagnostics already expose it; otherwise use basename + project-relative path + hash.
+
+### Latest project endpoints that need log exposure
+
+This inventory reflects the current preload/main IPC surface. “Needs rows” means meaningful operator-visible mutations should append structured session log rows, not just rely on `operation_status`.
+
+| Endpoint / API surface | Project effect | Current log coverage | Roadmap action |
+| ---------------------- | -------------- | -------------------- | -------------- |
+| `show:open`, `show:open-default`, `show:open-recent` | Loads a show/project and rebuilds Patch + Stream runtime. | **Implemented:** UI intent, dialog/selection/cancel, default-created/recent-missing, and open path rows share the operation id. | Keep enriching safe project identity if diagnostics privacy rules change. |
+| `show:create-project` | Creates `show.xtream-show.json`, resets Director/Stream, creates initial display, writes project, adds recent. | **Implemented:** create-specific UI + main rows; successful create still flows through renderer hydrate/readiness rows for presentation readiness. | Optional future: split `main_create_project_write_done` into more granular asset-folder rows if needed. |
+| `show:save`, `show:save-as` | Writes current project/show config; `save-as` changes current path and recents. | **Implemented:** intent, selected/cancel, start/done/fail, issue count, and pending autosave cancellation context via main save rows. | None for Stage 2. |
+| `show:prompt-unsaved-if-needed` | Gates open/create/quit; may synchronously save or discard pending work. | **Implemented:** dirty-prompt result rows for save/discard/cancel; no-op checks stay quiet. | None for Stage 2. |
+| `show:update-settings` | Persists show-level project settings (mute/blackout fade durations). | No direct row. | Add coalesced `project_settings_changed` rows with changed keys only. |
+| `controlUi:get-for-path`, `controlUi:save-snapshot` | Loads/saves machine-local project UI layout state. | Open hydration logs `getForPath` timing only. | Keep normal snapshot autosaves quiet; log restore failures, invalid snapshot versions, and manual/global layout reset events when added. |
+| `show:export-diagnostics` | Writes diagnostics JSON with session log attachment. | Final `operation_status` success string only. | Add diagnostics export invoked/path selected/canceled/done/failed rows under `config` or `global`. |
+| `show:media-validation-issues`, `show:list-missing-media`, `show:choose-batch-relink-directory` | Read-only validation/list/picker endpoints. | Problems surface in global strip; no endpoint rows. | Do not log routine polling; log only manual refresh actions, picker cancel/selection, and errors. |
+| `show:relink-missing-media`, `show:batch-relink-from-directory` | Rewrites missing visual/audio paths; may copy assets into project. | No direct row; validation edges may later change. | Add relink start/done/failed rows with item kind, mode, counts, unresolved count, and stream-duration refresh result. |
+| `media-pool:choose-import-files`, `media-pool:classify-import-paths`, `visual:import-files`, `audio-source:import-files` | Imports media by link/copy and refreshes Stream media durations. | No direct row. | Log manual import intent, classify counts, mode, visual/audio added counts, unsupported count, copy failures, and completion. |
+| `visual:replace`, `visual:clear`, `visual:remove`, `visual:update` | Changes visual assets and properties used by Patch/Stream. | No direct row. | Log high-value asset mutations (replace/clear/remove) immediately; coalesce noisy scalar edits like opacity/brightness/playback rate. |
+| `audio-source:replace-file`, `audio-source:add-embedded`, `audio-source:extract-embedded`, `audio-source:split-stereo`, `audio-source:clear`, `audio-source:remove`, `audio-source:update` | Changes audio sources; extraction can create project files. | No direct row. | Log replace/extract/split/clear/remove and extraction failure/success; coalesce level/rate/label edits. |
+| `live-capture:create`, `live-capture:update`, `live-capture:prepare-display-stream`, `live-capture:release-display-stream`, `live-capture:permission-status` | Adds/changes live capture visuals; prepares transient OS capture grants. | No direct row. | Log create/update and permission/grant failures; keep source polling quiet. |
+| `display:create`, `display:update`, `display:close`, `display:remove`, `display:reopen`, `display:flash-identify-labels` | Changes display topology/window state; close may be transient, remove is project mutation. | No direct row. | Log create/remove/reopen, fullscreen/monitor/layout changes, and identify requests; keep telemetry health churn separate. |
+| `director:apply-preset`, `director:update-global-state` | Applies display/layout preset or global operator/project state. | No direct row. | Log preset apply result; log global mute/blackout/performance-mode changes with source surface. |
+| `director:transport` | Patch transport and seek/rate/loop commands. | **Stage 3 implemented:** UI intent + engine ack/failure for play/pause/stop/seek/rate/loop with shared `operationId`. | Stage 4 still adds richer seek attribution (`manual`, shortcut, drift correction). |
+| `output:create`, `output:update`, `output:add-source`, `output:update-source`, `output:remove-source`, `output:remove` | Changes virtual audio outputs/routing/mixer state. | No direct row. | Log topology changes immediately; coalesce fader/pan/meter-like changes. |
+| `stream:edit` | Persists Stream authoring changes: scenes, sub-cues, flow layout, playback settings. | Validation edge rows may follow if messages change. | Add edit command rows for create/duplicate/remove/reorder/update-scene/update-subcue/update-stream; coalesce text/drag edits and include scene/sub-cue labels when stable. |
+| `stream:transport` | Stream playback, seek, timeline removal, jump/back. | **Stage 3 implemented:** UI intent + engine ack/failure with runtime status/timecode hints and shared `operationId`. | Stage 5 still adds full scene state transition rows. |
+| `app-control:merge-settings` | Machine-local app preferences, not project file. | No direct row. | Optional `config` rows for operator-visible performance/audio extraction/display-preview preference changes; keep out of project audit exports if scoped later. |
+| Metadata/runtime reports (`visual:metadata`, `audio-source:metadata`, `output:meter`, `audio:meter-report`, `audio:subcue-preview-position`, `renderer:drift`, `renderer:preview-status`, `renderer:ready`) | Runtime health/telemetry. | Readiness/validation edges may reflect effects. | Do not dump high-frequency reports; log only edge/failure summaries (renderer ready timeout, media probe failed/recovered, drift threshold crossed). |
 
 ---
 
@@ -221,7 +272,7 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 | Engine | `engine_patch_play_started` | `engine_stream_play_started` |
 
 
-**Status:** Not implemented.
+**Status:** **Implemented** for UI intent + engine acknowledgement/failure rows. Stage 4 and Stage 5 add richer seek and scene-state detail.
 
 ---
 
@@ -256,8 +307,8 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | **0** | Show open + hydrate + presentation readiness; main open path; legacy problem UI in Patch header/detail and Stream header/scene                                                                                                  | **Implemented** (session log); legacy problem UI **replaced by Stage 1** |
 | **1** | **Session log foundation + domain separation + global problem strip** (footer after runtime label); unify stream validation surfacing; stream messages readable; list/flow/edit authoring highlights; scene runtime `**error`** | **Implemented**                                                          |
-| **2** | Open / create / save / save as — UI first beat + backend completion                                                                                                                                                             | Not started                                                              |
-| **3** | Patch & Stream transport — UI + engine checkpoints                                                                                                                                                                              | Not started                                                              |
+| **2** | Open / create / save / save as plus autosave/shutdown save — UI first beat + backend completion                                                                                                                                 | **Implemented**                                                          |
+| **3** | Patch & Stream transport — UI + engine checkpoints                                                                                                                                                                              | **Implemented**                                                          |
 | **4** | Patch seek — manual vs drift correction                                                                                                                                                                                         | Not started                                                              |
 | **5** | Stream scene — **log** all state changes (wall + timeline timecode); UI/runtime already includes `**error`** status                                                                                                             | **Not started** (logging only)                                           |
 
@@ -274,5 +325,5 @@ These items tighten **operator-facing copy and affordances** while keeping one g
 
 ## Related Documents
 
-- `docs/stream-workspace-and-runtime-plan.md` — Stream timeline, scene states, transport semantics; footer strip / session log cross-link under “Current implementation context”.
+- `docs/archived/REF-Only_stream-workspace-and-runtime-plan.md` — archived reference for Stream timeline, scene states, and transport semantics.
 - `src/shared/streamSchedule.ts` — `StreamScheduleIssue`, `getAuthoringIssuesForStreamUi`, `getStreamAuthoringErrorHighlights`, human-readable validation messages for stream authoring.

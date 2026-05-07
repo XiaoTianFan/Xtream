@@ -78,6 +78,7 @@ import type {
   VirtualOutputUpdate,
 } from '../../shared/types';
 import { XTREAM_RUNTIME_VERSION } from '../../shared/version';
+import type { SessionLogPayload } from '../../shared/showOpenProfile';
 
 type CurrentShowConfigPathRef = { value: string | undefined };
 
@@ -88,7 +89,7 @@ export type RegisterIpcHandlersOptions = {
   classifyMediaPoolPathsOnDisk: (filePaths: string[]) => MediaPoolClassifiedPaths;
   createDroppedAudioFilePaths: (filePaths: string[]) => string[];
   createDroppedVisualImportItems: (filePaths: string[]) => VisualImportItem[];
-  createEmptyShowProject: (configPath: string) => Promise<void>;
+  createEmptyShowProject: (configPath: string, profile?: { runId: string; t0: number }) => Promise<void>;
   createPersistedShowForDisk: () => ReturnType<Director['createShowConfig']>;
   createVisualImportItem: (filePath: string) => VisualImportItem;
   currentShowConfigPathRef: CurrentShowConfigPathRef;
@@ -102,7 +103,7 @@ export type RegisterIpcHandlersOptions = {
   isTrustedWebContents: (contents: Electron.WebContents | undefined | null) => boolean;
   isShuttingDown: () => boolean;
   listMissingMediaItems: () => MissingMediaListItem[];
-  openShowConfigPath: (configPath: string) => Promise<ShowConfigOperationResult>;
+  openShowConfigPath: (configPath: string, runIdOverride?: string) => Promise<ShowConfigOperationResult>;
   pickVisualFiles: (properties: Electron.OpenDialogOptions['properties']) => Promise<VisualImportItem[] | undefined>;
   promptUnsavedChangesIfNeeded: (kind: ShowUnsavedPromptKind) => Promise<boolean>;
   resolveRelinkPickerPath: (pickedPath: string, mode: 'link' | 'copy', assetKind: 'visual' | 'audio') => Promise<string>;
@@ -114,6 +115,7 @@ export type RegisterIpcHandlersOptions = {
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
   showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
   streamEngine: StreamEngine;
+  forwardSessionLogFromMain: (payload: SessionLogPayload) => void;
 };
 
 export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
@@ -150,9 +152,30 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     showOpenDialog,
     showSaveDialog,
     streamEngine,
+    forwardSessionLogFromMain,
   } = options;
   const displayRegistry = getDisplayRegistry();
   attachShellModalIpcHandlers();
+
+  const createOperationId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const commandCheckpointPart = (type: string): string => type.replace(/-/g, '_');
+  const logOperation = (payload: SessionLogPayload): void => {
+    forwardSessionLogFromMain({
+      domain: 'main',
+      kind: 'operation',
+      ...payload,
+    });
+  };
+  const logFailure = (runId: string, checkpoint: string, error: unknown, extra?: Record<string, unknown>): void => {
+    logOperation({
+      runId,
+      checkpoint,
+      extra: {
+        ...extra,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  };
   ipcMain.handle('director:get-state', () => director.getState());
 
   ipcMain.handle('director:apply-preset', (_event, preset: PresetId): PresetResult => {
@@ -172,11 +195,24 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
   });
 
   ipcMain.handle('director:transport', (_event, command: TransportCommand) => {
-    const state = director.applyTransport(command);
-    if (shouldAutoSaveTransport(command)) {
-      scheduleShowConfigAutoSave();
+    const runId = command.operationId ?? createOperationId('patch-transport');
+    const checkpointPart = commandCheckpointPart(command.type);
+    try {
+      const state = director.applyTransport(command);
+      if (shouldAutoSaveTransport(command)) {
+        scheduleShowConfigAutoSave();
+      }
+      logOperation({
+        runId,
+        checkpoint: `engine_patch_transport_${checkpointPart}`,
+        domain: 'patch',
+        extra: { command },
+      });
+      return state;
+    } catch (error: unknown) {
+      logFailure(runId, `engine_patch_transport_${checkpointPart}_failed`, error, { command });
+      throw error;
     }
-    return state;
   });
 
   ipcMain.handle('director:update-global-state', (_event, update: GlobalStateUpdate) => {
@@ -496,50 +532,98 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     promptUnsavedChangesIfNeeded(kind),
   );
 
-  ipcMain.handle('show:save', async (): Promise<ShowConfigOperationResult> => {
-    currentShowConfigPathRef.value ??= getDefaultShowConfigPath(app.getPath('userData'));
-    await ensureShowProjectStructure(currentShowConfigPathRef.value);
-    await writeShowConfig(currentShowConfigPathRef.value, createPersistedShowForDisk());
-    cancelPendingAutosaveWithoutFlush();
-    setShowExplicitDirty(false);
-    return { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
+  ipcMain.handle('show:save', async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult> => {
+    const runId = opts?.operationId ?? createOperationId('save');
+    logOperation({ runId, checkpoint: 'main_save_enter', domain: 'config', extra: { route: opts?.route } });
+    try {
+      currentShowConfigPathRef.value ??= getDefaultShowConfigPath(app.getPath('userData'));
+      await ensureShowProjectStructure(currentShowConfigPathRef.value);
+      await writeShowConfig(currentShowConfigPathRef.value, createPersistedShowForDisk());
+      cancelPendingAutosaveWithoutFlush();
+      setShowExplicitDirty(false);
+      const result = { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
+      logOperation({
+        runId,
+        checkpoint: 'main_save_done',
+        domain: 'config',
+        extra: { filePath: result.filePath, issueCount: result.issues.length },
+      });
+      return result;
+    } catch (error: unknown) {
+      logFailure(runId, 'main_save_failed', error);
+      throw error;
+    }
   });
 
-  ipcMain.handle('show:save-as', async (): Promise<ShowConfigOperationResult | undefined> => {
-    const result = await showSaveDialog({
-      title: 'Save Xtream show config',
-      defaultPath: currentShowConfigPathRef.value ?? getDefaultShowConfigPath(app.getPath('documents')),
-      filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
-    });
-    if (result.canceled || !result.filePath) {
-      return undefined;
+  ipcMain.handle('show:save-as', async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+    const runId = opts?.operationId ?? createOperationId('save-as');
+    logOperation({ runId, checkpoint: 'main_save_as_enter', domain: 'config', extra: { route: opts?.route } });
+    try {
+      const result = await showSaveDialog({
+        title: 'Save Xtream show config',
+        defaultPath: currentShowConfigPathRef.value ?? getDefaultShowConfigPath(app.getPath('documents')),
+        filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) {
+        logOperation({ runId, checkpoint: 'main_save_as_canceled', domain: 'config' });
+        return undefined;
+      }
+      logOperation({ runId, checkpoint: 'main_save_as_path_selected', domain: 'config', extra: { filePath: result.filePath } });
+      currentShowConfigPathRef.value = result.filePath;
+      await ensureShowProjectStructure(currentShowConfigPathRef.value);
+      await writeShowConfig(currentShowConfigPathRef.value, createPersistedShowForDisk());
+      cancelPendingAutosaveWithoutFlush();
+      setShowExplicitDirty(false);
+      await addRecentShow(app.getPath('userData'), currentShowConfigPathRef.value);
+      const saved = { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
+      logOperation({
+        runId,
+        checkpoint: 'main_save_as_done',
+        domain: 'config',
+        extra: { filePath: saved.filePath, issueCount: saved.issues.length },
+      });
+      return saved;
+    } catch (error: unknown) {
+      logFailure(runId, 'main_save_as_failed', error);
+      throw error;
     }
-    currentShowConfigPathRef.value = result.filePath;
-    await ensureShowProjectStructure(currentShowConfigPathRef.value);
-    await writeShowConfig(currentShowConfigPathRef.value, createPersistedShowForDisk());
-    cancelPendingAutosaveWithoutFlush();
-    setShowExplicitDirty(false);
-    await addRecentShow(app.getPath('userData'), currentShowConfigPathRef.value);
-    return { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
   });
 
   ipcMain.handle(
     'show:create-project',
     async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
-      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('create'))) {
-        return undefined;
+      const runId = opts?.operationId ?? createOperationId('create');
+      const t0 = Date.now();
+      logOperation({ runId, checkpoint: 'main_create_project_request_enter', domain: 'config', extra: { route: opts?.route } });
+      try {
+        if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('create'))) {
+          logOperation({ runId, checkpoint: 'main_create_project_aborted_unsaved', domain: 'config' });
+          return undefined;
+        }
+        const result = await showOpenDialog({
+          title: 'Create Xtream show project',
+          properties: ['openDirectory', 'createDirectory'],
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+          logOperation({ runId, checkpoint: 'main_create_project_canceled', domain: 'config' });
+          return undefined;
+        }
+        const projectDirectory = result.filePaths[0];
+        logOperation({ runId, checkpoint: 'main_create_project_directory_selected', domain: 'config', extra: { projectDirectory } });
+        await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME), { runId, t0 });
+        await addRecentShow(app.getPath('userData'), currentShowConfigPathRef.value!);
+        const created = { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
+        logOperation({
+          runId,
+          checkpoint: 'main_create_project_exit',
+          domain: 'config',
+          extra: { filePath: created.filePath, issueCount: created.issues.length },
+        });
+        return created;
+      } catch (error: unknown) {
+        logFailure(runId, 'main_create_project_failed', error);
+        throw error;
       }
-      const result = await showOpenDialog({
-        title: 'Create Xtream show project',
-        properties: ['openDirectory', 'createDirectory'],
-      });
-      if (result.canceled || result.filePaths.length === 0) {
-        return undefined;
-      }
-      const projectDirectory = result.filePaths[0];
-      await createEmptyShowProject(path.join(projectDirectory, SHOW_PROJECT_FILENAME));
-      await addRecentShow(app.getPath('userData'), currentShowConfigPathRef.value!);
-      return { state: director.getState(), filePath: currentShowConfigPathRef.value, issues: validateRuntimeState(director.getState()) };
     },
   );
 
@@ -626,28 +710,46 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
   ipcMain.handle(
     'show:open-default',
     async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
+      const runId = opts?.operationId ?? createOperationId('open-default');
       const defaultShowPath = getDefaultShowConfigPath(app.getPath('userData'));
-      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openDefault'))) {
-        return undefined;
+      logOperation({ runId, checkpoint: 'main_open_default_enter', domain: 'config', extra: { route: opts?.route, filePath: defaultShowPath } });
+      try {
+        if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openDefault'))) {
+          logOperation({ runId, checkpoint: 'main_open_default_aborted_unsaved', domain: 'config' });
+          return undefined;
+        }
+        if (!fs.existsSync(defaultShowPath)) {
+          await createEmptyShowProject(defaultShowPath, { runId, t0: Date.now() });
+          logOperation({ runId, checkpoint: 'main_default_show_created', domain: 'config', extra: { filePath: defaultShowPath } });
+        }
+        return openShowConfigPath(defaultShowPath, runId);
+      } catch (error: unknown) {
+        logFailure(runId, 'main_open_default_failed', error, { filePath: defaultShowPath });
+        throw error;
       }
-      if (!fs.existsSync(defaultShowPath)) {
-        await createEmptyShowProject(defaultShowPath);
-      }
-      return openShowConfigPath(defaultShowPath);
     },
   );
 
   ipcMain.handle(
     'show:open-recent',
     async (_event, filePath: string, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
-      if (!fs.existsSync(filePath)) {
-        await readRecentShows(app.getPath('userData'));
-        return undefined;
+      const runId = opts?.operationId ?? createOperationId('open-recent');
+      logOperation({ runId, checkpoint: 'main_open_recent_enter', domain: 'config', extra: { route: opts?.route, filePath } });
+      try {
+        if (!fs.existsSync(filePath)) {
+          await readRecentShows(app.getPath('userData'));
+          logOperation({ runId, checkpoint: 'main_recent_missing', domain: 'config', extra: { filePath } });
+          return undefined;
+        }
+        if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openRecent'))) {
+          logOperation({ runId, checkpoint: 'main_open_recent_aborted_unsaved', domain: 'config' });
+          return undefined;
+        }
+        return openShowConfigPath(filePath, runId);
+      } catch (error: unknown) {
+        logFailure(runId, 'main_open_recent_failed', error, { filePath });
+        throw error;
       }
-      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('openRecent'))) {
-        return undefined;
-      }
-      return openShowConfigPath(filePath);
     },
   );
 
@@ -674,18 +776,28 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
   ipcMain.handle(
     'show:open',
     async (_event, opts?: ShowDiskActionIpcOpts): Promise<ShowConfigOperationResult | undefined> => {
-      if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('open'))) {
-        return undefined;
+      const runId = opts?.operationId ?? createOperationId('open');
+      logOperation({ runId, checkpoint: 'main_open_dialog_enter', domain: 'config', extra: { route: opts?.route } });
+      try {
+        if (!opts?.skipUnsavedPrompt && !(await promptUnsavedChangesIfNeeded('open'))) {
+          logOperation({ runId, checkpoint: 'main_open_dialog_aborted_unsaved', domain: 'config' });
+          return undefined;
+        }
+        const result = await showOpenDialog({
+          title: 'Open Xtream show config',
+          properties: ['openFile'],
+          filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+          logOperation({ runId, checkpoint: 'main_open_dialog_canceled', domain: 'config' });
+          return undefined;
+        }
+        logOperation({ runId, checkpoint: 'main_open_dialog_path_selected', domain: 'config', extra: { filePath: result.filePaths[0] } });
+        return openShowConfigPath(result.filePaths[0], runId);
+      } catch (error: unknown) {
+        logFailure(runId, 'main_open_dialog_failed', error);
+        throw error;
       }
-      const result = await showOpenDialog({
-        title: 'Open Xtream show config',
-        properties: ['openFile'],
-        filters: [{ name: 'Xtream Show Config', extensions: ['json'] }],
-      });
-      if (result.canceled || result.filePaths.length === 0) {
-        return undefined;
-      }
-      return openShowConfigPath(result.filePaths[0]);
     },
   );
 
@@ -814,8 +926,26 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     return state;
   });
   ipcMain.handle('stream:transport', (_event, command: StreamCommand) => {
-    const state = streamEngine.applyTransport(command);
-    scheduleShowConfigAutoSave();
-    return state;
+    const runId = command.operationId ?? createOperationId('stream-transport');
+    const checkpointPart = commandCheckpointPart(command.type);
+    try {
+      const state = streamEngine.applyTransport(command);
+      scheduleShowConfigAutoSave();
+      logOperation({
+        runId,
+        checkpoint: `engine_stream_transport_${checkpointPart}`,
+        domain: 'stream',
+        extra: {
+          command,
+          runtimeStatus: state.runtime?.status,
+          currentStreamMs: state.runtime?.currentStreamMs,
+          cursorSceneId: state.runtime?.cursorSceneId,
+        },
+      });
+      return state;
+    } catch (error: unknown) {
+      logFailure(runId, `engine_stream_transport_${checkpointPart}_failed`, error, { command });
+      throw error;
+    }
   });
 }

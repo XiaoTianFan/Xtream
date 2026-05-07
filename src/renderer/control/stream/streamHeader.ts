@@ -4,6 +4,7 @@ import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, Stream
 import type { StreamEnginePublicState } from '../../../shared/types';
 import { createButton, syncSliderProgress } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
+import { sendLoggedPatchTransport, sendLoggedStreamTransport } from '../shared/sessionTransportLog';
 import type { StreamSurfaceOptions } from './streamTypes';
 
 export type StreamHeaderRenderContext = {
@@ -264,7 +265,7 @@ function createRateButton(ctx: StreamHeaderRenderContext): HTMLButtonElement {
       if (commit) {
         const rate = Number(input.value);
         if (Number.isFinite(rate) && rate > 0) {
-          void window.xtream.director.transport({ type: 'set-rate', rate });
+          void sendLoggedPatchTransport({ type: 'set-rate', rate }, 'stream');
         }
       }
       button.textContent = `${(ctx.currentState?.rate ?? latestRate).toFixed(2)}x`;
@@ -302,7 +303,7 @@ function createRateButton(ctx: StreamHeaderRenderContext): HTMLButtonElement {
     const nextRate = Math.max(0.1, Math.min(4, rateDragStart.rate + delta * 0.01));
     rateDragStart = undefined;
     if (Math.abs(delta) > 2) {
-      void window.xtream.director.transport({ type: 'set-rate', rate: Number(nextRate.toFixed(2)) });
+      void sendLoggedPatchTransport({ type: 'set-rate', rate: Number(nextRate.toFixed(2)) }, 'stream');
     }
   });
   button.addEventListener('pointercancel', () => {
@@ -370,7 +371,7 @@ function createStreamTimeline(ctx: StreamHeaderRenderContext): HTMLElement {
   slider.addEventListener('change', () => {
     timelineScrubDraftUntil = performance.now() + 1000;
     timelineScrubDraftValueSeconds = Number(slider.value) || 0;
-    void window.xtream.stream.transport({ type: 'seek', timeMs: (Number(slider.value) || 0) * 1000 }).finally(() => {
+    void sendLoggedStreamTransport({ type: 'seek', timeMs: (Number(slider.value) || 0) * 1000 }, 'stream').finally(() => {
       timelineScrubPointerActive = false;
     });
   });
@@ -571,7 +572,7 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
     }
   };
   const back = createButton('Back to first', 'secondary', () => {
-    void window.xtream.stream.transport({ type: 'back-to-first' }).then(syncReferenceFromTransport);
+    void sendLoggedStreamTransport({ type: 'back-to-first' }, 'stream').then(syncReferenceFromTransport);
   });
   back.dataset.streamTransportAction = 'back';
   decorateIconButton(back, 'SkipBack', 'Back to first scene');
@@ -580,13 +581,14 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
     'Play',
     '',
     () =>
-      void window.xtream.stream.transport(
+      void sendLoggedStreamTransport(
         createGlobalStreamPlayCommand({
           runtime,
           playbackStream,
           playbackTimeline: ctx.playbackTimeline,
           playbackFocusSceneId,
         }),
+        'stream',
       ),
   );
   play.dataset.streamTransportAction = 'play';
@@ -601,12 +603,12 @@ export function renderStreamHeader(ctx: StreamHeaderRenderContext): void {
         : 'Play from cursor');
   decorateIconButton(play, 'Play', playTooltip);
   play.disabled = transportState.playDisabled;
-  const pause = createButton('Pause', 'secondary', () => void window.xtream.stream.transport({ type: 'pause' }));
+  const pause = createButton('Pause', 'secondary', () => void sendLoggedStreamTransport({ type: 'pause' }, 'stream'));
   pause.dataset.streamTransportAction = 'pause';
   decorateIconButton(pause, 'Pause', 'Pause stream');
   pause.disabled = transportState.pauseDisabled;
   const next = createButton('Next', 'secondary', () => {
-    void window.xtream.stream.transport({ type: 'jump-next', referenceSceneId: playbackFocusSceneId }).then(syncReferenceFromTransport);
+    void sendLoggedStreamTransport({ type: 'jump-next', referenceSceneId: playbackFocusSceneId }, 'stream').then(syncReferenceFromTransport);
   });
   next.dataset.streamTransportAction = 'next';
   decorateIconButton(next, 'SkipForward', 'Jump to next scene');

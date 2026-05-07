@@ -874,14 +874,18 @@ export type StreamRuntimeState = {
   playbackFocusSceneId?: SceneId;
 };
 
+type SessionOperationCommandMeta = {
+  operationId?: string;
+};
+
 export type StreamCommand =
-  | { type: 'play'; sceneId?: SceneId; source?: 'global' | 'scene-row' | 'flow-card' }
-  | { type: 'pause' }
-  | { type: 'stop' }
-  | { type: 'jump-next'; referenceSceneId?: SceneId }
-  | { type: 'back-to-first' }
-  | { type: 'remove-timeline'; timelineId: string }
-  | { type: 'seek'; timeMs: number };
+  | ({ type: 'play'; sceneId?: SceneId; source?: 'global' | 'scene-row' | 'flow-card' } & SessionOperationCommandMeta)
+  | ({ type: 'pause' } & SessionOperationCommandMeta)
+  | ({ type: 'stop' } & SessionOperationCommandMeta)
+  | ({ type: 'jump-next'; referenceSceneId?: SceneId } & SessionOperationCommandMeta)
+  | ({ type: 'back-to-first' } & SessionOperationCommandMeta)
+  | ({ type: 'remove-timeline'; timelineId: string } & SessionOperationCommandMeta)
+  | ({ type: 'seek'; timeMs: number } & SessionOperationCommandMeta);
 
 export type StreamEditCommand =
   | { type: 'update-stream'; label?: string; playbackSettings?: Partial<StreamPlaybackSettings>; flowViewport?: PersistedStreamConfig['flowViewport'] }
@@ -961,6 +965,8 @@ export type ShowUnsavedPromptKind = 'create' | 'open' | 'openDefault' | 'openRec
 /** Passed to disk show IPC when the renderer already ran `show:prompt-unsaved-if-needed`. */
 export type ShowDiskActionIpcOpts = {
   skipUnsavedPrompt?: boolean;
+  operationId?: string;
+  route?: string;
 };
 
 export type DiagnosticsReportLogs = {
@@ -1128,12 +1134,12 @@ export type PresetResult = {
 };
 
 export type TransportCommand =
-  | { type: 'play' }
-  | { type: 'pause' }
-  | { type: 'stop' }
-  | { type: 'seek'; seconds: number }
-  | { type: 'set-rate'; rate: number }
-  | { type: 'set-loop'; loop: LoopState };
+  | ({ type: 'play' } & SessionOperationCommandMeta)
+  | ({ type: 'pause' } & SessionOperationCommandMeta)
+  | ({ type: 'stop' } & SessionOperationCommandMeta)
+  | ({ type: 'seek'; seconds: number } & SessionOperationCommandMeta)
+  | ({ type: 'set-rate'; rate: number } & SessionOperationCommandMeta)
+  | ({ type: 'set-loop'; loop: LoopState } & SessionOperationCommandMeta);
 
 export type RecentShowEntry = {
   filePath: string;
@@ -1249,8 +1255,8 @@ export type IpcChannels = {
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:prompt-unsaved-if-needed': (kind: ShowUnsavedPromptKind) => Promise<boolean>;
-  'show:save': () => ShowConfigOperationResult;
-  'show:save-as': () => ShowConfigOperationResult | undefined;
+  'show:save': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult;
+  'show:save-as': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
   'show:create-project': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult | undefined;
   'show:get-current-path': () => string | undefined;
   'show:get-launch-data': () => LaunchShowData;

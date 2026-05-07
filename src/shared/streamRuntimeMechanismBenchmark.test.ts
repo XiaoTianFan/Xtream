@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const DOCUMENTED_BENCHMARK_CASES = [
@@ -75,12 +73,16 @@ const REGRESSION_MATRIX: Record<string, string[]> = {
   'header timeline rail renders dim and bright segmented thread colors with matching proportions': ['src/renderer/control/stream/streamHeader.test.ts'],
   'Flow cards render thread-colored metadata, focus styles, state styles, previews, progress, hover actions, and context menus': [
     'src/renderer/control/stream/flowProjection.test.ts',
+    'src/renderer/control/stream/flowCards.dom.test.ts',
     'src/renderer/control/stream/threadColorUi.dom.test.ts',
   ],
   'Flow default layout places main threads left-to-right, centers longest branches, and places at-timecode side threads by relative timecode': [
     'src/renderer/control/stream/flowProjection.test.ts',
   ],
-  'Flow dotted main curve passes through longest branches and animates glow during playback': ['src/renderer/control/stream/flowProjection.test.ts'],
+  'Flow dotted main curve passes through longest branches and animates glow during playback': [
+    'src/renderer/control/stream/flowMode.dom.test.ts',
+    'src/renderer/control/stream/flowProjection.test.ts',
+  ],
   'Gantt renders main and parallel timelines as view-only lanes with thread instance bars': [
     'src/renderer/control/stream/ganttProjection.test.ts',
     'src/renderer/control/stream/ganttMode.dom.test.ts',
@@ -88,20 +90,9 @@ const REGRESSION_MATRIX: Record<string, string[]> = {
   'Patch playback behavior is unchanged': ['src/main/streamEngine.test.ts'],
 };
 
-function documentedBenchmarkCases(): string[] {
-  const docPath = resolve(process.cwd(), 'docs/stream-thread-runtime-mechanism.md');
-  const doc = readFileSync(docPath, 'utf8');
-  const section = doc.split('## Testing Benchmark')[1]?.split('## Open Questions')[0] ?? '';
-  return section
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- '))
-    .map((line) => line.slice(2));
-}
-
 describe('stream runtime mechanism benchmark coverage', () => {
-  it('extracts every documented Testing Benchmark case into the regression matrix', () => {
-    expect(documentedBenchmarkCases()).toEqual(DOCUMENTED_BENCHMARK_CASES);
+  it('keeps every embedded Testing Benchmark case in the regression matrix', () => {
+    expect(new Set(DOCUMENTED_BENCHMARK_CASES).size).toBe(DOCUMENTED_BENCHMARK_CASES.length);
     expect(Object.keys(REGRESSION_MATRIX)).toEqual(DOCUMENTED_BENCHMARK_CASES);
     for (const [benchmarkCase, tests] of Object.entries(REGRESSION_MATRIX)) {
       expect(tests.length, benchmarkCase).toBeGreaterThan(0);

@@ -25,7 +25,7 @@ import {
   validateShowConfigMedia,
   writeShowConfig,
 } from './showConfig';
-import type { ShowOpenProfileLogEntry, ShowOpenProfilePayload } from '../shared/showOpenProfile';
+import type { SessionLogPayload, ShowOpenProfileLogEntry } from '../shared/showOpenProfile';
 import { normalizeSessionLogEntry } from '../shared/showOpenProfile';
 import { mergeShowConfigPatchRouting } from '../shared/streamWorkspace';
 import {
@@ -81,7 +81,7 @@ let showExplicitDirty = false;
 /** Skip flushing pending autosave on shutdown (Don't save branch). */
 let skipAutoSaveFlushOnShutdown = false;
 
-function forwardSessionLogFromMain(payload: ShowOpenProfilePayload): void {
+function forwardSessionLogFromMain(payload: SessionLogPayload): void {
   if (!controlWindow || controlWindow.isDestroyed() || controlWindow.webContents.isDestroyed()) {
     return;
   }
@@ -92,8 +92,8 @@ function forwardSessionLogFromMain(payload: ShowOpenProfilePayload): void {
       sinceRunStartMs: payload.sinceRunStartMs,
       segmentMs: payload.segmentMs,
       extra: payload.extra,
-      domain: 'main',
-      kind: 'checkpoint',
+      domain: payload.domain ?? 'main',
+      kind: payload.kind ?? 'checkpoint',
     },
     'main',
   );
@@ -290,10 +290,37 @@ function scheduleShowConfigAutoSave(): void {
   autoSaveTimer = setTimeout(() => {
     autoSaveTimer = undefined;
     if (currentShowConfigPath) {
+      const runId = `autosave-${Date.now()}-${randomBytes(3).toString('hex')}`;
+      forwardSessionLogFromMain({
+        runId,
+        checkpoint: 'main_autosave_enter',
+        domain: 'config',
+        kind: 'operation',
+        extra: { filePath: currentShowConfigPath },
+      });
       void ensureShowProjectStructure(currentShowConfigPath)
         .then(() => writeShowConfig(currentShowConfigPath!, createPersistedShowForDisk()))
+        .then(() => {
+          forwardSessionLogFromMain({
+            runId,
+            checkpoint: 'main_autosave_done',
+            domain: 'config',
+            kind: 'operation',
+            extra: { filePath: currentShowConfigPath },
+          });
+        })
         .catch((error: unknown) => {
           console.error('Failed to auto-save show config.', error);
+          forwardSessionLogFromMain({
+            runId,
+            checkpoint: 'main_autosave_failed',
+            domain: 'config',
+            kind: 'operation',
+            extra: {
+              filePath: currentShowConfigPath,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
         });
     }
   }, 250);
@@ -305,12 +332,37 @@ function flushShowConfigAutoSave(): void {
   }
   clearTimeout(autoSaveTimer);
   autoSaveTimer = undefined;
+  const runId = `shutdown-save-${Date.now()}-${randomBytes(3).toString('hex')}`;
+  forwardSessionLogFromMain({
+    runId,
+    checkpoint: 'main_shutdown_save_enter',
+    domain: 'config',
+    kind: 'operation',
+    extra: { filePath: currentShowConfigPath },
+  });
   try {
     fs.mkdirSync(path.dirname(currentShowConfigPath), { recursive: true });
     ensureShowProjectStructureSync(currentShowConfigPath);
     fs.writeFileSync(currentShowConfigPath, `${JSON.stringify(createPersistedShowForDisk(), null, 2)}\n`, 'utf8');
+    forwardSessionLogFromMain({
+      runId,
+      checkpoint: 'main_shutdown_save_done',
+      domain: 'config',
+      kind: 'operation',
+      extra: { filePath: currentShowConfigPath },
+    });
   } catch (error: unknown) {
     console.error('Failed to save show config before shutdown.', error);
+    forwardSessionLogFromMain({
+      runId,
+      checkpoint: 'main_shutdown_save_failed',
+      domain: 'config',
+      kind: 'operation',
+      extra: {
+        filePath: currentShowConfigPath,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
   }
 }
 
@@ -483,8 +535,8 @@ function restoreShowConfigFromDiskConfig(
   };
 }
 
-async function openShowConfigPath(configPath: string): Promise<ShowConfigOperationResult> {
-  const runId = `so-${Date.now()}-${randomBytes(4).toString('hex')}`;
+async function openShowConfigPath(configPath: string, runIdOverride?: string): Promise<ShowConfigOperationResult> {
+  const runId = runIdOverride ?? `so-${Date.now()}-${randomBytes(4).toString('hex')}`;
   const t0 = Date.now();
   forwardSessionLogFromMain({ runId, checkpoint: 'main_open_path_enter', sinceRunStartMs: 0 });
   let seg = Date.now();
@@ -515,20 +567,40 @@ async function openShowConfigPath(configPath: string): Promise<ShowConfigOperati
   return result;
 }
 
-async function createEmptyShowProject(configPath: string): Promise<void> {
+async function createEmptyShowProject(configPath: string, profile?: { runId: string; t0: number }): Promise<void> {
+  const log = (checkpoint: string, extra?: Record<string, unknown>): void => {
+    if (!profile) {
+      return;
+    }
+    forwardSessionLogFromMain({
+      runId: profile.runId,
+      checkpoint,
+      sinceRunStartMs: Date.now() - profile.t0,
+      domain: 'main',
+      kind: 'checkpoint',
+      extra,
+    });
+  };
   currentShowConfigPath = configPath;
+  log('main_create_project_enter', { filePath: configPath });
   await ensureShowProjectStructure(currentShowConfigPath);
+  log('main_create_project_structure_done');
   displayRegistry?.closeAll();
+  log('main_create_project_display_close_all_done');
   director.resetShow();
   applyAppPersistedDirectorGlobals();
+  log('main_create_project_director_reset_done');
   streamEngine.resetToDefault();
+  log('main_create_project_stream_reset_done');
   if (!displayRegistry) {
     throw new Error('Display registry is not initialized.');
   }
   const display = displayRegistry.create({ layout: { type: 'single' }, fullscreen: false });
   director.registerDisplay(display);
+  log('main_create_project_initial_display_done', { displayId: display.id });
   await writeShowConfig(currentShowConfigPath, createPersistedShowForDisk());
   showExplicitDirty = false;
+  log('main_create_project_write_done');
 }
 
 function getProjectAudioDirectory(): string | undefined {
@@ -598,6 +670,14 @@ async function promptUnsavedChangesIfNeeded(kind: ShowUnsavedPromptKind): Promis
   if (!showExplicitDirty) {
     return true;
   }
+  const runId = `unsaved-${Date.now()}-${randomBytes(3).toString('hex')}`;
+  forwardSessionLogFromMain({
+    runId,
+    checkpoint: 'main_unsaved_prompt_enter',
+    domain: 'config',
+    kind: 'operation',
+    extra: { kind },
+  });
   const { title, message, detail } = unsavedPromptCopy(kind);
   const response = await promptShellChoiceModal(
     {
@@ -615,13 +695,34 @@ async function promptUnsavedChangesIfNeeded(kind: ShowUnsavedPromptKind): Promis
     () => controlWindow,
   );
   if (response === 2) {
+    forwardSessionLogFromMain({
+      runId,
+      checkpoint: 'main_unsaved_prompt_cancel',
+      domain: 'config',
+      kind: 'operation',
+      extra: { kind },
+    });
     return false;
   }
   if (response === 0) {
     await saveCurrentShowToDiskExplicitly();
+    forwardSessionLogFromMain({
+      runId,
+      checkpoint: 'main_unsaved_prompt_save_done',
+      domain: 'config',
+      kind: 'operation',
+      extra: { kind, filePath: currentShowConfigPath },
+    });
   }
   if (response === 1) {
     cancelPendingAutosaveWithoutFlush();
+    forwardSessionLogFromMain({
+      runId,
+      checkpoint: 'main_unsaved_prompt_discard',
+      domain: 'config',
+      kind: 'operation',
+      extra: { kind },
+    });
   }
   return true;
 }
@@ -746,6 +847,7 @@ app.whenReady().then(() => {
     showOpenDialog,
     showSaveDialog,
     streamEngine,
+    forwardSessionLogFromMain,
   });
   capturePermissions.installCapturePermissionHandlers();
   applyAppPersistedDirectorGlobals();

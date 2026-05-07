@@ -6,6 +6,7 @@ import type { BottomTab } from './streamTypes';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { createButton, createHint } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
+import { sendLoggedStreamTransport } from '../shared/sessionTransportLog';
 import {
   formatSceneDuration,
   formatSceneStateLabelForSceneList,
@@ -403,7 +404,7 @@ function createSceneRowWrap(
     ctx.setBottomTab('scene');
     ctx.clearDetailPane();
     ctx.refreshSceneSelectionUi();
-    void window.xtream.stream.transport({ type: 'play', sceneId: scene.id, source: 'scene-row' });
+    void sendLoggedStreamTransport({ type: 'play', sceneId: scene.id, source: 'scene-row' }, 'stream');
   });
   decorateIconButton(runHere, 'Play', 'Run from here');
   runHere.disabled = !!scene.disabled;
