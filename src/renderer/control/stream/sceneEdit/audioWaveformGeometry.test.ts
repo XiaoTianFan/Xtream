@@ -43,6 +43,24 @@ describe('audioWaveformGeometry', () => {
     expect(cursorForAudioWaveformHit({ type: 'range-start' })).toBe('ew-resize');
   });
 
+  it('returns seek targets when automation editing is disabled', () => {
+    expect(
+      hitTestAudioWaveform(
+        {
+          durationMs: 10_000,
+          sourceStartMs: 1000,
+          sourceEndMs: 9000,
+          automationMode: undefined,
+          automationPoints: [{ timeMs: 4000, value: 0 }],
+        },
+        rect,
+        500,
+        80,
+      ),
+    ).toEqual({ type: 'seek' });
+    expect(cursorForAudioWaveformHit({ type: 'seek' })).toBe('pointer');
+  });
+
   it('cycles fade curves in the authored order', () => {
     expect(cycleFadeCurve(undefined)).toBe('linear');
     expect(cycleFadeCurve('linear')).toBe('equal-power');

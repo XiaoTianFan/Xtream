@@ -37,6 +37,7 @@ import type {
   AudioSourceState,
   AudioSourceUpdate,
   AudioSubCuePreviewCommand,
+  AudioSubCuePreviewPosition,
   BatchMissingMediaRelinkPayload,
   BatchMissingMediaRelinkResult,
   ControlProjectUiStateV1,
@@ -474,6 +475,13 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     const audioWindow = getAudioWindow();
     if (audioWindow && !audioWindow.isDestroyed() && !audioWindow.webContents.isDestroyed()) {
       audioWindow.webContents.send('audio:subcue-preview-command', command);
+    }
+  });
+
+  ipcMain.handle('audio:subcue-preview-position', (_event, position: AudioSubCuePreviewPosition) => {
+    const controlWindow = getControlWindow();
+    if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
+      controlWindow.webContents.send('audio:subcue-preview-position', position);
     }
   });
 

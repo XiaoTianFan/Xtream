@@ -230,6 +230,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
     const video = document.createElement('video');
     video.dataset.visualId = visualId;
     applyVisualStyle(video, visual);
+    syncVideoWhenReady(video);
     observeVideoFrames(video);
     visualElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(visualId, `live ${visual.capture.source}`)] : []));
     const metadataOptions = shouldReportMetadata
@@ -237,7 +238,11 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
       : {};
     void attachLiveVisualStream(visual, video, metadataOptions)
       .then((attachment) => {
-        liveVisualCleanups.set(visualId, attachment.cleanup);
+        if (visualElement.isConnected) {
+          liveVisualCleanups.set(visualId, attachment.cleanup);
+        } else {
+          attachment.cleanup();
+        }
       })
       .catch((error: unknown) => {
         reportLiveVisualError(
@@ -281,6 +286,7 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
     video.src = visual.url;
     video.dataset.visualId = visualId;
     applyVisualStyle(video, visual);
+    syncVideoWhenReady(video);
     video.addEventListener('loadedmetadata', () => {
       if (!shouldReportMetadata) {
         return;
@@ -317,28 +323,98 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
   return visualElement;
 }
 
-function createStreamLayerElement(layer: StreamDisplayLayer, index: number): HTMLElement {
-  const layerElement = document.createElement('div');
+function createNoSignalPlaceholder(zoneId: StreamDisplayFrame['zones'][number]['zoneId']): HTMLElement {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'display-output-placeholder';
+  const visualLabel = document.createElement('span');
+  visualLabel.textContent = zoneId === 'single' ? 'NO SIGNAL' : zoneId;
+  const visualMeta = document.createElement('small');
+  visualMeta.textContent = 'no stream visual';
+  placeholder.append(visualLabel, visualMeta);
+  return placeholder;
+}
+
+function streamLayerMediaSignature(layer: StreamDisplayLayer): string {
+  const visual = layer.visual;
+  return `${layer.layerId}:${layer.sourceVisualId}:${visual.kind}:${visual.kind === 'live' ? JSON.stringify(visual.capture) : visual.url ?? 'empty'}:${
+    visual.ready ? 'ready' : 'not-ready'
+  }:${visual.error ?? ''}:${visual.type ?? ''}`;
+}
+
+function applyStreamLayerElementState(layerElement: HTMLElement, layer: StreamDisplayLayer, index: number): void {
   layerElement.className = `display-layer display-layer--${layer.blendAlgorithm}`;
   layerElement.dataset.layerId = layer.layerId;
   layerElement.dataset.visualId = layer.layerId;
   layerElement.dataset.sourceVisualId = layer.sourceVisualId;
   layerElement.dataset.sceneId = layer.sceneId;
   layerElement.dataset.subCueId = layer.subCueId;
+  layerElement.dataset.mediaSignature = streamLayerMediaSignature(layer);
   layerElement.style.zIndex = String(index + 1);
   layerElement.style.opacity = String(layer.opacity);
   layerElement.style.setProperty('--display-layer-transition', `${layer.transitionMs}ms`);
   layerElement.style.mixBlendMode = cssBlendMode(layer.blendAlgorithm);
+  const media = layerElement.querySelector<HTMLElement>('video,img');
+  if (media) {
+    applyVisualStyle(media, layer.visual);
+  }
+}
+
+function reconcileStreamZone(output: HTMLElement, zoneId: StreamDisplayFrame['zones'][number]['zoneId'], layers: StreamDisplayLayer[]): void {
+  const wantedLayerIds = new Set(layers.map((layer) => layer.layerId));
+  for (const child of [...output.children]) {
+    const element = child as HTMLElement;
+    const layerId = element.dataset.layerId;
+    if (layerId && !wantedLayerIds.has(layerId)) {
+      cleanupMediaInElement(element);
+      element.remove();
+    } else if (!layerId && layers.length > 0) {
+      element.remove();
+    }
+  }
+
+  if (layers.length === 0) {
+    if (!output.querySelector('.display-output-placeholder')) {
+      output.replaceChildren(createNoSignalPlaceholder(zoneId));
+    }
+    return;
+  }
+
+  for (const [index, layer] of layers.entries()) {
+    let layerElement = [...output.querySelectorAll<HTMLElement>('.display-layer')].find(
+      (candidate) => candidate.dataset.layerId === layer.layerId,
+    );
+    const mediaSignature = streamLayerMediaSignature(layer);
+    if (layerElement && layerElement.dataset.mediaSignature !== mediaSignature) {
+      cleanupMediaInElement(layerElement);
+      const replacement = createStreamLayerElement(layer, index);
+      layerElement.replaceWith(replacement);
+      layerElement = replacement;
+    } else if (!layerElement) {
+      layerElement = createStreamLayerElement(layer, index);
+    }
+    applyStreamLayerElementState(layerElement, layer, index);
+    output.append(layerElement);
+  }
+}
+
+function createStreamLayerElement(layer: StreamDisplayLayer, index: number): HTMLElement {
+  const layerElement = document.createElement('div');
+  applyStreamLayerElementState(layerElement, layer, index);
   const visual = layer.visual;
   if (visual.kind === 'live') {
     const video = document.createElement('video');
     video.dataset.visualId = layer.layerId;
     applyVisualStyle(video, visual);
+    syncVideoWhenReady(video);
     observeVideoFrames(video);
     layerElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(layer.layerId, `stream live ${visual.capture.source}`)] : []));
     void attachLiveVisualStream(visual, video, {})
       .then((attachment) => {
-        liveVisualCleanups.set(layer.layerId, attachment.cleanup);
+        if (layerElement.isConnected) {
+          liveVisualCleanups.set(layer.layerId, attachment.cleanup);
+        } else {
+          attachment.cleanup();
+        }
       })
       .catch((error: unknown) => {
         reportLiveVisualError(visual, {}, error instanceof Error ? error.message : 'Live visual capture failed.');
@@ -361,6 +437,7 @@ function createStreamLayerElement(layer: StreamDisplayLayer, index: number): HTM
     video.src = visual.url;
     video.dataset.visualId = layer.layerId;
     applyVisualStyle(video, visual);
+    syncVideoWhenReady(video);
     observeVideoFrames(video);
     layerElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(layer.layerId, 'stream video layer')] : []));
     videoElements.set(layer.layerId, video);
@@ -419,15 +496,25 @@ function createStreamFrameRenderSignature(frame: StreamDisplayFrame): string {
       .filter((layer) => layer.selected)
       .map((layer) => {
         const visual = layer.visual;
-        return `${layer.layerId}:${layer.order}:${layer.opacity}:${layer.blendAlgorithm}:${visual.kind}:${
+        return `${layer.layerId}:${layer.order}:${layer.blendAlgorithm}:${visual.kind}:${
           visual.kind === 'live' ? JSON.stringify(visual.capture) : visual.url ?? 'empty'
-        }:${visual.ready ? 'ready' : 'not-ready'}:${visual.error ?? ''}:${visual.opacity ?? 1}:${visual.brightness ?? 1}:${
-          visual.contrast ?? 1
-        }:${visual.playbackRate ?? 1}`;
+        }:${visual.ready ? 'ready' : 'not-ready'}:${visual.error ?? ''}`;
       });
     return `${zone.zoneId}[${layers.join(',')}]`;
   });
   return `stream:${frame.displayId}:${frame.layout.type}:${frame.mode}:${frame.algorithm}:${frame.transitionMs}:${zones.join('|')}`;
+}
+
+function syncVideoWhenReady(video: HTMLVideoElement): void {
+  const sync = () => {
+    const state = currentState;
+    const display = state?.displays[displayId];
+    if (state && display) {
+      syncVideoElements(display, state);
+    }
+  };
+  video.addEventListener('loadedmetadata', sync);
+  video.addEventListener('canplay', sync);
 }
 
 function syncVideoElements(display: DisplayWindowState, state: DirectorState): void {

@@ -1,6 +1,7 @@
 import type {
   ControlProjectUiStreamState,
   DirectorState,
+  PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
   StreamEnginePublicState,
@@ -73,8 +74,31 @@ function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown 
     ...rest,
     scenes: Object.fromEntries(
       Object.entries(scenes).map(([id, scene]) => {
-        const { flow: _flow, ...sceneWithoutFlow } = scene;
-        return [id, sceneWithoutFlow];
+        return [id, stableSceneForRenderSignature(scene)];
+      }),
+    ),
+  };
+}
+
+function stableSceneForRenderSignature(scene: PersistedSceneConfig): unknown {
+  const { flow: _flow, subCues, ...sceneWithoutFlow } = scene;
+  return {
+    ...sceneWithoutFlow,
+    subCues: Object.fromEntries(
+      Object.entries(subCues).map(([id, subCue]) => {
+        if (subCue.kind !== 'audio') {
+          return [id, subCue];
+        }
+        const {
+          sourceStartMs: _sourceStartMs,
+          sourceEndMs: _sourceEndMs,
+          fadeIn: _fadeIn,
+          fadeOut: _fadeOut,
+          levelAutomation: _levelAutomation,
+          panAutomation: _panAutomation,
+          ...stableAudioSubCue
+        } = subCue;
+        return [id, stableAudioSubCue];
       }),
     ),
   };
@@ -83,10 +107,7 @@ function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown 
 function createStableTimelineRenderModel(timeline: StreamEnginePublicState['playbackTimeline']): unknown {
   return {
     status: timeline.status,
-    expectedDurationMs: timeline.expectedDurationMs,
-    entries: timeline.entries,
     threadPlan: timeline.threadPlan,
-    mainSegments: timeline.mainSegments,
     issues: timeline.issues,
     notice: timeline.notice,
   };
@@ -147,7 +168,7 @@ export function createSceneEditRenderModel(params: {
   const stream = params.streamState.stream;
   const scene = params.sceneEditSceneId ? stream.scenes[params.sceneEditSceneId] : undefined;
   return {
-    stream,
+    stream: createStreamContentRenderModel(stream),
     validationMessages: params.streamState.validationMessages,
     selectedSceneRunning: params.selectedSceneRunning,
     media: params.currentState

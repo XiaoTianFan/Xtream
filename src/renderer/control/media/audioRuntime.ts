@@ -111,6 +111,7 @@ type AudioSubCuePreviewRuntime = {
   sinkElement?: SinkCapableAudioElement;
   startedAtContextSeconds: number;
   pausedAtMs: number;
+  lastPositionReportMs?: number;
   stopTimer?: number;
   automationTimer?: number;
 };
@@ -429,6 +430,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
         fadeIn: selection.runtimeFadeIn,
         fadeOut: selection.runtimeFadeOut,
       });
+      // Authored fades are a second gain envelope layered on top of level automation.
       setSourceRuntimeGain(
         sourceRuntime,
         sourceMuted || !target.audible ? 0 : dbToGain(automatedLevelDb) * dbToGain(source.levelDb ?? 0) * fadeGain,
@@ -661,6 +663,8 @@ export function handleAudioSubCuePreviewCommand(command: AudioSubCuePreviewComma
     playAudioSubCuePreview(command.payload);
   } else if (command.type === 'pause-audio-subcue-preview') {
     pauseAudioSubCuePreview(command.previewId);
+  } else if (command.type === 'seek-audio-subcue-preview') {
+    seekAudioSubCuePreview(command.previewId, command);
   } else {
     stopAudioSubCuePreview(command.previewId);
   }
@@ -726,6 +730,7 @@ export function pauseAudioSubCuePreview(previewId: string): void {
     window.clearTimeout(runtime.stopTimer);
     runtime.stopTimer = undefined;
   }
+  reportPreviewPosition(runtime, true);
 }
 
 function resumeAudioSubCuePreview(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): void {
@@ -737,6 +742,30 @@ function resumeAudioSubCuePreview(runtime: AudioSubCuePreviewRuntime, payload: A
   void runtime.context.resume();
   requestMediaPlay(runtime.element, undefined, true);
   void runtime.sinkElement?.play().catch(() => undefined);
+}
+
+function seekAudioSubCuePreview(previewId: string, command: Extract<AudioSubCuePreviewCommand, { type: 'seek-audio-subcue-preview' }>): void {
+  const runtime = previewRuntimes.get(previewId);
+  if (!runtime) {
+    return;
+  }
+  const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
+  const sourceEndMs = runtime.payload.sourceEndMs;
+  const maxSourceMs = sourceEndMs !== undefined ? Math.max(sourceStartMs, sourceEndMs) : Math.max(sourceStartMs, runtime.element.duration * 1000 || sourceStartMs);
+  const rate = Math.max(0.01, runtime.payload.playbackRate ?? 1);
+  const sourceTimeMs =
+    command.sourceTimeMs !== undefined
+      ? Math.min(maxSourceMs, Math.max(sourceStartMs, command.sourceTimeMs))
+      : sourceStartMs + Math.max(0, command.localTimeMs ?? 0) * rate;
+  const localTimeMs = command.localTimeMs ?? Math.max(0, (sourceTimeMs - sourceStartMs) / rate);
+  runtime.element.currentTime = Math.max(0, sourceTimeMs / 1000);
+  runtime.pausedAtMs = localTimeMs;
+  if (!runtime.element.paused) {
+    runtime.startedAtContextSeconds = runtime.context.currentTime - localTimeMs / 1000;
+  }
+  syncPreviewAutomation(runtime);
+  armPreviewStopTimer(runtime);
+  reportPreviewPosition(runtime, true);
 }
 
 export function stopAudioSubCuePreview(previewId: string): void {
@@ -1177,10 +1206,25 @@ async function configurePreviewRouting(runtime: AudioSubCuePreviewRuntime): Prom
 }
 
 function getPreviewLocalMs(runtime: AudioSubCuePreviewRuntime): number {
-  if (runtime.element.paused && runtime.pausedAtMs > 0) {
+  if (runtime.element.paused) {
     return runtime.pausedAtMs;
   }
   return Math.max(0, (runtime.context.currentTime - runtime.startedAtContextSeconds) * 1000);
+}
+
+function reportPreviewPosition(runtime: AudioSubCuePreviewRuntime, force = false): void {
+  const now = performance.now();
+  if (!force && runtime.lastPositionReportMs !== undefined && now - runtime.lastPositionReportMs < 40) {
+    return;
+  }
+  runtime.lastPositionReportMs = now;
+  void window.xtream.audioRuntime.reportSubCuePreviewPosition?.({
+    previewId: runtime.payload.previewId,
+    sourceTimeMs: Math.max(0, runtime.element.currentTime * 1000),
+    localTimeMs: getPreviewLocalMs(runtime),
+    playing: !runtime.element.paused,
+    paused: runtime.element.paused,
+  });
 }
 
 function armPreviewStopTimer(runtime: AudioSubCuePreviewRuntime): void {
@@ -1212,11 +1256,13 @@ function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
     fadeOut: runtime.payload.fadeOut,
   });
   const levelDb = evaluateAudioSubCueLevelDb(runtime.payload.levelDb, runtime.payload.levelAutomation, localMs);
+  // Preview mirrors live playback: fade gain is applied after the main level automation.
   const gain = dbToGain(levelDb) * dbToGain(runtime.payload.sourceLevelDb ?? 0) * fadeGain;
   const now = runtime.context.currentTime;
   runtime.gainNode.gain.setTargetAtTime(gain, now, SOURCE_GAIN_SMOOTH_SECONDS);
   runtime.panner.pan.setTargetAtTime(clampAudioPan(evaluateAudioSubCuePan(runtime.payload.pan, runtime.payload.panAutomation, localMs)), now, SOURCE_GAIN_SMOOTH_SECONDS);
   updatePitchShiftNode(runtime.pitchNode, runtime.payload.pitchShiftSemitones);
+  reportPreviewPosition(runtime);
 }
 
 function canResumePreviewRuntime(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): boolean {

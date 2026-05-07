@@ -236,9 +236,18 @@ export type AudioSubCuePreviewPayload = {
   channelCount?: number;
 };
 
+export type AudioSubCuePreviewPosition = {
+  previewId: string;
+  sourceTimeMs: number;
+  localTimeMs: number;
+  playing: boolean;
+  paused: boolean;
+};
+
 export type AudioSubCuePreviewCommand =
   | { type: 'play-audio-subcue-preview'; payload: AudioSubCuePreviewPayload }
   | { type: 'pause-audio-subcue-preview'; previewId: string }
+  | { type: 'seek-audio-subcue-preview'; previewId: string; sourceTimeMs?: number; localTimeMs?: number }
   | { type: 'stop-audio-subcue-preview'; previewId: string };
 
 export type MeterLaneState = {

@@ -1,5 +1,6 @@
 import type {
   AudioSubCuePreviewPayload,
+  AudioSubCuePreviewPosition,
   AudioSourceId,
   AudioSourceState,
   DirectorState,
@@ -7,17 +8,20 @@ import type {
   SceneLoopPolicy,
   VirtualOutputId,
 } from '../../../../shared/types';
+import { resolveLoopTiming } from '../../../../shared/streamLoopTiming';
 import {
   AUDIO_SUBCUE_LEVEL_MAX_DB,
   AUDIO_SUBCUE_LEVEL_MIN_DB,
   AUDIO_SUBCUE_PAN_MAX,
   AUDIO_SUBCUE_PAN_MIN,
   clampPitchShiftSemitones,
+  evaluateFadeGain,
   getAudioSubCueBaseDurationMs,
 } from '../../../../shared/audioSubCueAutomation';
 import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
 import { loadAudioWaveformPeaks, resolveAudioWaveformUrl, type AudioWaveformPeaks } from './audioWaveformPeaks';
+import { decorateRailButton } from '../../shared/icons';
 import {
   automationValueToY,
   clampAutomationPointsForWaveform,
@@ -43,20 +47,24 @@ export type AudioSubCueWaveformEditorDeps = {
 
 type DragState = {
   target: AudioWaveformHitTarget;
+  lastAutomationPoint?: {
+    timeMs: number;
+    value: number;
+  };
 };
 
 const WAVEFORM_HEIGHT = 164;
+const AUTOMATION_BUCKET_TARGET_COUNT = 96;
+const AUTOMATION_BUCKET_MIN_MS = 100;
+const AUTOMATION_BUCKET_MAX_MS = 1000;
 
 export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorDeps): HTMLElement {
   const { sub, currentState, patchSubCue } = deps;
+  let draftSub: PersistedAudioSubCueConfig = { ...sub };
+  let pendingWaveformPatch: Partial<PersistedAudioSubCueConfig> | undefined;
   const source = currentState.audioSources[sub.audioSourceId];
   const sourceDurationMs = source?.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined;
-  const selectedDurationMs = normalizeWaveformRange({
-    sourceStartMs: sub.sourceStartMs,
-    sourceEndMs: sub.sourceEndMs,
-    durationMs: sourceDurationMs,
-  }).durationMs;
-  let automationMode: AudioWaveformAutomationMode = 'level';
+  let automationMode: AudioWaveformAutomationMode | undefined = 'level';
   let peaks: AudioWaveformPeaks | undefined;
   let loadState: 'missing' | 'pending' | 'ready' | 'error' = source ? (source.ready ? 'pending' : 'pending') : 'missing';
   let hover: AudioWaveformHitTarget = { type: 'disabled' };
@@ -64,6 +72,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   let previewPlaying = false;
   let previewStartedAtMs: number | undefined;
   let previewPausedAtMs = 0;
+  let previewSourceTimeMs: number | undefined;
   let previewFrame: number | undefined;
   let previewStopTimer: number | undefined;
   let disposed = false;
@@ -75,7 +84,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const rail = document.createElement('div');
   rail.className = 'stream-audio-waveform-rail';
   const playButton = createRailButton('Play', () => {
-    const payload = buildAudioSubCuePreviewPayload(sub, currentState, previewId);
+    const payload = buildAudioSubCuePreviewPayload(draftSub, currentState, previewId);
     if (!payload || !window.xtream.audioRuntime.preview) {
       return;
     }
@@ -86,24 +95,20 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   });
   playButton.classList.add('stream-audio-waveform-transport');
   pauseButton.classList.add('stream-audio-waveform-transport');
-  const previewAvailable = Boolean(buildAudioSubCuePreviewPayload(sub, currentState, previewId)) && Boolean(window.xtream.audioRuntime.preview);
+  decorateRailButton(playButton, 'Play', 'Play preview', { iconSize: 17 });
+  decorateRailButton(pauseButton, 'Pause', 'Pause preview', { iconSize: 17 });
+  const previewAvailable = Boolean(buildAudioSubCuePreviewPayload(draftSub, currentState, previewId)) && Boolean(window.xtream.audioRuntime.preview);
   playButton.disabled = !previewAvailable;
   pauseButton.disabled = !previewAvailable;
 
   const levelButton = createModeButton('Level', true, () => {
-    automationMode = 'level';
-    levelButton.classList.add('active');
-    levelButton.setAttribute('aria-pressed', 'true');
-    panButton.classList.remove('active');
-    panButton.setAttribute('aria-pressed', 'false');
+    automationMode = automationMode === 'level' ? undefined : 'level';
+    syncModeButtons();
     render();
   });
   const panButton = createModeButton('Pan', false, () => {
-    automationMode = 'pan';
-    panButton.classList.add('active');
-    panButton.setAttribute('aria-pressed', 'true');
-    levelButton.classList.remove('active');
-    levelButton.setAttribute('aria-pressed', 'false');
+    automationMode = automationMode === 'pan' ? undefined : 'pan';
+    syncModeButtons();
     render();
   });
   rail.append(playButton, pauseButton, levelButton, panButton);
@@ -120,13 +125,13 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const infinite = Boolean(sub.loop?.enabled && sub.loop.iterations?.type === 'infinite');
   controls.append(
     createDraggableNumberField(
-      'Play ms',
-      Math.round(sub.durationOverrideMs ?? getAudioSubCueBaseDurationMs(sub, source?.durationSeconds) ?? selectedDurationMs ?? 0),
-      (durationOverrideMs) => patchAndRefreshPreview({ durationOverrideMs }),
-      { min: 0, step: 1, dragStep: 5, integer: true, disabled: infinite },
+      'Play times',
+      getPlayTimes(sub),
+      (playTimes) => patchAndRefreshPreview(playTimesPatch(playTimes)),
+      { min: 1, step: 1, dragStep: 0.05, integer: true, disabled: infinite },
     ),
-    createInfiniteLoopToggle(infinite, (enabled) => patchAndRefreshPreview({ loop: enabled ? infiniteLoopPolicy() : { enabled: false } })),
-    createDraggableNumberField('Start ms', sub.startOffsetMs ?? 0, (startOffsetMs) => patchAndRefreshPreview({ startOffsetMs }), {
+    createInfiniteLoopToggle(infinite, (enabled) => patchAndRefreshPreview({ loop: enabled ? infiniteLoopPolicy() : playTimesPatch(getPlayTimes(sub)).loop })),
+    createDraggableNumberField('Delay Start', sub.startOffsetMs ?? 0, (startOffsetMs) => patchAndRefreshPreview({ startOffsetMs }), {
       min: 0,
       step: 1,
       dragStep: 5,
@@ -151,6 +156,12 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const resizeObserver = new ResizeObserver(() => render());
   resizeObserver.observe(stage);
   const disconnectObserver = createDisconnectObserver(section, () => cleanup());
+  const unsubscribePreviewPosition = window.xtream.audioRuntime.onSubCuePreviewPosition?.((position) => {
+    if (position.previewId !== previewId) {
+      return;
+    }
+    applyPreviewPosition(position);
+  });
 
   canvas.addEventListener('pointermove', (event) => {
     const point = canvasPoint(canvas, event);
@@ -175,6 +186,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (target.type === 'disabled') {
       return;
     }
+    if (target.type === 'seek') {
+      seekPreviewTo(point.x);
+      return;
+    }
     canvas.setPointerCapture(event.pointerId);
     drag = { target };
     if (target.type === 'automation-body') {
@@ -186,15 +201,23 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       canvas.releasePointerCapture(event.pointerId);
     }
     drag = undefined;
+    commitPendingWaveformPatch();
+  });
+  canvas.addEventListener('pointercancel', () => {
+    drag = undefined;
+    commitPendingWaveformPatch();
   });
   canvas.addEventListener('dblclick', (event) => {
     const point = canvasPoint(canvas, event);
     const target = hitTest(point.x, point.y);
     if (target.type === 'fade-in') {
-      patchAndRefreshPreview({ fadeIn: { durationMs: sub.fadeIn?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeIn?.curve) } });
+      patchAndRefreshPreview({ fadeIn: { durationMs: draftSub.fadeIn?.durationMs ?? 0, curve: cycleFadeCurve(draftSub.fadeIn?.curve) } });
     } else if (target.type === 'fade-out') {
-      patchAndRefreshPreview({ fadeOut: { durationMs: sub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeOut?.curve) } });
+      patchAndRefreshPreview({ fadeOut: { durationMs: draftSub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(draftSub.fadeOut?.curve) } });
     } else if (target.type === 'automation-point') {
+      if (!automationMode) {
+        return;
+      }
       const key = automationMode === 'level' ? 'levelAutomation' : 'panAutomation';
       const points = (activeAutomationPoints() ?? []).filter((_point, index) => index !== target.index);
       patchAndRefreshPreview({ [key]: points.length ? points : undefined } as Partial<PersistedAudioSubCueConfig>);
@@ -219,14 +242,21 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   render();
   return section;
 
+  function syncModeButtons(): void {
+    levelButton.classList.toggle('active', automationMode === 'level');
+    levelButton.setAttribute('aria-pressed', String(automationMode === 'level'));
+    panButton.classList.toggle('active', automationMode === 'pan');
+    panButton.setAttribute('aria-pressed', String(automationMode === 'pan'));
+  }
+
   function hitTest(x: number, y: number): AudioWaveformHitTarget {
     return hitTestAudioWaveform(
       {
         durationMs: sourceDurationMs,
-        sourceStartMs: sub.sourceStartMs,
-        sourceEndMs: sub.sourceEndMs,
-        fadeIn: sub.fadeIn,
-        fadeOut: sub.fadeOut,
+        sourceStartMs: draftSub.sourceStartMs,
+        sourceEndMs: draftSub.sourceEndMs,
+        fadeIn: draftSub.fadeIn,
+        fadeOut: draftSub.fadeOut,
         automationMode,
         automationPoints: activeAutomationPoints(),
       },
@@ -237,7 +267,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function activeAutomationPoints() {
-    return automationMode === 'level' ? sub.levelAutomation : sub.panAutomation;
+    return automationMode === 'level' ? draftSub.levelAutomation : automationMode === 'pan' ? draftSub.panAutomation : undefined;
   }
 
   function applyDrag(x: number, y: number): void {
@@ -245,7 +275,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       return;
     }
     const rect = waveformRect();
-    const range = normalizeWaveformRange({ sourceStartMs: sub.sourceStartMs, sourceEndMs: sub.sourceEndMs, durationMs: sourceDurationMs });
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
     const mediaMs = waveformXToMs(x, sourceDurationMs, rect);
     if (drag.target.type === 'range-start' || drag.target.type === 'range-end') {
       const next = clampWaveformRange({
@@ -253,33 +283,32 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
         endMs: drag.target.type === 'range-end' ? mediaMs : range.endMs ?? sourceDurationMs,
         durationMs: sourceDurationMs,
       });
-      patchAndRefreshPreview({
+      stageWaveformPatch({
         sourceStartMs: next.sourceStartMs,
         sourceEndMs: next.sourceEndMs,
-        durationOverrideMs: Math.round((next.selectedDurationMs ?? 0) / Math.max(0.01, sub.playbackRate ?? 1)),
       });
       return;
     }
     if (drag.target.type === 'fade-in') {
-      patchAndRefreshPreview({
+      stageWaveformPatch({
         fadeIn: {
           durationMs: clampFadeDurationMs(mediaMs - range.startMs, range.durationMs),
-          curve: sub.fadeIn?.curve ?? 'linear',
+          curve: draftSub.fadeIn?.curve ?? 'linear',
         },
       });
       return;
     }
     if (drag.target.type === 'fade-out') {
-      patchAndRefreshPreview({
+      stageWaveformPatch({
         fadeOut: {
           durationMs: clampFadeDurationMs((range.endMs ?? sourceDurationMs) - mediaMs, range.durationMs),
-          curve: sub.fadeOut?.curve ?? 'linear',
+          curve: draftSub.fadeOut?.curve ?? 'linear',
         },
       });
       return;
     }
     if (drag.target.type === 'automation-point') {
-      applyAutomationPoint(x, y, drag.target.index);
+      applyAutomationPoint(x, y, { existingIndex: drag.target.index });
       return;
     }
     if (drag.target.type === 'automation-body') {
@@ -287,22 +316,40 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
   }
 
-  function applyAutomationPoint(x: number, y: number, existingIndex?: number): void {
-    if (!sourceDurationMs) {
+  function applyAutomationPoint(x: number, y: number, options: { existingIndex?: number } = {}): void {
+    if (!sourceDurationMs || !automationMode) {
       return;
     }
     const rect = waveformRect();
-    const range = normalizeWaveformRange({ sourceStartMs: sub.sourceStartMs, sourceEndMs: sub.sourceEndMs, durationMs: sourceDurationMs });
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
     const selectedDuration = range.durationMs ?? sourceDurationMs;
     const points = clampAutomationPointsForWaveform(activeAutomationPoints(), automationMode, selectedDuration);
+    const rawTimeMs = Math.max(0, waveformXToMs(x, sourceDurationMs, rect) - range.startMs);
+    const bucketMs = getAutomationBucketMs(selectedDuration);
+    const bucketTimeMs = Math.min(selectedDuration, Math.round(rawTimeMs / bucketMs) * bucketMs);
     const point = {
-      timeMs: Math.round(Math.max(0, waveformXToMs(x, sourceDurationMs, rect) - range.startMs)),
+      timeMs: Math.round(bucketTimeMs),
       value: waveformYToAutomationValue(y, automationMode, rect),
     };
-    const next = existingIndex === undefined ? [...points, point] : points.map((current, index) => (index === existingIndex ? point : current));
+    const drawnPoints = drag?.lastAutomationPoint && options.existingIndex === undefined
+      ? interpolateAutomationBuckets(drag.lastAutomationPoint, point, bucketMs)
+      : [point];
+    let next = points;
+    for (const drawnPoint of drawnPoints) {
+      const replaceIndex = options.existingIndex ?? next.findIndex((current) => current.timeMs === drawnPoint.timeMs);
+      next =
+        replaceIndex === -1
+          ? [...next, drawnPoint]
+          : next
+              .map((current, index) => (index === replaceIndex ? drawnPoint : current))
+              .filter((current, index) => index === replaceIndex || current.timeMs !== drawnPoint.timeMs);
+    }
+    if (drag) {
+      drag.lastAutomationPoint = point;
+    }
     const clamped = clampAutomationPointsForWaveform(next, automationMode, selectedDuration);
     const key = automationMode === 'level' ? 'levelAutomation' : 'panAutomation';
-    patchAndRefreshPreview({ [key]: clamped } as Partial<PersistedAudioSubCueConfig>);
+    stageWaveformPatch({ [key]: clamped } as Partial<PersistedAudioSubCueConfig>);
   }
 
   function render(): void {
@@ -321,6 +368,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     drawBackground(ctx, rect);
     drawPeaks(ctx, rect, loadState, peaks);
     drawRangeAndFades(ctx, rect);
+    drawFadeEnvelope(ctx, rect);
     drawAutomation(ctx, rect);
     drawPreviewPlayhead(ctx, rect);
   }
@@ -374,7 +422,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (!sourceDurationMs) {
       return;
     }
-    const range = normalizeWaveformRange({ sourceStartMs: sub.sourceStartMs, sourceEndMs: sub.sourceEndMs, durationMs: sourceDurationMs });
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
     const startX = msToWaveformX(range.startMs, sourceDurationMs, rect);
     const endX = msToWaveformX(range.endMs ?? sourceDurationMs, sourceDurationMs, rect);
     ctx.fillStyle = 'rgba(29, 201, 183, 0.11)';
@@ -387,8 +435,8 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       ctx.lineTo(x, rect.top + rect.height);
       ctx.stroke();
     }
-    const fadeInX = msToWaveformX(range.startMs + (sub.fadeIn?.durationMs ?? 0), sourceDurationMs, rect);
-    const fadeOutX = msToWaveformX((range.endMs ?? sourceDurationMs) - (sub.fadeOut?.durationMs ?? 0), sourceDurationMs, rect);
+    const fadeInX = msToWaveformX(range.startMs + (draftSub.fadeIn?.durationMs ?? 0), sourceDurationMs, rect);
+    const fadeOutX = msToWaveformX((range.endMs ?? sourceDurationMs) - (draftSub.fadeOut?.durationMs ?? 0), sourceDurationMs, rect);
     ctx.fillStyle = 'rgba(214, 164, 73, 0.19)';
     ctx.fillRect(startX, rect.top, Math.max(0, fadeInX - startX), rect.height);
     ctx.fillRect(fadeOutX, rect.top, Math.max(0, endX - fadeOutX), rect.height);
@@ -401,39 +449,76 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.stroke();
   }
 
-  function drawAutomation(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
-    if (!sourceDurationMs) {
+  function drawFadeEnvelope(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+    if (!sourceDurationMs || (!draftSub.fadeIn?.durationMs && !draftSub.fadeOut?.durationMs)) {
       return;
     }
-    const range = normalizeWaveformRange({ sourceStartMs: sub.sourceStartMs, sourceEndMs: sub.sourceEndMs, durationMs: sourceDurationMs });
-    const points = clampAutomationPointsForWaveform(activeAutomationPoints(), automationMode, range.durationMs);
-    const color = automationMode === 'level' ? 'rgba(64, 216, 182, 0.96)' : 'rgba(228, 121, 164, 0.96)';
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const durationMs = range.durationMs;
+    if (!durationMs || durationMs <= 0) {
+      return;
+    }
+    const sampleCount = Math.max(24, Math.min(160, Math.round(rect.width / 8)));
+    ctx.save();
+    ctx.strokeStyle = 'rgba(236, 185, 83, 0.98)';
     ctx.lineWidth = 2;
-    if (points.length === 0) {
-      const fallback = automationMode === 'level' ? sub.levelDb ?? 0 : sub.pan ?? 0;
-      const y = automationValueToY(fallback, automationMode, rect);
-      ctx.beginPath();
-      ctx.moveTo(msToWaveformX(range.startMs, sourceDurationMs, rect), y);
-      ctx.lineTo(msToWaveformX(range.endMs ?? sourceDurationMs, sourceDurationMs, rect), y);
-      ctx.stroke();
-      return;
-    }
+    ctx.setLineDash([5, 4]);
     ctx.beginPath();
-    points.forEach((point, index) => {
-      const x = msToWaveformX(range.startMs + point.timeMs, sourceDurationMs, rect);
-      const y = automationValueToY(point.value, automationMode, rect);
-      if (index === 0) {
+    for (let i = 0; i <= sampleCount; i += 1) {
+      const localMs = (durationMs * i) / sampleCount;
+      const gain = evaluateFadeGain({
+        timeMs: localMs,
+        durationMs,
+        fadeIn: draftSub.fadeIn,
+        fadeOut: draftSub.fadeOut,
+      });
+      const gainDb = gain <= 0.001 ? AUDIO_SUBCUE_LEVEL_MIN_DB : Math.max(AUDIO_SUBCUE_LEVEL_MIN_DB, 20 * Math.log10(gain));
+      const x = msToWaveformX(range.startMs + localMs, sourceDurationMs, rect);
+      const y = automationValueToY(gainDb, 'level', rect);
+      if (i === 0) {
         ctx.moveTo(x, y);
       } else {
         ctx.lineTo(x, y);
       }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawAutomation(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
+    if (!sourceDurationMs || !automationMode) {
+      return;
+    }
+    const activeMode = automationMode;
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const points = clampAutomationPointsForWaveform(activeAutomationPoints(), activeMode, range.durationMs);
+    const color = activeMode === 'level' ? 'rgba(64, 216, 182, 0.96)' : 'rgba(228, 121, 164, 0.96)';
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    if (points.length === 0) {
+      const fallback = activeMode === 'level' ? draftSub.levelDb ?? 0 : draftSub.pan ?? 0;
+      const y = automationValueToY(fallback, activeMode, rect);
+      ctx.beginPath();
+      ctx.moveTo(rect.left, y);
+      ctx.lineTo(rect.left + rect.width, y);
+      ctx.stroke();
+      return;
+    }
+    ctx.beginPath();
+    const firstY = automationValueToY(points[0].value, activeMode, rect);
+    ctx.moveTo(rect.left, firstY);
+    points.forEach((point) => {
+      const x = msToWaveformX(range.startMs + point.timeMs, sourceDurationMs, rect);
+      const y = automationValueToY(point.value, activeMode, rect);
+      ctx.lineTo(x, y);
     });
+    const lastY = automationValueToY(points[points.length - 1].value, activeMode, rect);
+    ctx.lineTo(rect.left + rect.width, lastY);
     ctx.stroke();
     for (const point of points) {
       const x = msToWaveformX(range.startMs + point.timeMs, sourceDurationMs, rect);
-      const y = automationValueToY(point.value, automationMode, rect);
+      const y = automationValueToY(point.value, activeMode, rect);
       ctx.beginPath();
       ctx.arc(x, y, 4.5, 0, Math.PI * 2);
       ctx.fill();
@@ -441,12 +526,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function drawPreviewPlayhead(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect): void {
-    if (!sourceDurationMs || (!previewPlaying && previewPausedAtMs <= 0)) {
+    if (!sourceDurationMs || (!previewPlaying && previewPausedAtMs <= 0 && previewSourceTimeMs === undefined)) {
       return;
     }
-    const range = normalizeWaveformRange({ sourceStartMs: sub.sourceStartMs, sourceEndMs: sub.sourceEndMs, durationMs: sourceDurationMs });
-    const elapsed = getPreviewElapsedMs() * Math.max(0.01, sub.playbackRate ?? 1);
-    const x = msToWaveformX(range.startMs + elapsed, sourceDurationMs, rect);
+    const x = msToWaveformX(getPreviewPlayheadSourceMs(), sourceDurationMs, rect);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.96)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -460,6 +543,36 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       return previewPausedAtMs;
     }
     return previewPlaying ? performance.now() - previewStartedAtMs : previewPausedAtMs;
+  }
+
+  function getPreviewPlayheadSourceMs(): number {
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const rangeEndMs = range.endMs ?? sourceDurationMs ?? range.startMs;
+    const rangeDurationMs = Math.max(1, rangeEndMs - range.startMs);
+    const sourceMs =
+      previewSourceTimeMs ??
+      range.startMs + getPreviewElapsedMs() * Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
+    if (draftSub.loop?.enabled && sourceMs >= rangeEndMs) {
+      return range.startMs + ((sourceMs - range.startMs) % rangeDurationMs);
+    }
+    return Math.min(rangeEndMs, Math.max(range.startMs, sourceMs));
+  }
+
+  function sourceMsForPreviewLocalMs(localTimeMs: number): number {
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const sourceMs = range.startMs + Math.max(0, localTimeMs) * Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
+    return Math.min(range.endMs ?? sourceDurationMs ?? sourceMs, Math.max(range.startMs, sourceMs));
+  }
+
+  function applyPreviewPosition(position: AudioSubCuePreviewPosition): void {
+    previewSourceTimeMs = position.sourceTimeMs;
+    previewPausedAtMs = position.localTimeMs;
+    previewPlaying = position.playing;
+    previewStartedAtMs = position.playing ? performance.now() - position.localTimeMs : undefined;
+    if (!position.playing) {
+      clearPreviewStopTimer();
+    }
+    render();
   }
 
   function startPreviewTicker(): void {
@@ -478,24 +591,51 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function patchAndRefreshPreview(update: Partial<PersistedAudioSubCueConfig>): void {
+    draftSub = { ...draftSub, ...update };
     patchSubCue(update);
     if (!previewPlaying) {
+      render();
       return;
     }
-    const payload = buildAudioSubCuePreviewPayload({ ...sub, ...update }, currentState, previewId);
+    const resumeFromMs = getPreviewElapsedMs();
+    const payload = buildAudioSubCuePreviewPayload(draftSub, currentState, previewId);
     if (!payload || !window.xtream.audioRuntime.preview) {
       stopPreview(true);
       return;
     }
-    startPreview(payload, 0);
+    startPreview(payload, resumeFromMs);
+  }
+
+  function stageWaveformPatch(update: Partial<PersistedAudioSubCueConfig>): void {
+    pendingWaveformPatch = { ...pendingWaveformPatch, ...update };
+    draftSub = { ...draftSub, ...update };
+    render();
+  }
+
+  function commitPendingWaveformPatch(): void {
+    if (!pendingWaveformPatch) {
+      return;
+    }
+    const update = pendingWaveformPatch;
+    pendingWaveformPatch = undefined;
+    patchAndRefreshPreview(update);
   }
 
   function startPreview(payload: AudioSubCuePreviewPayload, resumeFromMs: number): void {
     disconnectObserver.markConnected();
     clearPreviewStopTimer();
     void window.xtream.audioRuntime.preview({ type: 'play-audio-subcue-preview', payload });
+    if (resumeFromMs > 0) {
+      void window.xtream.audioRuntime.preview({
+        type: 'seek-audio-subcue-preview',
+        previewId,
+        localTimeMs: resumeFromMs,
+        sourceTimeMs: previewSourceTimeMs ?? sourceMsForPreviewLocalMs(resumeFromMs),
+      });
+    }
     previewPlaying = true;
     previewPausedAtMs = 0;
+    previewSourceTimeMs = undefined;
     previewStartedAtMs = performance.now() - Math.max(0, resumeFromMs);
     schedulePreviewUiStop(payload, resumeFromMs);
     startPreviewTicker();
@@ -506,9 +646,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (!window.xtream.audioRuntime.preview || (!previewPlaying && previewPausedAtMs <= 0)) {
       return;
     }
+    const pausedAtMs = getPreviewElapsedMs();
     void window.xtream.audioRuntime.preview({ type: 'pause-audio-subcue-preview', previewId });
     previewPlaying = false;
-    previewPausedAtMs = getPreviewElapsedMs();
+    previewPausedAtMs = pausedAtMs;
     clearPreviewStopTimer();
     render();
   }
@@ -520,10 +661,27 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     previewPlaying = false;
     previewStartedAtMs = undefined;
     previewPausedAtMs = 0;
+    previewSourceTimeMs = undefined;
     clearPreviewStopTimer();
     if (previewFrame !== undefined) {
       window.cancelAnimationFrame(previewFrame);
       previewFrame = undefined;
+    }
+    render();
+  }
+
+  function seekPreviewTo(x: number): void {
+    if (!sourceDurationMs) {
+      return;
+    }
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const sourceTimeMs = Math.min(range.endMs ?? sourceDurationMs, Math.max(range.startMs, waveformXToMs(x, sourceDurationMs, waveformRect())));
+    const playbackRate = Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
+    previewSourceTimeMs = sourceTimeMs;
+    previewPausedAtMs = Math.max(0, (sourceTimeMs - range.startMs) / playbackRate);
+    previewStartedAtMs = previewPlaying ? performance.now() - previewPausedAtMs : undefined;
+    if (window.xtream.audioRuntime.preview && (previewPlaying || previewPausedAtMs > 0)) {
+      void window.xtream.audioRuntime.preview({ type: 'seek-audio-subcue-preview', previewId, sourceTimeMs, localTimeMs: previewPausedAtMs });
     }
     render();
   }
@@ -550,6 +708,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       return;
     }
     disposed = true;
+    unsubscribePreviewPosition?.();
     disconnectObserver.disconnect();
     resizeObserver.disconnect();
     window.removeEventListener('beforeunload', cleanup);
@@ -616,10 +775,52 @@ function createInfiniteLoopToggle(pressed: boolean, onToggle: (pressed: boolean)
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `stream-audio-waveform-loop${pressed ? ' active' : ''}`;
-  button.textContent = 'Loop';
+  button.textContent = 'Infinite Loop';
   button.setAttribute('aria-pressed', String(pressed));
   button.addEventListener('click', () => onToggle(button.getAttribute('aria-pressed') !== 'true'));
   return button;
+}
+
+function getPlayTimes(sub: PersistedAudioSubCueConfig): number {
+  if (sub.loop?.enabled && sub.loop.iterations.type === 'count') {
+    return Math.max(1, Math.round(sub.loop.iterations.count));
+  }
+  return 1;
+}
+
+function playTimesPatch(value: number | undefined): Partial<PersistedAudioSubCueConfig> {
+  const playTimes = Math.max(1, Math.round(value ?? 1));
+  return {
+    loop: playTimes <= 1 ? { enabled: false } : { enabled: true, iterations: { type: 'count', count: playTimes } },
+  };
+}
+
+function getAutomationBucketMs(selectedDurationMs: number): number {
+  const raw = selectedDurationMs / AUTOMATION_BUCKET_TARGET_COUNT;
+  return Math.max(AUTOMATION_BUCKET_MIN_MS, Math.min(AUTOMATION_BUCKET_MAX_MS, Math.round(raw)));
+}
+
+function interpolateAutomationBuckets(
+  from: { timeMs: number; value: number },
+  to: { timeMs: number; value: number },
+  bucketMs: number,
+): Array<{ timeMs: number; value: number }> {
+  if (from.timeMs === to.timeMs || bucketMs <= 0) {
+    return [to];
+  }
+  const direction = from.timeMs < to.timeMs ? 1 : -1;
+  const points: Array<{ timeMs: number; value: number }> = [];
+  for (let timeMs = from.timeMs + direction * bucketMs; direction > 0 ? timeMs <= to.timeMs : timeMs >= to.timeMs; timeMs += direction * bucketMs) {
+    const u = (timeMs - from.timeMs) / (to.timeMs - from.timeMs);
+    points.push({
+      timeMs,
+      value: from.value + (to.value - from.value) * u,
+    });
+  }
+  if (points[points.length - 1]?.timeMs !== to.timeMs) {
+    points.push(to);
+  }
+  return points;
 }
 
 function infiniteLoopPolicy(): SceneLoopPolicy {
@@ -671,8 +872,16 @@ export function buildAudioSubCuePreviewPayload(
     playbackRate: (source.playbackRate ?? 1) * (sub.playbackRate ?? 1),
     pitchShiftSemitones: sub.pitchShiftSemitones,
     loop: sub.loop,
-    playTimeMs: sub.durationOverrideMs ?? getAudioSubCueBaseDurationMs(sub, source.durationSeconds),
+    playTimeMs: getAudioSubCuePreviewPlayTimeMs(sub, source.durationSeconds),
     channelMode: source.channelMode,
     channelCount: source.channelCount,
   };
+}
+
+function getAudioSubCuePreviewPlayTimeMs(sub: PersistedAudioSubCueConfig, sourceDurationSeconds: number | undefined): number | undefined {
+  const baseDurationMs = getAudioSubCueBaseDurationMs(sub, sourceDurationSeconds);
+  if (baseDurationMs === undefined) {
+    return undefined;
+  }
+  return resolveLoopTiming(sub.loop, baseDurationMs).totalDurationMs;
 }

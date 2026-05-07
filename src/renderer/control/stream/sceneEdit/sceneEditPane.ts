@@ -82,8 +82,6 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     } else if (sub.kind === 'audio') {
       detail.append(
         createAudioSubCueForm({
-          sceneId: scene.id,
-          subCueId: sid,
           sub,
           currentState,
           patchSubCue: (update) => {

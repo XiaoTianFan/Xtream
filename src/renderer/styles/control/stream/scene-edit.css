@@ -444,6 +444,10 @@
   font-size: 0.68rem;
   line-height: 1;
   cursor: pointer;
+  overflow: hidden;
+  padding: 0 0.35rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stream-audio-waveform-button:hover:not(:disabled),
@@ -459,6 +463,17 @@
   border-color: color-mix(in srgb, var(--accent-teal) 72%, var(--border-subtle));
   background: color-mix(in srgb, var(--accent-teal) 18%, var(--surface));
   color: var(--accent-teal);
+}
+
+.stream-audio-waveform-transport.stream-audio-waveform-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.stream-audio-waveform-transport .control-icon {
+  flex: 0 0 auto;
 }
 
 .stream-audio-waveform-main {
@@ -485,9 +500,15 @@
 
 .stream-audio-waveform-controls {
   display: grid;
-  grid-template-columns: repeat(5, minmax(4.8rem, 1fr));
+  grid-template-columns: repeat(5, minmax(6rem, 1fr));
   gap: 0.35rem;
   min-width: 0;
+}
+
+.stream-audio-waveform-controls > .stream-audio-waveform-loop {
+  height: 2rem;
+  min-height: 2rem;
+  align-self: stretch;
 }
 
 .stream-draggable-number {
@@ -671,4 +692,3 @@
   gap: 0.35rem;
   margin: var(--gutter) 0;
 }
-

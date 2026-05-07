@@ -2,21 +2,22 @@
 
 ## Purpose
 
-This document turns the proposed Stream "thread" model into a clear runtime benchmark for future implementation and testing.
+This document records the Stream "thread" model as the runtime benchmark for implementation, regression testing, and display/audio projection work.
 
-It is intentionally broader than the current implementation. The current Stream runtime largely implements phases 1 through 7 of `REF-Only_stream-workspace-and-runtime-plan.md`: one authored Stream, a calculated edit timeline, a last-known-good playback timeline, one active runtime cursor, list-mode scene playback, trigger execution, pause/resume behavior, seeking, and Patch/Stream playback separation. The next architecture should keep what is working, but make the hidden sequencing rules explicit enough to support Flow mode, thread coloring, multi-timeline playback, and the edge cases around "run from here".
+The mechanism below is now largely implemented. The implementation keeps one authored Stream, an edit timeline, a last-known-good playback timeline, derived canonical threads, runtime timeline instances, runtime thread instances, flattened active sub-cue projection, list/flow/gantt visualization support, and Patch/Stream playback separation. The remaining value of this document is to keep the sequencing rules explicit enough for future fixes and to prevent regressions around Flow mode, thread coloring, multi-timeline playback, display projection, and the edge cases around "run from here".
 
 Patch workspace playback and timeline behavior are out of scope. The new mechanism must affect Stream only.
 
 ## Current Implementation Snapshot
 
-The current source of truth is still:
+The current source of truth is:
 
 - `PersistedStreamConfig`: one Stream with `sceneOrder` and `scenes`.
 - `PersistedSceneConfig`: trigger, loop, preload, sub-cues, and optional Flow rect.
 - `SceneTrigger`: `manual`, `follow-start`, `follow-end`, `at-timecode`.
-- `buildStreamSchedule()`: one absolute calculated schedule.
-- `StreamEngine`: one runtime object with one `currentStreamMs`, one `cursorSceneId`, one set of `sceneStates`, and one collection of active audio/visual sub-cues.
+- `buildStreamSchedule()`: derived canonical thread plan plus latest main timeline composition.
+- `StreamEngine`: one public runtime state with a main clock, optional parallel timeline instances, runtime thread instances, canonical scene summaries, and flattened active audio/visual sub-cues.
+- `deriveDirectorStateForStream()` and `buildStreamDisplayFrames()`: flattened audio/display projections consumed by audio and display renderers.
 
 Important current behaviors to preserve unless explicitly replaced:
 
@@ -28,16 +29,16 @@ Important current behaviors to preserve unless explicitly replaced:
 - Double-clicking a scene sets playback focus.
 - A scene row "Run from here" is explicit scene play intent.
 - If playback reaches a point where no auto-triggered scene can continue and only manual-gated scenes remain, Stream time pauses and waits for the operator.
-- The global header rail seeks on the Stream timeline and refreshes media output to the selected moment.
+- The global header rail seeks on the latest main Stream timeline and applies the configured parallel-timeline seek behavior.
 - `back-to-first` resets the Stream when not running.
+- Display windows consume flattened per-display/per-zone Stream frames. They must reconcile zones and layers by stable IDs so a change in one zone or parallel timeline does not tear down unrelated media elements.
 
-Current limitations motivating the redesign:
+Implementation constraints that still matter:
 
-- Thread boundaries are implicit in trigger policies and list order.
-- `cursorSceneId` currently carries several meanings: runtime cursor, playback focus, and progression reference.
-- Manual scene gating, scene-row play, schedule consumption, and auto-pause are implemented as single-clock special cases.
-- Running scene-row play can start another scene in parallel, but still inside one runtime timeline.
-- The system has no first-class concept of "this scene belongs to a separate thread instance on a separate virtual timeline".
+- The persisted Stream remains scene-centric; canonical threads and runtime instances are derived, not directly authored.
+- `cursorSceneId`, playback focus, edit focus, and timeline cursors must stay conceptually separate even when UI surfaces summarize them.
+- Renderers should not need to understand the thread graph. They should consume flattened active cue and display-frame projections.
+- Display-side projection is correct only if DOM/media reconciliation is incremental; full display-window rebuilds during active playback can produce black refreshes even when the Stream runtime state is correct.
 
 ## Core Vocabulary
 
@@ -225,9 +226,9 @@ Because user interaction can reorder the main timeline during playback, assignin
 
 ## Timeline Instance Model
 
-The future runtime should represent playback with a collection of timeline instances.
+The runtime represents playback with a collection of timeline instances.
 
-Recommended state shape, conceptually:
+Implemented state shape, conceptually:
 
 ```ts
 type RuntimeTimelineInstance = {
@@ -253,7 +254,7 @@ type RuntimeThreadInstance = {
 };
 ```
 
-This is not a final TypeScript schema. It describes the separation the implementation needs:
+This is a conceptual summary of the TypeScript schema. It describes the separation the implementation maintains:
 
 - canonical thread plan
 - runtime thread instance
@@ -702,19 +703,18 @@ The auto-pause focus advance should only happen when the engine has reached a re
 
 ## Output Projection
 
-The renderer projection should eventually derive active audio/visual/control output from all active timeline instances:
+The renderer projection derives active audio/visual/control output from all active timeline instances:
 
 1. main timeline active sub-cues
 2. parallel timeline active sub-cues
 3. orphaned/fading sub-cues from running edits or stop actions
 4. global mute/blackout/control effects
 
-The current `deriveDirectorStateForStream()` expects one Stream runtime. Multi-timeline work will require either:
+`StreamEngine` keeps timeline/thread instance internals in `StreamRuntimeState`, then exposes flattened `activeAudioSubCues` and `activeVisualSubCues`. Runtime projection keys include runtime instance identity so copied or parallel instances that share scene, sub-cue, and target do not collapse.
 
-- extending `StreamRuntimeState` to contain multiple timeline instances and active sub-cue instances, or
-- producing a flattened projection-compatible runtime while keeping timeline internals private to `StreamEngine`
+Audio renderers consume `deriveDirectorStateForStream()`, which clones active Stream audio sub-cues into runtime audio sources and output selections while preserving Patch state outside Stream playback.
 
-The second option is lower-risk for display/audio renderers because it preserves the idea that renderers consume a flattened active set.
+Display renderers consume `buildStreamDisplayFrames()`, which groups active Stream visual sub-cues into deterministic per-display/per-zone layer frames. The display window must apply these frames atomically but incrementally: preserve zone containers and media elements when layer identity is unchanged, update opacity/blend/ordering in place, and only remove the specific layer that actually ended. This is required for multi-thread and multi-timeline playback because unrelated zones can change at different times.
 
 ## Flow Mode Relationship
 

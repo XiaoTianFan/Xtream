@@ -11,6 +11,7 @@ import type {
   AudioSourceState,
   AudioSourceUpdate,
   AudioSubCuePreviewCommand,
+  AudioSubCuePreviewPosition,
   DirectorEventName,
   DirectorState,
   DisplayCreateOptions,
@@ -152,10 +153,16 @@ const api = {
     setSoloOutputIds: (outputIds: VirtualOutputId[]): Promise<void> => ipcRenderer.invoke('audio:set-solo-output-ids', outputIds),
     reportMeter: (report: OutputMeterReport): Promise<void> => ipcRenderer.invoke('audio:meter-report', report),
     preview: (command: AudioSubCuePreviewCommand): Promise<void> => ipcRenderer.invoke('audio:subcue-preview', command),
+    reportSubCuePreviewPosition: (position: AudioSubCuePreviewPosition): Promise<void> => ipcRenderer.invoke('audio:subcue-preview-position', position),
     onSubCuePreviewCommand: (callback: (command: AudioSubCuePreviewCommand) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, command: AudioSubCuePreviewCommand) => callback(command);
       ipcRenderer.on('audio:subcue-preview-command', listener);
       return () => ipcRenderer.removeListener('audio:subcue-preview-command', listener);
+    },
+    onSubCuePreviewPosition: (callback: (position: AudioSubCuePreviewPosition) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, position: AudioSubCuePreviewPosition) => callback(position);
+      ipcRenderer.on('audio:subcue-preview-position', listener);
+      return () => ipcRenderer.removeListener('audio:subcue-preview-position', listener);
     },
     onMeterLanes: (callback: (report: OutputMeterReport) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, report: OutputMeterReport) => callback(report);

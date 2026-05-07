@@ -603,6 +603,83 @@ panAutomation: undefined
 - Confirm light and dark theme contrast.
 - Confirm waveform text/input layout does not overflow in narrow bottom panes.
 
+### Milestone 8: Waveform Editor Bug Fix Pass
+
+This milestone fixes the first implementation issues found in the audio sub-cue waveform editor and tightens the UX semantics before deeper runtime polish.
+
+Investigation snapshot:
+
+| Bug area | Current implementation | Root cause |
+| --- | --- | --- |
+| Preview transport buttons and playhead | `audioSubCueWaveformEditor.ts` builds text buttons with `createRailButton('Play'/'Pause')`; `pausePreview()` flips `previewPlaying` before reading elapsed UI time. | The buttons never use the shared lucide icon helpers, and the UI playhead can store `0` on pause because `getPreviewElapsedMs()` branches on `previewPlaying`. The UI position is also locally estimated instead of being driven by the preview runtime's actual media cursor. |
+| Waveform interactions refresh the scene edit form | Range/fade/automation drag calls `patchAndRefreshPreview()` on pointer move, which calls `patchSubCue()`, which sends `update-subcue` through the stream engine. | Every draw/drag gesture mutates persisted stream state immediately. Because the bottom-pane render signature includes the full stream, the scene edit pane can be rebuilt after those updates and scroll the operator away from the waveform. |
+| Start/play control naming | Bottom controls show `Play ms` and `Start ms`; `Play ms` edits `durationOverrideMs`. | The UI exposes a duration cap as if it were the requested fixed repeat count, while `startOffsetMs` already has the desired scene-delay behavior but the wrong label. |
+| Fixed play count vs infinite loop | The current `Loop` button writes `{ enabled: true, iterations: { type: 'infinite' } }`; `durationOverrideMs` stays the visible "play" control. | The UI does not expose fixed loop/play count through `SceneLoopPolicy.iterations.count`, so fixed play count and infinite loop are not presented as mutually exclusive alternatives. |
+| Automation mode and waveform seeking | `automationMode` is always `'level'` or `'pan'`; one toggle is always active; hit testing always returns `automation-body` for the waveform body. | The editor cannot represent "no automation edit mode", so a waveform click always inserts/draws automation rather than seeking the preview cursor. Automation rendering is also tied to the selected source range instead of being guaranteed across the whole waveform display. |
+
+Fix plan:
+
+- Replace transport text with icon buttons:
+  - Import and use `decorateRailButton()` or `decorateIconButton()` with lucide `Play` and `Pause`.
+  - Keep accessible labels and titles as "Play preview" and "Pause preview".
+  - Add a DOM test that the transport buttons expose icon-only visible UI plus screen-reader labels.
+- Make the UI playhead follow the actual preview cursor:
+  - Fix the immediate pause bug by computing elapsed time before setting `previewPlaying = false`.
+  - Prefer a runtime-driven position feed from `audioRuntime` to the control renderer, for example `{ previewId, sourceTimeMs, localTimeMs, paused, playing }`, emitted from the existing preview automation timer.
+  - Store the latest reported source position in the editor and draw the playhead from that source time, not from a local `performance.now()` estimate.
+  - For fixed-count and infinite loops, draw the playhead modulo the selected source range so the UI cursor loops exactly where the audible preview loops.
+  - On pause, leave the UI playhead at the last reported source position and resume from that same position.
+- Stop waveform edits from rebuilding the scene edit pane during continuous interaction:
+  - Split waveform pointer handling into transient editor state and persisted commits.
+  - During pointer drag/draw, update local range/fade/automation state and redraw the canvas only.
+  - Commit a single `patchSubCue()` on pointerup/pointercancel, or a throttled low-frequency commit only if live preview must restart during the gesture.
+  - Keep preview updates local during drag where possible; if a structural preview restart is needed, restart from the current preview cursor rather than from the selected range start.
+  - Add tests that pointermove on the waveform does not call `patchSubCue()`, and pointerup commits one consolidated patch.
+  - Add a render/signature regression test or DOM harness proving waveform pointer interactions do not cause `syncStreamSceneEditPaneContent()` to replace the form while editing.
+- Rename and preserve scene-delay behavior:
+  - Rename `Start ms` to `Delay Start`.
+  - Keep it backed by `startOffsetMs`, minimum `0`, integer milliseconds, and drag-to-tweak.
+  - Add a test that changing Delay Start patches `{ startOffsetMs }` and does not touch source range, loop, or play count.
+- Replace `Play ms` with fixed `Play times`:
+  - Change the control label to `Play times`.
+  - Make it an integer-only input with minimum `1`.
+  - Map `1` to non-looping playback over the selected range, and map values above `1` to a fixed-count `SceneLoopPolicy`, for example `{ enabled: true, iterations: { type: 'count', count: playTimes } }`.
+  - Treat `durationOverrideMs` as a legacy/back-compat duration cap, not the visible Play times field. Do not update it from this control.
+  - Decide whether opening a legacy cue with `durationOverrideMs` should show a subtle derived play-count default of `1` or preserve the hidden cap until the user edits Play times; document that behavior in the code comment and tests.
+  - Update duration/schedule tests so fixed Play times repeats the selected source range the requested number of times.
+- Rename `Loop` to `Infinite Loop` and make it mutually exclusive with Play times:
+  - Button label becomes `Infinite Loop`.
+  - Enabling it writes the existing infinite loop policy and disables the Play times input.
+  - Disabling it restores fixed Play times, defaulting to `1` unless a previous count loop is available.
+  - Editing Play times while Infinite Loop is off clears infinite loop state and writes a fixed count or no-loop policy.
+  - Add tests for toggling Infinite Loop, restoring a count loop, and disabling the Play times field.
+- Allow both automation toggles to be disabled:
+  - Change `AudioWaveformAutomationMode` to support a no-mode state, for example `'level' | 'pan' | undefined` or `'none'`.
+  - Make Level and Pan buttons independently toggleable while preserving exclusivity when either one is active.
+  - Default can remain Level for new mounts if desired, but clicking the active mode must turn it off.
+  - When no mode is active, do not render automation points as editable and make waveform body clicks seek the preview/UI cursor instead of inserting automation.
+  - Add hit-test tests for disabled automation mode returning a seek target rather than `automation-body`.
+- Make automation rendering and editing match the requested waveform behavior:
+  - When Level or Pan mode is active, render the automation line across the full waveform display width.
+  - If existing points are sparse, extend the first and last values to the canvas edges so the line is always continuous.
+  - Keep point values clamped to the current level or pan range.
+  - Clicking or dragging the waveform body in an active automation mode inserts or updates automation values; clicking with both modes off only seeks.
+  - Add geometry tests for full-width automation rendering inputs and DOM tests for click-to-seek vs click-to-draw mode switching.
+- Seek behavior when automation is off:
+  - Add a preview seek command or extend the preview play command with a `resumeFromMs/sourceTimeMs` seek value.
+  - On waveform click with no active automation mode, update the local UI playhead immediately and seek the preview runtime if preview exists.
+  - If preview is paused, seek the paused cursor without starting playback.
+  - If preview is stopped, move only the preview/UI cursor so the next Play starts from that position if that is the intended audition behavior.
+- Acceptance checks for this bug pass:
+  - Play/Pause controls are icon buttons with accessible labels.
+  - Pausing preview leaves the UI playhead at the audible paused position.
+  - Resuming preview keeps UI and playback cursor synchronized.
+  - Dragging range/fade/automation no longer scrolls or rebuilds the sub-cue edit form mid-edit.
+  - `Delay Start` delays the sub-cue from the scene start via `startOffsetMs`.
+  - `Play times` is an integer fixed repeat count and is mutually exclusive with `Infinite Loop`.
+  - Level and Pan remain mutually exclusive, and both can be off.
+  - With both automation modes off, waveform clicks seek; with either mode on, waveform clicks/draws edit automation.
+
 ## Testing Checklist
 
 Automated tests:

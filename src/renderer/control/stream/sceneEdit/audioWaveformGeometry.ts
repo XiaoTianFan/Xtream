@@ -24,6 +24,7 @@ export type AudioWaveformHitTarget =
   | { type: 'range-end' }
   | { type: 'automation-point'; index: number }
   | { type: 'automation-body' }
+  | { type: 'seek' }
   | { type: 'disabled' };
 
 export type AudioWaveformModel = {
@@ -33,7 +34,7 @@ export type AudioWaveformModel = {
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
   automationPoints?: CurvePoint[];
-  automationMode: AudioWaveformAutomationMode;
+  automationMode?: AudioWaveformAutomationMode;
 };
 
 const EDGE_HIT_PX = 8;
@@ -145,17 +146,20 @@ export function hitTestAudioWaveform(model: AudioWaveformModel, rect: AudioWavef
     return { type: 'range-end' };
   }
 
-  const selectedDurationMs = range.durationMs;
-  const points = clampAutomationPointsForWaveform(model.automationPoints, model.automationMode, selectedDurationMs);
-  for (let index = 0; index < points.length; index += 1) {
-    const point = points[index];
-    const pointX = msToWaveformX(range.startMs + point.timeMs, model.durationMs, rect);
-    const pointY = automationValueToY(point.value, model.automationMode, rect);
-    if (Math.hypot(pointX - x, pointY - y) <= POINT_HIT_PX) {
-      return { type: 'automation-point', index };
+  if (model.automationMode) {
+    const selectedDurationMs = range.durationMs;
+    const points = clampAutomationPointsForWaveform(model.automationPoints, model.automationMode, selectedDurationMs);
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const pointX = msToWaveformX(range.startMs + point.timeMs, model.durationMs, rect);
+      const pointY = automationValueToY(point.value, model.automationMode, rect);
+      if (Math.hypot(pointX - x, pointY - y) <= POINT_HIT_PX) {
+        return { type: 'automation-point', index };
+      }
     }
+    return { type: 'automation-body' };
   }
-  return { type: 'automation-body' };
+  return { type: 'seek' };
 }
 
 export function cursorForAudioWaveformHit(hit: AudioWaveformHitTarget): string {
@@ -171,6 +175,8 @@ export function cursorForAudioWaveformHit(hit: AudioWaveformHitTarget): string {
       return 'move';
     case 'automation-body':
       return 'crosshair';
+    case 'seek':
+      return 'pointer';
     case 'disabled':
       return 'not-allowed';
   }
