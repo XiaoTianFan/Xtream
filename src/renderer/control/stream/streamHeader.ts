@@ -175,6 +175,9 @@ export function createStreamRailSegmentStyles(args: {
   if (total <= 0) {
     return undefined;
   }
+  if (positive.some((segment) => !colorMaps.byThreadId[segment.threadId])) {
+    return undefined;
+  }
   let cursor = 0;
   const dimStops: string[] = [];
   const brightStops: string[] = [];
@@ -182,9 +185,9 @@ export function createStreamRailSegmentStyles(args: {
     const start = cursor;
     cursor += (segment.durationMs / total) * 100;
     const end = Math.min(100, cursor);
-    const color = colorMaps.byThreadId[segment.threadId];
-    dimStops.push(`${color?.dim ?? 'var(--outline-variant)'} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
-    brightStops.push(`${color?.bright ?? 'var(--accent-teal)'} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
+    const color = colorMaps.byThreadId[segment.threadId]!;
+    dimStops.push(`${color.dim} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
+    brightStops.push(`${color.bright} ${start.toFixed(3)}% ${end.toFixed(3)}%`);
   }
   return {
     background: `linear-gradient(90deg, ${dimStops.join(', ')})`,

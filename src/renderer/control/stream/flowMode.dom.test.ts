@@ -3,7 +3,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { CalculatedStreamTimeline, DirectorState, PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
-import { createStreamFlowMode } from './flowMode';
+import { createStreamFlowMode, syncStreamFlowModeRuntimeChrome } from './flowMode';
 
 vi.mock('../shell/shellModalPresenter', () => ({
   shellShowConfirm: vi.fn(() => Promise.resolve(true)),
@@ -126,6 +126,29 @@ function runningStreamPublic(): StreamEnginePublicState {
   } as unknown as StreamEnginePublicState;
 }
 
+function streamPublicWithFlow(flow: { x: number; y: number; width: number; height: number }): StreamEnginePublicState {
+  const base = runningStreamPublic();
+  return {
+    ...base,
+    stream: {
+      ...base.stream,
+      scenes: {
+        ...base.stream.scenes,
+        'scene-a': {
+          ...base.stream.scenes['scene-a']!,
+          flow,
+        },
+      },
+    },
+  };
+}
+
+function installPointerCapturePolyfill(): void {
+  HTMLElement.prototype.setPointerCapture ??= vi.fn();
+  HTMLElement.prototype.releasePointerCapture ??= vi.fn();
+  HTMLElement.prototype.hasPointerCapture ??= vi.fn(() => true);
+}
+
 describe('createStreamFlowMode', () => {
   it('constructs Flow mode while Stream playback is running', async () => {
     const streamState = runningStreamPublic();
@@ -155,6 +178,118 @@ describe('createStreamFlowMode', () => {
     expect(root.querySelectorAll('.stream-flow-card')).toHaveLength(1);
     expect(root.querySelector('.stream-flow-card.status-running')).not.toBeNull();
     expect(root.querySelector('.stream-flow-main-curve-glow.is-running')).not.toBeNull();
+  });
+
+  it('renders fit and reset toolbar actions without zoom in/out buttons', async () => {
+    const streamState = runningStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    expect(root.querySelector<HTMLButtonElement>('button[aria-label="Zoom out"]')).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('button[aria-label="Fit to content"]')).not.toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('button[aria-label="Reset layout"]')).not.toBeNull();
+  });
+
+  it('updates the dotted main timeline while a scene card is dragged', async () => {
+    installPointerCapturePolyfill();
+    const streamState = runningStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+    const card = root.querySelector<HTMLElement>('.stream-flow-card')!;
+    const before = root.querySelector<SVGPathElement>('.stream-flow-main-curve')?.getAttribute('d');
+
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 10, clientY: 10 }));
+    card.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 90, clientY: 35 }));
+
+    expect(root.querySelector<SVGPathElement>('.stream-flow-main-curve')?.getAttribute('d')).not.toBe(before);
+  });
+
+  it('keeps dropped card geometry through stale runtime sync until persisted flow catches up', async () => {
+    installPointerCapturePolyfill();
+    const staleState = runningStreamPublic();
+    const edit = vi.fn(() => Promise.resolve(staleState));
+    window.xtream = {
+      stream: {
+        edit,
+        transport: vi.fn(() => Promise.resolve(staleState)),
+      },
+    } as unknown as typeof window.xtream;
+    const root = createStreamFlowMode(staleState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState: staleState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+    const card = root.querySelector<HTMLElement>('.stream-flow-card')!;
+    const wrapper = root.querySelector<HTMLElement>('.stream-flow-card-node')!;
+
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 10, clientY: 10 }));
+    card.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 90, clientY: 35 }));
+    card.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 90, clientY: 35 }));
+    const droppedLeft = wrapper.style.left;
+    const droppedTop = wrapper.style.top;
+
+    syncStreamFlowModeRuntimeChrome(root, staleState, director(), 'scene-a', 'scene-a');
+
+    expect(wrapper.style.left).toBe(droppedLeft);
+    expect(wrapper.style.top).toBe(droppedTop);
+
+    syncStreamFlowModeRuntimeChrome(
+      root,
+      streamPublicWithFlow({ x: Number.parseInt(droppedLeft, 10), y: Number.parseInt(droppedTop, 10), width: 214, height: 136 }),
+      director(),
+      'scene-a',
+      'scene-a',
+    );
+
+    expect(wrapper.style.left).toBe(droppedLeft);
+    expect(wrapper.style.top).toBe(droppedTop);
   });
 
   it('dispatches run-from-here from a running Flow card instead of pausing', async () => {

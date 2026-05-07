@@ -39,6 +39,7 @@ import { formatSceneStateLabelForSceneList, sceneListRowRuntimeStatus } from './
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { syncStreamFlowModeRuntimeChrome } from './flowMode';
 import { syncStreamGanttRuntimeChrome } from './ganttMode';
+import { syncOutputBusGanttRuntimeChrome } from './outputBusGantt';
 import { snapshotDisplaysForStreamSignature } from './streamSignature';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
@@ -461,6 +462,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
     syncStreamFlowModeRuntimeChrome(requireRef('workspace'), streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
     syncStreamGanttRuntimeChrome(requireRef('workspace'), streamState);
+    syncOutputBusGanttRuntimeChrome(requireRef('bottom'), { streamState, directorState: currentState });
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
   }
@@ -861,6 +863,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         createStreamDetailOverlay({
           detailPane: detailPane!,
           currentState: currentState!,
+          streamState,
           getDirectorState: () => currentState,
           options,
           displayWorkspace,
@@ -963,6 +966,12 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
               label: o.label,
               sinkId: o.sinkId,
               sinkLabel: o.sinkLabel,
+              streamOutputGantt: createStructuralStreamRenderModel(streamState),
+              streamOutputGanttAudioSources: Object.values(state.audioSources).map((source) => ({
+                id: source.id,
+                label: source.label,
+                durationSeconds: source.durationSeconds,
+              })),
               ready: o.ready,
               physicalRoutingAvailable: o.physicalRoutingAvailable,
               fallbackAccepted: o.fallbackAccepted,

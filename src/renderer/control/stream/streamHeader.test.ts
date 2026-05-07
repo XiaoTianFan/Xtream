@@ -477,6 +477,59 @@ describe('syncStreamHeaderRuntime', () => {
     expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toBe(originalProgress);
   });
 
+  it('keeps the last valid rail segment colors through transient colorless syncs', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const playbackTimeline = segmentedTimeline();
+    const headerEl = document.createElement('header');
+
+    renderStreamHeader({
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      playbackTimeline,
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const sliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control')!;
+    const originalRail = sliderWrap.style.getPropertyValue('--stream-rail-segments');
+    const originalProgress = sliderWrap.style.getPropertyValue('--stream-rail-progress-segments');
+    expect(originalRail).toContain('linear-gradient');
+
+    syncStreamHeaderRuntime(
+      headerEl,
+      { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      stream,
+      {
+        ...playbackTimeline,
+        revision: 999,
+        threadPlan: undefined,
+      },
+      'scene-1',
+      undefined,
+    );
+
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-segments')).toBe(originalRail);
+    expect(sliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toBe(originalProgress);
+  });
+
   it('keeps the last valid rail segments through transient segmentless full header rebuilds', () => {
     const { stream } = getDefaultStreamPersistence();
     const playbackTimeline = segmentedTimeline();
@@ -521,6 +574,57 @@ describe('syncStreamHeaderRuntime', () => {
         revision: 999,
         expectedDurationMs: 3000,
         mainSegments: [],
+        threadPlan: undefined,
+      },
+    });
+
+    const nextSliderWrap = headerEl.querySelector<HTMLElement>('.timeline-control')!;
+    expect(nextSliderWrap.style.getPropertyValue('--stream-rail-segments')).toBe(originalRail);
+    expect(nextSliderWrap.style.getPropertyValue('--stream-rail-progress-segments')).toBe(originalProgress);
+  });
+
+  it('keeps the last valid rail segment colors through transient colorless full header rebuilds', () => {
+    const { stream } = getDefaultStreamPersistence();
+    const playbackTimeline = segmentedTimeline();
+    const headerEl = document.createElement('header');
+    const baseCtx: Omit<StreamHeaderRenderContext, 'playbackTimeline'> = {
+      headerEl,
+      stream,
+      playbackStream: stream,
+      runtime: { status: 'paused', sceneStates: {}, currentStreamMs: 1500, expectedDurationMs: 3000 },
+      validationMessages: [],
+      currentState: undefined,
+      sceneEditSceneId: 'scene-1',
+      playbackFocusSceneId: 'scene-1',
+      headerEditField: undefined,
+      options: {
+        showActions: {
+          saveShow: vi.fn(),
+          saveShowAs: vi.fn(),
+          openShow: vi.fn(),
+          createShow: vi.fn(),
+        },
+      } as never,
+      setHeaderEditField: vi.fn(),
+      updateSelectedScene: vi.fn(),
+      setPlaybackFocusSceneId: vi.fn(),
+      refreshChrome: vi.fn(),
+      requestRender: vi.fn(),
+    };
+
+    renderStreamHeader({
+      ...baseCtx,
+      playbackTimeline,
+    });
+    const originalRail = headerEl.querySelector<HTMLElement>('.timeline-control')!.style.getPropertyValue('--stream-rail-segments');
+    const originalProgress = headerEl.querySelector<HTMLElement>('.timeline-control')!.style.getPropertyValue('--stream-rail-progress-segments');
+    expect(originalRail).toContain('linear-gradient');
+
+    renderStreamHeader({
+      ...baseCtx,
+      playbackTimeline: {
+        ...playbackTimeline,
+        revision: 999,
         threadPlan: undefined,
       },
     });
@@ -612,6 +716,23 @@ describe('createGlobalStreamPlayCommand', () => {
 });
 
 describe('createStreamRailSegmentStyles', () => {
+  it('does not create fresh fallback-colored gradients when segment thread colors are unavailable', () => {
+    const styles = createStreamRailSegmentStyles({
+      playbackTimeline: {
+        ...playableTimeline,
+        expectedDurationMs: 3000,
+        mainSegments: [
+          { threadId: 'thread:a', rootSceneId: 'a', startMs: 0, durationMs: 1000, endMs: 1000, proportion: 1 / 3 },
+          { threadId: 'thread:b', rootSceneId: 'b', startMs: 1000, durationMs: 2000, endMs: 3000, proportion: 2 / 3 },
+        ],
+        threadPlan: undefined,
+      },
+      runtime: null,
+    });
+
+    expect(styles).toBeUndefined();
+  });
+
   it('falls back to playback timeline segments before a runtime exists', () => {
     const styles = createStreamRailSegmentStyles({
       playbackTimeline: {

@@ -66,6 +66,81 @@ function createProjection(stream: PersistedStreamConfig, ctx: StreamFlowModeCont
   });
 }
 
+const flowLayoutOverrides = new WeakMap<HTMLElement, Map<SceneId, FlowRect>>();
+
+function rectsMatch(a: FlowRect | undefined, b: FlowRect | undefined): boolean {
+  if (!a || !b) {
+    return false;
+  }
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+function getFlowLayoutOverrides(root: HTMLElement): Map<SceneId, FlowRect> {
+  let overrides = flowLayoutOverrides.get(root);
+  if (!overrides) {
+    overrides = new Map();
+    flowLayoutOverrides.set(root, overrides);
+  }
+  return overrides;
+}
+
+function setFlowLayoutOverride(root: HTMLElement, sceneId: SceneId, rect: FlowRect): void {
+  getFlowLayoutOverrides(root).set(sceneId, flowRectPatch(rect));
+}
+
+function clearFlowLayoutOverrides(root: HTMLElement, sceneIds?: Iterable<SceneId>): void {
+  const overrides = flowLayoutOverrides.get(root);
+  if (!overrides) {
+    return;
+  }
+  if (sceneIds) {
+    for (const id of sceneIds) {
+      overrides.delete(id);
+    }
+  } else {
+    overrides.clear();
+  }
+  if (overrides.size === 0) {
+    flowLayoutOverrides.delete(root);
+  }
+}
+
+function reconcileFlowLayoutOverrides(root: HTMLElement, stream: PersistedStreamConfig): Map<SceneId, FlowRect> | undefined {
+  const overrides = flowLayoutOverrides.get(root);
+  if (!overrides) {
+    return undefined;
+  }
+  for (const [sceneId, rect] of overrides) {
+    const persisted = stream.scenes[sceneId]?.flow;
+    if (!stream.scenes[sceneId] || rectsMatch(persisted ? flowRectPatch(persisted) : undefined, rect)) {
+      overrides.delete(sceneId);
+    }
+  }
+  if (overrides.size === 0) {
+    flowLayoutOverrides.delete(root);
+    return undefined;
+  }
+  return overrides;
+}
+
+function streamWithFlowLayoutOverrides(stream: PersistedStreamConfig, overrides: Map<SceneId, FlowRect> | undefined): PersistedStreamConfig {
+  if (!overrides || overrides.size === 0) {
+    return stream;
+  }
+  const scenes = { ...stream.scenes };
+  for (const [sceneId, rect] of overrides) {
+    const scene = scenes[sceneId];
+    if (scene) {
+      scenes[sceneId] = { ...scene, flow: rect };
+    }
+  }
+  return { ...stream, scenes };
+}
+
+function createProjectionWithFlowOverrides(root: HTMLElement, stream: PersistedStreamConfig, ctx: StreamFlowModeContext): FlowProjection {
+  return createProjection(streamWithFlowLayoutOverrides(stream, reconcileFlowLayoutOverrides(root, stream) ?? flowLayoutOverrides.get(root)), ctx);
+}
+
 function flowRectPatch(rect: FlowRect): FlowRect {
   return {
     x: Math.round(rect.x),
@@ -78,17 +153,13 @@ function flowRectPatch(rect: FlowRect): FlowRect {
 function createToolbar(canvas: FlowReteCanvas, getProjection: () => FlowProjection, ctx: StreamFlowModeContext): HTMLElement {
   const toolbar = document.createElement('div');
   toolbar.className = 'stream-flow-toolbar';
-  const zoomOut = createButton('', 'icon-button', () => void canvas.zoomBy(0.85));
-  decorateIconButton(zoomOut, 'Rewind', 'Zoom out');
-  const zoomIn = createButton('', 'icon-button', () => void canvas.zoomBy(1.15));
-  decorateIconButton(zoomIn, 'FastForward', 'Zoom in');
   const fit = createButton('', 'icon-button', () => void canvas.fitToProjection(getProjection()));
   decorateIconButton(fit, 'Maximize2', 'Fit to content');
   const reset = createButton('', 'icon-button', () => {
     void window.xtream.stream.edit({ type: 'reset-flow-layout' }).then(() => ctx.requestRender());
   });
   decorateIconButton(reset, 'RefreshCcw', 'Reset layout');
-  toolbar.append(zoomOut, zoomIn, fit, reset);
+  toolbar.append(fit, reset);
   return toolbar;
 }
 
@@ -223,11 +294,11 @@ function showRootContextMenu(event: MouseEvent, canvas: FlowReteCanvas, ctx: Str
 function renderCards(args: {
   stream: PersistedStreamConfig;
   ctx: StreamFlowModeContext;
-  projection: FlowProjection;
+  projectionRef: { current: FlowProjection };
   canvas: FlowReteCanvas;
   root: HTMLElement;
 }): void {
-  const { stream, ctx, projection, canvas, root } = args;
+  const { stream, ctx, projectionRef, canvas, root } = args;
   const cards = root.querySelector('.stream-flow-card-layer') ?? document.createElement('div');
   cards.className = 'stream-flow-card-layer';
   cards.replaceChildren();
@@ -239,6 +310,7 @@ function renderCards(args: {
     event.preventDefault();
     event.stopPropagation();
     const start = canvas.screenToFlow(event);
+    const projection = projectionRef.current;
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
       return;
@@ -254,15 +326,24 @@ function renderCards(args: {
       const next = canvas.screenToFlow(moveEvent);
       const dx = next.x - start.x;
       const dy = next.y - start.y;
+      const movedRects: Record<SceneId, FlowRect> = {};
       for (const id of movedIds) {
         const candidate = projection.nodesBySceneId[id];
         if (!candidate) {
           continue;
         }
-        candidate.rect = moveFlowRect(initial[id], dx, dy);
-        applyRectToCard(root, id, candidate.rect);
+        movedRects[id] = moveFlowRect(initial[id], dx, dy);
+        setFlowLayoutOverride(root, id, movedRects[id]);
       }
-      renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+      projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+      for (const id of movedIds) {
+        const rect = projectionRef.current.nodesBySceneId[id]?.rect ?? movedRects[id];
+        if (rect) {
+          applyRectToCard(root, id, rect);
+        }
+      }
+      canvas.setOverlayBounds(projectionRef.current.bounds);
+      renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
     };
     const cleanup = (upEvent: PointerEvent) => {
       if (target.hasPointerCapture(upEvent.pointerId)) {
@@ -276,10 +357,21 @@ function renderCards(args: {
           window.xtream.stream.edit({
             type: 'update-scene',
             sceneId: id,
-            update: { flow: flowRectPatch(projection.nodesBySceneId[id].rect) },
+            update: { flow: flowRectPatch(projectionRef.current.nodesBySceneId[id]?.rect ?? initial[id]) },
           }),
         ),
-      );
+      ).catch(() => {
+        clearFlowLayoutOverrides(root, movedIds);
+        projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+        for (const id of movedIds) {
+          const rect = projectionRef.current.nodesBySceneId[id]?.rect;
+          if (rect) {
+            applyRectToCard(root, id, rect);
+          }
+        }
+        canvas.setOverlayBounds(projectionRef.current.bounds);
+        renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+      });
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', cleanup, { once: true });
@@ -290,6 +382,7 @@ function renderCards(args: {
     event.preventDefault();
     event.stopPropagation();
     const start = canvas.screenToFlow(event);
+    const projection = projectionRef.current;
     const node = projection.nodesBySceneId[sceneId];
     if (!node) {
       return;
@@ -304,8 +397,11 @@ function renderCards(args: {
         width: Math.max(170, initial.width + next.x - start.x),
         height: Math.max(104, initial.height + next.y - start.y),
       };
+      setFlowLayoutOverride(root, sceneId, node.rect);
       applyRectToCard(root, sceneId, node.rect);
-      renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+      projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+      canvas.setOverlayBounds(projectionRef.current.bounds);
+      renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
     };
     const cleanup = (upEvent: PointerEvent) => {
       if (target.hasPointerCapture(upEvent.pointerId)) {
@@ -314,14 +410,23 @@ function renderCards(args: {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', cleanup);
       target.removeEventListener('pointercancel', cleanup);
-      void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(node.rect) } });
+      void window.xtream.stream.edit({ type: 'update-scene', sceneId, update: { flow: flowRectPatch(projectionRef.current.nodesBySceneId[sceneId]?.rect ?? node.rect) } }).catch(() => {
+        clearFlowLayoutOverrides(root, [sceneId]);
+        projectionRef.current = createProjectionWithFlowOverrides(root, stream, ctx);
+        const rect = projectionRef.current.nodesBySceneId[sceneId]?.rect;
+        if (rect) {
+          applyRectToCard(root, sceneId, rect);
+        }
+        canvas.setOverlayBounds(projectionRef.current.bounds);
+        renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
+      });
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', cleanup, { once: true });
     target.addEventListener('pointercancel', cleanup, { once: true });
   };
 
-  for (const node of projection.nodes) {
+  for (const node of projectionRef.current.nodes) {
     const scene = stream.scenes[node.sceneId];
     if (!scene) {
       continue;
@@ -393,17 +498,17 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
       return;
     }
     initialized = true;
-    let projection = createProjection(stream, ctx);
+    const projectionRef = { current: createProjectionWithFlowOverrides(root, stream, ctx) };
     canvas = new FlowReteCanvas(canvasHost, {
       initialViewport: stream.flowViewport,
       onViewportChange: (flowViewport) => {
         void window.xtream.stream.edit({ type: 'update-stream', flowViewport });
       },
     });
-    root.prepend(createToolbar(canvas, () => projection, ctx));
-    canvas.setOverlayBounds(projection.bounds);
-    renderCards({ stream, ctx, projection, canvas, root });
-    renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+    root.prepend(createToolbar(canvas, () => projectionRef.current, ctx));
+    canvas.setOverlayBounds(projectionRef.current.bounds);
+    renderCards({ stream, ctx, projectionRef, canvas, root });
+    renderFlowLinks(canvas.overlay, projectionRef.current, ctx.streamState?.runtime?.status === 'running');
     canvasHost.addEventListener('contextmenu', (event) => {
       if ((event.target as HTMLElement).closest('.stream-flow-card-node, .stream-flow-toolbar')) {
         return;
@@ -414,12 +519,12 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
       if (!root.isConnected) {
         canvas?.destroy();
         canvas = undefined;
+        clearFlowLayoutOverrides(root);
         dismissFlowContextMenu();
         destroyObserver?.disconnect();
       }
     });
     destroyObserver.observe(document.body, { childList: true, subtree: true });
-    projection = createProjection(stream, ctx);
   };
 
   window.queueMicrotask(initializeCanvas);
@@ -433,14 +538,16 @@ export function syncStreamFlowModeRuntimeChrome(
   playbackFocusSceneId: SceneId | undefined,
   sceneEditSceneId: SceneId | undefined,
 ): void {
-  const canvas = root.querySelector<HTMLElement>('.stream-flow-canvas');
-  const overlay = root.querySelector<SVGSVGElement>('.stream-flow-link-layer');
-  if (!canvas || !overlay) {
+  const flowRoot = root.matches('.stream-flow-root') ? root : root.querySelector<HTMLElement>('.stream-flow-root');
+  const canvas = flowRoot?.querySelector<HTMLElement>('.stream-flow-canvas');
+  const overlay = flowRoot?.querySelector<SVGSVGElement>('.stream-flow-link-layer');
+  if (!flowRoot || !canvas || !overlay) {
     return;
   }
-  syncFocusClasses(root, playbackFocusSceneId, sceneEditSceneId);
+  syncFocusClasses(flowRoot, playbackFocusSceneId, sceneEditSceneId);
+  const stream = streamWithFlowLayoutOverrides(streamState.stream, reconcileFlowLayoutOverrides(flowRoot, streamState.stream));
   const projection = deriveStreamFlowProjection({
-    stream: streamState.stream,
+    stream,
     timeline: streamState.playbackTimeline,
     directorState,
     runtimeSceneStates: streamState.runtime?.sceneStates,
@@ -452,12 +559,12 @@ export function syncStreamFlowModeRuntimeChrome(
     ).scenesWithErrors,
   });
   for (const node of projection.nodes) {
-    const wrapper = root.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(node.sceneId)}"]`);
+    const wrapper = flowRoot.querySelector<HTMLElement>(`.stream-flow-card-node[data-scene-id="${CSS.escape(node.sceneId)}"]`);
     const card = wrapper?.querySelector<HTMLElement>('.stream-flow-card');
     if (!card) {
       continue;
     }
-    applyRectToCard(root, node.sceneId, node.rect);
+    applyRectToCard(flowRoot, node.sceneId, node.rect);
     for (const cl of [...card.classList]) {
       if (cl.startsWith('status-')) {
         card.classList.remove(cl);

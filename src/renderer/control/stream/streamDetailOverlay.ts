@@ -1,4 +1,4 @@
-import type { DirectorState, DisplayWindowState, VirtualOutputState, VisualId, VisualMingleAlgorithm } from '../../../shared/types';
+import type { DirectorState, DisplayWindowState, StreamEnginePublicState, VirtualOutputState, VisualId, VisualMingleAlgorithm } from '../../../shared/types';
 import type { SelectedEntity } from '../shared/types';
 import { applyMediaDetailLivePreview } from '../patch/mediaDetailLivePreview';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
@@ -10,6 +10,7 @@ import { decorateIconButton } from '../shared/icons';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import type { BottomTab, DetailPane, StreamSurfaceOptions } from './streamTypes';
 import { createStreamDetailField, createStreamDetailLine, createStreamTextInput } from './streamDom';
+import { createOutputBusGantt } from './outputBusGantt';
 
 type StreamTempDetailActions = {
   returnTab: BottomTab;
@@ -21,6 +22,7 @@ type StreamTempDetailActions = {
 export type StreamDetailOverlayDeps = {
   detailPane: DetailPane;
   currentState: DirectorState;
+  streamState: StreamEnginePublicState | undefined;
   getDirectorState: () => DirectorState | undefined;
   options: StreamSurfaceOptions;
   displayWorkspace: DisplayWorkspaceController | undefined;
@@ -44,6 +46,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
   const {
     detailPane,
     currentState,
+    streamState,
     getDirectorState,
     options,
     displayWorkspace,
@@ -86,7 +89,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
   } else if (detailPane.type === 'output') {
     const output = currentState.outputs[detailPane.id];
     body.append(
-      output ? createStreamOutputDetailLayout(output, currentState, options, mixerPanel, refreshDirector, tempDetailActions) : createHint('Output not found.'),
+      output ? createStreamOutputDetailLayout(output, currentState, streamState, options, mixerPanel, refreshDirector, tempDetailActions) : createHint('Output not found.'),
     );
   } else if (detailPane.type === 'visual') {
     const visual = currentState.visuals[detailPane.id];
@@ -278,6 +281,7 @@ function createStreamDisplayDetailCard(
 function createStreamOutputDetailLayout(
   output: VirtualOutputState,
   state: DirectorState,
+  streamState: StreamEnginePublicState | undefined,
   options: StreamSurfaceOptions,
   mixerPanel: MixerPanelController | undefined,
   refreshDirector: () => Promise<void>,
@@ -321,7 +325,7 @@ function createStreamOutputDetailLayout(
       void window.xtream.outputs.update(output.id, { sinkId: sinkId || undefined, sinkLabel }).then(refreshDirector);
     },
   );
-  card.append(toolbar, sink);
+  card.append(toolbar, sink, createOutputBusGantt(output.id, { streamState, directorState: state }));
   stripWrap.append(mixerPanel?.createOutputDetailMixerStrip(output, state) ?? createHint('Output strip unavailable.'));
   layout.append(card, stripWrap);
   return layout;
