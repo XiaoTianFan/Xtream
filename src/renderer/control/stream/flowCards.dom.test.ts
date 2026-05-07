@@ -45,6 +45,72 @@ function node(): FlowSceneNode {
 }
 
 describe('createFlowSceneCard interactions', () => {
+  it('renders thread color, focus, state, preview, progress, hover, and context chrome', () => {
+    const showContextMenu = vi.fn();
+    const sceneConfig = scene();
+    const cardNode: FlowSceneNode = {
+      ...node(),
+      status: 'running',
+      progress: 0.42,
+      durationLabel: '00:05',
+      visualPreviewIds: ['visual-a'],
+      threadId: 'thread-a',
+      threadColor: {
+        token: 'thread-sage',
+        base: '#7f927d',
+        bright: '#a6b8a2',
+        dim: 'rgb(127 146 125 / 0.20)',
+      },
+    };
+    const wrapper = createFlowSceneCard({
+      stream: stream(sceneConfig),
+      scene: sceneConfig,
+      node: cardNode,
+      directorState: {
+        visuals: {
+          'visual-a': {
+            id: 'visual-a',
+            kind: 'file',
+            type: 'image',
+            label: 'Preview A',
+            url: 'file:///preview-a.png',
+            ready: true,
+          },
+        },
+      } as unknown as Parameters<typeof createFlowSceneCard>[0]['directorState'],
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      handlers: {
+        selectScene: vi.fn(),
+        editScene: vi.fn(),
+        runScene: vi.fn(),
+        addFollower: vi.fn(),
+        showContextMenu,
+        beginDrag: vi.fn(),
+        beginResize: vi.fn(),
+      },
+    });
+    const card = wrapper.querySelector<HTMLElement>('.stream-flow-card')!;
+
+    expect(card.classList.contains('stream-flow-card--threaded')).toBe(true);
+    expect(card.classList.contains('stream-playback-focus')).toBe(true);
+    expect(card.classList.contains('stream-edit-focus')).toBe(true);
+    expect(card.classList.contains('status-running')).toBe(true);
+    expect(card.dataset.threadColor).toBe('thread-sage');
+    expect(card.style.getPropertyValue('--stream-thread-dim')).toBe('rgb(127 146 125 / 0.20)');
+    expect(card.querySelector<HTMLImageElement>('.stream-flow-preview-tile img')?.alt).toBe('Preview A');
+    expect(card.querySelector<HTMLElement>('.stream-flow-card-progress')?.style.getPropertyValue('--stream-flow-progress')).toBe('42%');
+    expect([...card.querySelectorAll<HTMLButtonElement>('.stream-flow-hover-action')].map((button) => button.title)).toEqual([
+      'Run from here',
+      'Edit',
+    ]);
+
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(showContextMenu).toHaveBeenCalledWith(expect.any(MouseEvent), 'scene-a');
+  });
+
   it('renders the add follower button outside the clipped visual card', () => {
     const sceneConfig = scene();
     const wrapper = createFlowSceneCard({
