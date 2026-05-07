@@ -189,6 +189,74 @@ describe('deriveStreamFlowProjection', () => {
     expect(projection.nodesBySceneId.left.rect.y).not.toBe(projection.nodesBySceneId.right.rect.y);
   });
 
+  it('keeps a disabled auto-follow branch card in its authoring branch slot', () => {
+    const enabledStream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['root', 'left', 'right'],
+      scenes: {
+        root: scene('root', { type: 'manual' }),
+        left: scene('left', { type: 'follow-end', followsSceneId: 'root' }),
+        right: scene('right', { type: 'follow-end', followsSceneId: 'root' }),
+      },
+    };
+    const disabledStream: PersistedStreamConfig = {
+      ...enabledStream,
+      scenes: {
+        ...enabledStream.scenes,
+        right: { ...enabledStream.scenes.right, disabled: true },
+      },
+    };
+
+    const enabledProjection = deriveStreamFlowProjection({
+      stream: enabledStream,
+      timeline: timeline(enabledStream),
+      directorState: undefined,
+    });
+    const disabledProjection = deriveStreamFlowProjection({
+      stream: disabledStream,
+      timeline: timeline(disabledStream),
+      directorState: undefined,
+    });
+
+    expect(disabledProjection.nodesBySceneId.right.status).toBe('disabled');
+    expect(disabledProjection.nodesBySceneId.right.rect).toEqual(enabledProjection.nodesBySceneId.right.rect);
+  });
+
+  it('keeps a disabled manual root card in its main-lane authoring slot', () => {
+    const enabledStream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['first', 'disabled-root', 'last'],
+      scenes: {
+        first: scene('first', { type: 'manual' }),
+        'disabled-root': scene('disabled-root', { type: 'manual' }),
+        last: scene('last', { type: 'manual' }),
+      },
+    };
+    const disabledStream: PersistedStreamConfig = {
+      ...enabledStream,
+      scenes: {
+        ...enabledStream.scenes,
+        'disabled-root': { ...enabledStream.scenes['disabled-root'], disabled: true },
+      },
+    };
+
+    const enabledProjection = deriveStreamFlowProjection({
+      stream: enabledStream,
+      timeline: timeline(enabledStream),
+      directorState: undefined,
+    });
+    const disabledProjection = deriveStreamFlowProjection({
+      stream: disabledStream,
+      timeline: timeline(disabledStream),
+      directorState: undefined,
+    });
+
+    expect(disabledProjection.nodesBySceneId['disabled-root'].status).toBe('disabled');
+    expect(disabledProjection.nodesBySceneId['disabled-root'].rect).toEqual(enabledProjection.nodesBySceneId['disabled-root'].rect);
+  });
+
   it('places the next main thread after the previous thread span', () => {
     const stream: PersistedStreamConfig = {
       id: 'stream',

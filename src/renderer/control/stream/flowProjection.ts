@@ -9,6 +9,8 @@ import type {
   SceneId,
   SceneRuntimeState,
   StreamCanonicalThreadPlan,
+  StreamThreadBranch,
+  StreamThreadEdge,
   StreamMainTimelineSegment,
   StreamThreadId,
 } from '../../../shared/types';
@@ -87,6 +89,11 @@ const MAIN_BASELINE_Y = 230;
 const SIDE_THREAD_Y = 34;
 const ORPHAN_BASELINE_Y = 470;
 
+type FlowLayoutThread = Pick<
+  StreamCanonicalThreadPlan,
+  'threadId' | 'rootSceneId' | 'rootTriggerType' | 'sceneIds' | 'edges' | 'branches' | 'longestBranchSceneIds' | 'sceneTimings' | 'durationMs'
+>;
+
 function defaultRect(width = CARD_WIDTH, height = CARD_HEIGHT): FlowRect {
   return { x: 32, y: MAIN_BASELINE_Y, width, height };
 }
@@ -101,26 +108,171 @@ function segmentOrder(timeline: CalculatedStreamTimeline | undefined): StreamMai
   return [...(timeline?.mainSegments ?? [])].sort((a, b) => a.startMs - b.startMs);
 }
 
-function threadOrder(timeline: CalculatedStreamTimeline | undefined): StreamCanonicalThreadPlan[] {
-  const threads = timeline?.threadPlan?.threads ?? [];
-  const segmentThreadIds = segmentOrder(timeline).map((segment) => segment.threadId);
-  const byId = new Map(threads.map((thread) => [thread.threadId, thread]));
-  const ordered: StreamCanonicalThreadPlan[] = [];
-  for (const threadId of segmentThreadIds) {
-    const thread = byId.get(threadId);
-    if (thread) {
-      ordered.push(thread);
-    }
+function operationRootTriggerType(scene: PersistedSceneConfig): 'manual' | 'at-timecode' | undefined {
+  if (scene.trigger.type === 'manual' || scene.trigger.type === 'at-timecode') {
+    return scene.trigger.type;
   }
-  for (const thread of threads) {
-    if (!segmentThreadIds.includes(thread.threadId)) {
-      ordered.push(thread);
-    }
-  }
-  return ordered;
+  return undefined;
 }
 
-function branchIndexForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId): number {
+function resolveAuthoringRootSceneId(stream: PersistedStreamConfig, sceneId: SceneId): SceneId | undefined {
+  const visited: SceneId[] = [];
+  let currentId: SceneId | undefined = sceneId;
+
+  while (currentId) {
+    if (visited.includes(currentId)) {
+      return undefined;
+    }
+    visited.push(currentId);
+
+    const scene = stream.scenes[currentId];
+    if (!scene) {
+      return undefined;
+    }
+    if (operationRootTriggerType(scene)) {
+      return currentId;
+    }
+    if (!isFollowTrigger(scene)) {
+      return undefined;
+    }
+    currentId = resolveFollowsSceneId(stream, currentId, scene.trigger);
+  }
+
+  return undefined;
+}
+
+function branchDurationForLayout(runtimeThread: StreamCanonicalThreadPlan | undefined, path: SceneId[]): number | undefined {
+  const key = path.join('|');
+  const runtimeBranch = runtimeThread?.branches.find((branch) => branch.sceneIds.join('|') === key);
+  if (runtimeBranch?.durationMs !== undefined) {
+    return runtimeBranch.durationMs;
+  }
+
+  let maxEnd = 0;
+  for (const sceneId of path) {
+    const endMs = runtimeThread?.sceneTimings[sceneId]?.threadLocalEndMs;
+    if (endMs === undefined) {
+      return runtimeThread ? 0 : path.length * 1000;
+    }
+    maxEnd = Math.max(maxEnd, endMs);
+  }
+  return maxEnd;
+}
+
+function enumerateLayoutBranches(rootSceneId: SceneId, edges: StreamThreadEdge[], runtimeThread: StreamCanonicalThreadPlan | undefined): StreamThreadBranch[] {
+  const childrenByPredecessor = new Map<SceneId, StreamThreadEdge[]>();
+  for (const edge of edges) {
+    const bucket = childrenByPredecessor.get(edge.predecessorSceneId) ?? [];
+    bucket.push(edge);
+    childrenByPredecessor.set(edge.predecessorSceneId, bucket);
+  }
+
+  const branches: StreamThreadBranch[] = [];
+  const walk = (sceneId: SceneId, path: SceneId[]) => {
+    const nextEdges = (childrenByPredecessor.get(sceneId) ?? []).filter((edge) => !path.includes(edge.followerSceneId));
+    if (nextEdges.length === 0) {
+      branches.push({ sceneIds: path, durationMs: branchDurationForLayout(runtimeThread, path) });
+      return;
+    }
+    for (const edge of nextEdges) {
+      walk(edge.followerSceneId, [...path, edge.followerSceneId]);
+    }
+  };
+
+  walk(rootSceneId, [rootSceneId]);
+  return branches.length > 0 ? branches : [{ sceneIds: [rootSceneId], durationMs: branchDurationForLayout(runtimeThread, [rootSceneId]) }];
+}
+
+function compareLayoutBranchLength(left: StreamThreadBranch, right: StreamThreadBranch): number {
+  if (left.durationMs !== undefined && right.durationMs !== undefined && left.durationMs !== right.durationMs) {
+    return left.durationMs - right.durationMs;
+  }
+  if (left.durationMs !== undefined && right.durationMs === undefined) {
+    return 1;
+  }
+  if (left.durationMs === undefined && right.durationMs !== undefined) {
+    return -1;
+  }
+  return left.sceneIds.length - right.sceneIds.length;
+}
+
+function longestLayoutBranchSceneIds(branches: StreamThreadBranch[], fallbackRootSceneId: SceneId): SceneId[] {
+  return (
+    branches.reduce<StreamThreadBranch | undefined>((best, branch) => {
+      if (!best) {
+        return branch;
+      }
+      return compareLayoutBranchLength(branch, best) > 0 ? branch : best;
+    }, undefined)?.sceneIds ?? [fallbackRootSceneId]
+  );
+}
+
+function createAuthoringLayoutThreads(stream: PersistedStreamConfig, timeline: CalculatedStreamTimeline | undefined): FlowLayoutThread[] {
+  const runtimeByRoot = new Map((timeline?.threadPlan?.threads ?? []).map((thread) => [thread.rootSceneId, thread]));
+  const ownedByRoot = new Map<SceneId, Set<SceneId>>();
+
+  for (const sceneId of stream.sceneOrder) {
+    const scene = stream.scenes[sceneId];
+    if (!scene) {
+      continue;
+    }
+    const rootSceneId = resolveAuthoringRootSceneId(stream, sceneId);
+    if (!rootSceneId) {
+      continue;
+    }
+    const bucket = ownedByRoot.get(rootSceneId) ?? new Set<SceneId>();
+    bucket.add(sceneId);
+    ownedByRoot.set(rootSceneId, bucket);
+  }
+
+  const threads: FlowLayoutThread[] = [];
+  for (const rootSceneId of stream.sceneOrder) {
+    const root = stream.scenes[rootSceneId];
+    const rootTriggerType = root ? operationRootTriggerType(root) : undefined;
+    const owned = ownedByRoot.get(rootSceneId);
+    if (!root || !rootTriggerType || !owned) {
+      continue;
+    }
+
+    const sceneIds = stream.sceneOrder.filter((id) => owned.has(id));
+    const edges = sceneIds
+      .map((sceneId) => {
+        const scene = stream.scenes[sceneId];
+        if (!scene || !isFollowTrigger(scene)) {
+          return undefined;
+        }
+        const predecessorSceneId = resolveFollowsSceneId(stream, sceneId, scene.trigger);
+        if (!predecessorSceneId || !owned.has(predecessorSceneId)) {
+          return undefined;
+        }
+        return {
+          predecessorSceneId,
+          followerSceneId: sceneId,
+          triggerType: scene.trigger.type,
+          delayMs: scene.trigger.delayMs ?? 0,
+        } satisfies StreamThreadEdge;
+      })
+      .filter(Boolean) as StreamThreadEdge[];
+    const runtimeThread = runtimeByRoot.get(rootSceneId);
+    const branches = enumerateLayoutBranches(rootSceneId, edges, runtimeThread);
+
+    threads.push({
+      threadId: runtimeThread?.threadId ?? (`thread:${rootSceneId}` as StreamThreadId),
+      rootSceneId,
+      rootTriggerType,
+      sceneIds,
+      edges,
+      branches,
+      longestBranchSceneIds: longestLayoutBranchSceneIds(branches, rootSceneId),
+      sceneTimings: runtimeThread?.sceneTimings ?? {},
+      durationMs: runtimeThread?.durationMs,
+    });
+  }
+
+  return threads;
+}
+
+function branchIndexForScene(thread: FlowLayoutThread, sceneId: SceneId): number {
   const sceneTiming = thread.sceneTimings[sceneId];
   const sceneStartMs = sceneTiming?.threadLocalStartMs;
   const candidates = thread.branches
@@ -153,7 +305,7 @@ function branchIndexForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId
   return branchLaneOffset(thread, (timed ?? candidatePool[0] ?? candidates[0]).index);
 }
 
-function longestBranchIndexForThread(thread: StreamCanonicalThreadPlan): number {
+function longestBranchIndexForThread(thread: FlowLayoutThread): number {
   const longestBranchKey = thread.longestBranchSceneIds.join('|');
   return Math.max(
     0,
@@ -161,7 +313,7 @@ function longestBranchIndexForThread(thread: StreamCanonicalThreadPlan): number 
   );
 }
 
-function branchLaneOffset(thread: StreamCanonicalThreadPlan, branchIndex: number): number {
+function branchLaneOffset(thread: FlowLayoutThread, branchIndex: number): number {
   const longestBranchIndex = longestBranchIndexForThread(thread);
   if (branchIndex === longestBranchIndex) {
     return 0;
@@ -182,7 +334,7 @@ function branchLaneOffset(thread: StreamCanonicalThreadPlan, branchIndex: number
   return rank % 2 === 0 ? -distance : distance;
 }
 
-function branchDepthForScene(thread: StreamCanonicalThreadPlan, sceneId: SceneId): number {
+function branchDepthForScene(thread: FlowLayoutThread, sceneId: SceneId): number {
   const branch = thread.branches.find((candidate) => candidate.sceneIds.includes(sceneId));
   const idx = branch?.sceneIds.indexOf(sceneId) ?? -1;
   return idx >= 0 ? idx : Math.max(0, thread.sceneIds.indexOf(sceneId));
@@ -193,7 +345,7 @@ function sceneFlowWidth(stream: PersistedStreamConfig, sceneId: SceneId): number
   return width !== undefined && Number.isFinite(width) ? Math.max(170, width) : CARD_WIDTH;
 }
 
-function createThreadSceneLocalX(stream: PersistedStreamConfig, thread: StreamCanonicalThreadPlan): Map<SceneId, number> {
+function createThreadSceneLocalX(stream: PersistedStreamConfig, thread: FlowLayoutThread): Map<SceneId, number> {
   const localX = new Map<SceneId, number>();
   for (const branch of thread.branches.length > 0 ? thread.branches : [{ sceneIds: thread.sceneIds }]) {
     for (const [index, sceneId] of branch.sceneIds.entries()) {
@@ -211,7 +363,7 @@ function createThreadSceneLocalX(stream: PersistedStreamConfig, thread: StreamCa
   return localX;
 }
 
-function threadFlowWidth(stream: PersistedStreamConfig, thread: StreamCanonicalThreadPlan): number {
+function threadFlowWidth(stream: PersistedStreamConfig, thread: FlowLayoutThread): number {
   const localX = createThreadSceneLocalX(stream, thread);
   return Math.max(
     CARD_WIDTH,
@@ -245,28 +397,22 @@ function duplicateAutoFollowFlowKeys(stream: PersistedStreamConfig): Set<string>
 
 function calculateDefaultRects(stream: PersistedStreamConfig, timeline: CalculatedStreamTimeline | undefined): Record<SceneId, FlowRect> {
   const rects: Record<SceneId, FlowRect> = {};
-  const orderedThreads = threadOrder(timeline);
+  const orderedThreads = createAuthoringLayoutThreads(stream, timeline);
   const mainSegments = segmentOrder(timeline);
   const mainDurationMs = mainSegments.at(-1)?.endMs ?? 0;
-  const mainThreadIndex = new Map(mainSegments.map((segment, index) => [segment.threadId, index]));
   const mainThreadBaseX = new Map<StreamThreadId, number>();
   let nextMainThreadX = 56;
-  for (const segment of mainSegments) {
-    const thread = orderedThreads.find((candidate) => candidate.threadId === segment.threadId);
-    if (!thread) {
-      continue;
-    }
+  for (const thread of orderedThreads.filter((candidate) => candidate.rootTriggerType === 'manual')) {
     mainThreadBaseX.set(thread.threadId, nextMainThreadX);
     nextMainThreadX += threadFlowWidth(stream, thread) + THREAD_CARD_GAP_X;
   }
   let nextFallbackX = 56;
   for (const thread of orderedThreads) {
-    const mainIndex = mainThreadIndex.get(thread.threadId);
     const localX = createThreadSceneLocalX(stream, thread);
     let baseX: number;
     let baseY: number;
-    if (mainIndex !== undefined) {
-      baseX = mainThreadBaseX.get(thread.threadId) ?? 56 + mainIndex * THREAD_GAP_X;
+    if (thread.rootTriggerType === 'manual') {
+      baseX = mainThreadBaseX.get(thread.threadId) ?? 56;
       baseY = MAIN_BASELINE_Y;
     } else if (thread.rootTriggerType === 'at-timecode') {
       const root = stream.scenes[thread.rootSceneId];
