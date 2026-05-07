@@ -2093,6 +2093,40 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates.c?.status).toBe('running');
   });
 
+  it('keeps a manual main thread ready when a parallel manual thread is still running after the current main thread ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 1 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 2 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    stream.sceneOrder = ['a', 'b', 'c'];
+    delete stream.scenes.b2;
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    vi.setSystemTime(1_200);
+    engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    vi.setSystemTime(1_400);
+    engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    vi.setSystemTime(1_600);
+    engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    vi.advanceTimersByTime(600);
+
+    const state = engine.getPublicState();
+    const main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+
+    expect(state.runtime?.status).toBe('running');
+    expect(main?.status).toBe('paused');
+    expect(main?.pausedAtMs).toBe(1_000);
+    expect(state.runtime?.sceneStates.a?.status).toBe('complete');
+    expect(state.runtime?.sceneStates.b?.status).toBe('ready');
+    expect(state.runtime?.sceneStates.c?.status).toBe('running');
+    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.sceneId)).toContain('c');
+    expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.sceneId)).not.toContain('b');
+  });
+
   it('can summarize canonical scene state from the first instance when copies exist', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

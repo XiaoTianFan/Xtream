@@ -13,9 +13,15 @@ import { LONG_VIDEO_EMBEDDED_AUDIO_THRESHOLD_SECONDS } from '../../../shared/emb
 import { mountVisualPoolGridPreview } from './visualPoolGridPreview';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { runUnifiedManualMediaImport, runUnifiedMediaPoolImport } from './unifiedMediaPoolImport';
+import { getDroppedFilePaths, isFileDragEvent } from './mediaPool/dragDrop';
+import { getFilteredAudioSources, getFilteredVisuals, type PoolSort } from './mediaPool/filtering';
+import {
+  createAudioRenderSignature,
+  createVisualPoolContentSignature,
+  createVisualRenderSignature,
+} from './mediaPool/signatures';
 
 type PoolTab = 'visuals' | 'audio';
-type PoolSort = 'label' | 'duration' | 'status';
 type VisualPoolLayout = 'list' | 'grid';
 
 const VISUAL_POOL_LAYOUT_STORAGE_KEY = 'xtream.visualPoolLayout';
@@ -199,7 +205,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     updateVisualPoolPanesVisibility();
 
     if (lastListVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListListPane)) {
-      const listRows = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualRow(visual));
+      const listRows = getFilteredVisuals(Object.values(state.visuals), poolSearchQuery, poolSort).map((visual) => createVisualRow(visual));
       elements.visualListListPane.replaceChildren(
         ...(listRows.length > 0 ? listRows : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => void runUnifiedManualMediaImport(buildUnifiedImportDeps()))]),
       );
@@ -208,7 +214,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
 
     if (lastGridVisualsDomKey !== cKey || !paneShowsPoolItems(elements.visualListGridPane)) {
       clearVisualPoolGridCleanups();
-      const gridCards = getFilteredVisuals(Object.values(state.visuals)).map((visual) => createVisualGridCard(visual));
+      const gridCards = getFilteredVisuals(Object.values(state.visuals), poolSearchQuery, poolSort).map((visual) => createVisualGridCard(visual));
       elements.visualListGridPane.replaceChildren(
         ...(gridCards.length > 0 ? gridCards : [createMediaPoolEmptyState(visualPoolEmptyMessage(state), () => void runUnifiedManualMediaImport(buildUnifiedImportDeps()))]),
       );
@@ -248,7 +254,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.visualList.hidden = true;
     elements.audioPanel.hidden = false;
     renderVisualPoolPanes(state);
-    const audioRows = getFilteredAudioSources(Object.values(state.audioSources), state).map((source) =>
+    const audioRows = getFilteredAudioSources(Object.values(state.audioSources), state, poolSearchQuery, poolSort).map((source) =>
       createAudioSourceRow(source, state),
     );
     elements.audioPanel.replaceChildren(
@@ -853,41 +859,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     return button;
   }
 
-  function getFilteredVisuals(visuals: VisualState[]): VisualState[] {
-    return visuals.filter(matchesPoolQuery).sort(comparePoolItems);
-  }
-
-  function getFilteredAudioSources(sources: AudioSourceState[], state: DirectorState): AudioSourceState[] {
-    return sources
-      .filter((source) => {
-        const haystack =
-          source.type === 'external-file'
-            ? `${source.label} ${source.path ?? ''}`
-            : `${source.label} ${state.visuals[source.visualId]?.label ?? source.visualId}`;
-        return matchesQuery(haystack);
-      })
-      .sort(comparePoolItems);
-  }
-
-  function matchesPoolQuery(item: VisualState | AudioSourceState): boolean {
-    const haystack = 'path' in item ? `${item.label} ${item.path ?? ''} ${item.type}` : `${item.label} ${item.type}`;
-    return matchesQuery(haystack);
-  }
-
-  function matchesQuery(haystack: string): boolean {
-    return haystack.toLowerCase().includes(poolSearchQuery.trim().toLowerCase());
-  }
-
-  function comparePoolItems<T extends { label: string; ready: boolean; durationSeconds?: number }>(left: T, right: T): number {
-    if (poolSort === 'duration') {
-      return (left.durationSeconds ?? Number.POSITIVE_INFINITY) - (right.durationSeconds ?? Number.POSITIVE_INFINITY);
-    }
-    if (poolSort === 'status') {
-      return Number(right.ready) - Number(left.ready) || left.label.localeCompare(right.label);
-    }
-    return left.label.localeCompare(right.label);
-  }
-
   function syncVisualPoolLayoutToggle(): void {
     const btn = elements.visualPoolLayoutToggleButton;
     const visualActive = activePoolTab === 'visuals';
@@ -939,58 +910,6 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     }
   }
 
-  function isFileDragEvent(event: DragEvent): boolean {
-    return Boolean(event.dataTransfer?.types?.includes('Files'));
-  }
-
-  function getDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
-    if (!dataTransfer) {
-      return [];
-    }
-    const files = [
-      ...Array.from(dataTransfer.files),
-      ...Array.from(dataTransfer.items)
-        .filter((item) => item.kind === 'file')
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => Boolean(file)),
-    ];
-    const paths = files.map(getPathForDroppedFile).filter((path): path is string => Boolean(path));
-    const uriListPaths = parseDroppedFileUriList(dataTransfer.getData('text/uri-list'));
-    return Array.from(new Set([...paths, ...uriListPaths]));
-  }
-
-  function getPathForDroppedFile(file: File): string | undefined {
-    const path = window.xtream.platform.getPathForFile(file) || (file as File & { path?: string }).path;
-    return path || undefined;
-  }
-
-  function parseDroppedFileUriList(uriList: string): string[] {
-    return uriList
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('#'))
-      .map(fileUriToPath)
-      .filter((path): path is string => Boolean(path));
-  }
-
-  function fileUriToPath(uri: string): string | undefined {
-    try {
-      const url = new URL(uri);
-      if (url.protocol !== 'file:') {
-        return undefined;
-      }
-      const decodedPath = decodeURIComponent(url.pathname);
-      const pathWithHost = url.hostname ? `//${url.hostname}${decodedPath}` : decodedPath;
-      if (navigator.platform.toLowerCase().startsWith('win')) {
-        const windowsPath = pathWithHost.replace(/\//g, '\\');
-        return windowsPath.replace(/^\\([A-Za-z]:\\)/, '$1');
-      }
-      return pathWithHost;
-    } catch {
-      return undefined;
-    }
-  }
-
   function clearMediaPoolDragOver(event: DragEvent): void {
     const next = event.relatedTarget;
     if (next instanceof Node && elements.mediaPoolPanel.contains(next)) {
@@ -1021,7 +940,7 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     elements.mediaPoolPanel.addEventListener('drop', async (event) => {
       event.preventDefault();
       elements.mediaPoolPanel.classList.remove('drag-over');
-      const paths = getDroppedFilePaths(event.dataTransfer);
+      const paths = getDroppedFilePaths(event.dataTransfer, window.xtream.platform.getPathForFile);
       if (paths.length === 0) {
         options.setShowStatus('Drop import unavailable: no file paths were exposed by the platform.');
         return;
@@ -1056,117 +975,4 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     teardownVisualPreviews,
     install,
   };
-}
-
-function createVisualRenderSignature(state: DirectorState): string {
-  return JSON.stringify(
-    Object.values(state.visuals)
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .map((visual) => ({
-        id: visual.id,
-        label: visual.label,
-        type: visual.type,
-        path: visual.path,
-        url: visual.url,
-        ready: visual.ready,
-        error: visual.error,
-        durationSeconds: visual.durationSeconds,
-        width: visual.width,
-        height: visual.height,
-        hasEmbeddedAudio: visual.hasEmbeddedAudio,
-        kind: visual.kind,
-        capture: visual.kind === 'live' ? visual.capture : undefined,
-        opacity: visual.opacity,
-        brightness: visual.brightness,
-        contrast: visual.contrast,
-        playbackRate: visual.playbackRate,
-        fileSizeBytes: visual.fileSizeBytes,
-      })),
-  );
-}
-
-/**
- * Key for rebuilding media pool list/grid rows. For live visuals, omits `width`, `height`, and `ready`
- * so hover pool preview metadata does not thrash the DOM (that feedback loop would detach/re-attach capture in a loop).
- */
-function createVisualPoolContentSignature(state: DirectorState): string {
-  return JSON.stringify(
-    Object.values(state.visuals)
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .map((visual) =>
-        visual.kind === 'live'
-          ? {
-              id: visual.id,
-              label: visual.label,
-              type: visual.type,
-              path: visual.path,
-              url: visual.url,
-              error: visual.error,
-              durationSeconds: visual.durationSeconds,
-              hasEmbeddedAudio: visual.hasEmbeddedAudio,
-              kind: visual.kind,
-              capture: visual.capture,
-              opacity: visual.opacity,
-              brightness: visual.brightness,
-              contrast: visual.contrast,
-              playbackRate: visual.playbackRate,
-              fileSizeBytes: visual.fileSizeBytes,
-            }
-          : {
-              id: visual.id,
-              label: visual.label,
-              type: visual.type,
-              path: visual.path,
-              url: visual.url,
-              ready: visual.ready,
-              error: visual.error,
-              durationSeconds: visual.durationSeconds,
-              width: visual.width,
-              height: visual.height,
-              hasEmbeddedAudio: visual.hasEmbeddedAudio,
-              kind: visual.kind,
-              capture: undefined,
-              opacity: visual.opacity,
-              brightness: visual.brightness,
-              contrast: visual.contrast,
-              playbackRate: visual.playbackRate,
-              fileSizeBytes: visual.fileSizeBytes,
-            },
-      ),
-  );
-}
-
-function createAudioRenderSignature(state: DirectorState): string {
-  return JSON.stringify(
-    Object.values(state.audioSources)
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .map((source) => ({
-        id: source.id,
-        label: source.label,
-        type: source.type,
-        durationSeconds: source.durationSeconds,
-        ready: source.ready,
-        error: source.error,
-        fileSizeBytes: source.fileSizeBytes,
-        playbackRate: source.playbackRate,
-        levelDb: source.levelDb,
-        channelCount: source.channelCount,
-        channelMode: source.channelMode,
-        derivedFromAudioSourceId: source.derivedFromAudioSourceId,
-        ...(source.type === 'external-file'
-          ? {
-              path: source.path,
-              url: source.url,
-            }
-          : {
-              visualId: source.visualId,
-              extractionMode: source.extractionMode,
-              extractionStatus: source.extractionStatus,
-              extractedPath: source.extractedPath,
-              extractedUrl: source.extractedUrl,
-              extractedFormat: source.extractedFormat,
-              visualLabel: state.visuals[source.visualId]?.label,
-            }),
-      })),
-  );
 }

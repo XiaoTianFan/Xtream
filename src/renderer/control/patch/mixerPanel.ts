@@ -1,5 +1,4 @@
 import type {
-  AudioSourceState,
   DirectorState,
   MeterLaneState,
   OutputMeterReport,
@@ -35,33 +34,10 @@ import {
   renderAudioFaderGraticule,
   renderOutputMeterGraticule,
 } from '../meters/graticuleLayout';
-import { shellShowConfirm } from '../shell/shellModalPresenter';
 import type { SelectedEntity } from '../shared/types';
 import { deriveOutputMeterLanes } from './meterLanes';
-
-let activeMixerOutputMenu: HTMLElement | undefined;
-
-function dismissMixerOutputContextMenu(): void {
-  activeMixerOutputMenu?.remove();
-  activeMixerOutputMenu = undefined;
-}
-
-function positionMixerOutputContextMenu(menu: HTMLElement, clientX: number, clientY: number): void {
-  const menuBounds = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(clientX, window.innerWidth - menuBounds.width - 4)}px`;
-  menu.style.top = `${Math.min(clientY, window.innerHeight - menuBounds.height - 4)}px`;
-}
-
-let mixerOutputMenuDismissListenersAttached = false;
-
-function ensureMixerOutputMenuDismissListeners(): void {
-  if (mixerOutputMenuDismissListenersAttached) {
-    return;
-  }
-  mixerOutputMenuDismissListenersAttached = true;
-  document.addEventListener('click', dismissMixerOutputContextMenu);
-  window.addEventListener('blur', dismissMixerOutputContextMenu);
-}
+import { showMixerOutputContextMenu } from './mixerPanel/contextMenu';
+import { createMixerRenderSignature } from './mixerPanel/signatures';
 
 export type MixerPanelController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -229,46 +205,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     }
   }
 
-  /** Strip topology/routing only — excludes runtime fades, meters, decode-ready flips, and async errors (see stream deriveDirectorStateForStream). */
-  function compactAudioSourceForSignature(source: AudioSourceState): Record<string, unknown> {
-    const base: Record<string, unknown> = { id: source.id, label: source.label, type: source.type };
-    if (source.type === 'embedded-visual') {
-      base.visualId = source.visualId;
-    }
-    return base;
-  }
-
-  function compactOutputForSignature(output: VirtualOutputState): Record<string, unknown> {
-    return {
-      id: output.id,
-      label: output.label,
-      sinkId: output.sinkId,
-      sinkLabel: output.sinkLabel,
-      busLevelDb: output.busLevelDb,
-      pan: output.pan,
-      muted: output.muted,
-      outputDelaySeconds: output.outputDelaySeconds,
-      sources: output.sources.map((sel: VirtualOutputSourceSelection) => ({
-        id: sel.id,
-        audioSourceId: sel.audioSourceId,
-        pan: sel.pan,
-        muted: sel.muted,
-        solo: sel.solo,
-      })),
-    };
-  }
-
   function createRenderSignature(state: DirectorState): string {
-    return JSON.stringify({
-      sources: Object.values(state.audioSources)
-        .sort((left, right) => left.id.localeCompare(right.id))
-        .map((source) => compactAudioSourceForSignature(source)),
-      outputs: Object.values(state.outputs)
-        .sort((left, right) => left.id.localeCompare(right.id))
-        .map((output) => compactOutputForSignature(output)),
-      devices: options.getAudioDevices().map((device) => `${device.deviceId}:${device.label}`).join('|'),
-      solo: createSoloOutputSignature(state),
-    });
+    return createMixerRenderSignature(state, options.getAudioDevices(), createSoloOutputSignature(state));
   }
 
   function createSoloOutputSignature(state = options.getState()): string {
@@ -478,40 +416,14 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     });
   }
 
-  function showMixerOutputContextMenu(event: MouseEvent, output: VirtualOutputState): void {
-    event.preventDefault();
-    event.stopPropagation();
-    dismissMixerOutputContextMenu();
-    ensureMixerOutputMenuDismissListeners();
-
-    const menu = document.createElement('div');
-    menu.className = 'context-menu audio-source-menu';
-    menu.setAttribute('role', 'menu');
-    menu.addEventListener('click', (e) => e.stopPropagation());
-
-    const removeBtn = createButton('Remove virtual output…', 'secondary context-menu-item', () => {
-      dismissMixerOutputContextMenu();
-      void (async () => {
-        if (!(await shellShowConfirm('Remove output?', `Remove ${output.label}?`))) {
-          return;
-        }
-        await window.xtream.outputs.remove(output.id);
-        options.clearSelectionIf?.({ type: 'output', id: output.id });
-        const nextState = await window.xtream.director.getState();
-        options.renderState(nextState);
-        options.refreshDetails(nextState);
-      })();
-    });
-    removeBtn.setAttribute('role', 'menuitem');
-
-    menu.append(removeBtn);
-    document.body.append(menu);
-    positionMixerOutputContextMenu(menu, event.clientX, event.clientY);
-    activeMixerOutputMenu = menu;
-  }
-
   function attachMixerStripContextMenu(strip: HTMLElement, output: VirtualOutputState): void {
-    strip.addEventListener('contextmenu', (event) => showMixerOutputContextMenu(event, output));
+    strip.addEventListener('contextmenu', (event) =>
+      showMixerOutputContextMenu(event, output, {
+        clearSelectionIf: options.clearSelectionIf,
+        renderState: options.renderState,
+        refreshDetails: options.refreshDetails,
+      }),
+    );
   }
 
   function createMixerStrip(output: VirtualOutputState, state: DirectorState): HTMLElement {
