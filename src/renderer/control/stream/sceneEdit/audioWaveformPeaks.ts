@@ -133,10 +133,9 @@ export async function loadAudioWaveformPeaks(
     return existing;
   }
   const load = async (): Promise<AudioWaveformPeaks> => {
-    const fetchImpl = options.fetchImpl ?? window.fetch.bind(window);
+    const buffer = await loadAudioWaveformBuffer(url, options.fetchImpl);
     const decodeImpl = options.decodeImpl ?? decodeAudioWaveform;
-    const response = await fetchImpl(url);
-    const decoded = await decodeImpl(await response.arrayBuffer());
+    const decoded = await decodeImpl(buffer);
     const sampleCount = decoded.channelData[0]?.length ?? 0;
     return {
       durationMs: sampleCount > 0 && decoded.sampleRate > 0 ? (sampleCount / decoded.sampleRate) * 1000 : (source.durationSeconds ?? 0) * 1000,
@@ -150,4 +149,23 @@ export async function loadAudioWaveformPeaks(
   });
   waveformCache.set(cacheKey, promise);
   return promise;
+}
+
+async function loadAudioWaveformBuffer(
+  url: string,
+  fetchImpl?: (url: string) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>,
+): Promise<ArrayBuffer> {
+  try {
+    const response = await (fetchImpl ?? window.fetch.bind(window))(url);
+    return response.arrayBuffer();
+  } catch (error) {
+    if (!url.startsWith('file:') || !window.xtream.audioSources.readFileBuffer) {
+      throw error;
+    }
+    const buffer = await window.xtream.audioSources.readFileBuffer(url);
+    if (!buffer) {
+      throw error;
+    }
+    return buffer;
+  }
 }

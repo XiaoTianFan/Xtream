@@ -373,7 +373,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       id: cloneId,
       label: `${source.label}`,
       playbackRate: (source.playbackRate ?? 1) * cue.playbackRate,
-      durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : source.durationSeconds,
+      durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : undefined,
       ready: source.ready,
       error: source.error,
       runtimeOffsetSeconds: (cue.streamStartMs + cue.localStartMs) / 1000,

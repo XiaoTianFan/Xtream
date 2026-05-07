@@ -1,0 +1,58 @@
+.visual-pool-card__tail {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--visual-pool-grid-badge-w, 1.65rem);
+  height: var(--visual-pool-grid-badge-h, 1.125rem);
+  justify-self: end;
+  align-self: center;
+  overflow: hidden;
+}
+
+.visual-pool-card__tail .visual-pool-card__placement-marker.asset-marker {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  /* Match pool list tails: REP / FIL / LNK hues from shared .asset-marker.* rules */
+  border-width: 1px;
+}
+
+.visual-pool-card__tail .visual-pool-card__placement-marker.asset-marker.representation {
+  border-color: color-mix(in srgb, var(--accent-ochre) 70%, var(--border-subtle));
+  color: var(--accent-ochre);
+}
+
+.visual-pool-card__tail .visual-pool-card__placement-marker.asset-marker.file {
+  border-color: color-mix(in srgb, var(--accent-teal) 70%, var(--border-subtle));
+  color: var(--accent-teal);
+}
+
+.visual-pool-card__tail .visual-pool-card__placement-marker.asset-marker.link {
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border-subtle));
+  color: var(--text-secondary);
+}
+
+/* Same box as REP/LNK/FIL badge; icon centered inside */
+.visual-pool-card__tail .row-action {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.visual-pool-card__tail .row-action .control-icon {
+  width: min(0.65rem, 55%);
+  height: min(0.65rem, 55%);
+}
+
+/* Grid card: REP/LNK/FIL badge shares the hover-remove slot */

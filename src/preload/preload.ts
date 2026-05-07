@@ -133,6 +133,7 @@ const api = {
     remove: (audioSourceId: AudioSourceId): Promise<boolean> => ipcRenderer.invoke('audio-source:remove', audioSourceId),
     splitStereo: (audioSourceId: AudioSourceId): Promise<AudioSourceSplitResult> => ipcRenderer.invoke('audio-source:split-stereo', audioSourceId),
     reportMetadata: (report: AudioMetadataReport): Promise<DirectorState> => ipcRenderer.invoke('audio-source:metadata', report),
+    readFileBuffer: (url: string): Promise<ArrayBuffer | undefined> => ipcRenderer.invoke('audio-source:read-file-buffer', url),
   },
   outputs: {
     create: (): Promise<VirtualOutputState> => ipcRenderer.invoke('output:create'),

@@ -1,0 +1,344 @@
+.stream-scene-list-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.stream-scene-drop-indicator {
+  position: fixed;
+  z-index: 120;
+  height: 3px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: var(--accent-teal);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-teal) 35%, transparent),
+    0 0 12px color-mix(in srgb, var(--accent-teal) 45%, transparent);
+  pointer-events: none;
+}
+
+.stream-scene-list {
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  padding: 0 var(--pane-padding) var(--pane-padding);
+  min-height: 0;
+}
+
+/* Invisible tail hit area so scenes can still be reordered to the end (no on-screen prompt). */
+.stream-scene-list-end-target {
+  flex-shrink: 0;
+  min-height: 6px;
+  margin: 0 var(--pane-padding) var(--compact);
+}
+
+.stream-scene-list-phantom-create {
+  flex-shrink: 0;
+  margin: 0 var(--gutter) var(--gutter);
+  padding: 0.42rem 0.48rem;
+  min-height: unset;
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 90%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-low) 40%, transparent);
+  color: var(--text-secondary);
+  opacity: 0.72;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.stream-scene-list-phantom-create:hover:not(:disabled),
+.stream-scene-list-phantom-create:focus-visible {
+  opacity: 1;
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent-teal) 55%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-teal) 8%, var(--surface-low));
+  outline: none;
+}
+
+.stream-scene-row-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stream-scene-row-wrap--threaded .stream-scene-row:not(.stream-scene-row--header) {
+  background: var(--stream-thread-dim);
+}
+
+.stream-scene-row-wrap.focused .stream-scene-row,
+.stream-scene-row-wrap.stream-playback-focus .stream-scene-row {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 65%, transparent);
+}
+
+.stream-scene-row-wrap.stream-edit-focus:not(.stream-playback-focus) .stream-scene-row {
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
+}
+
+.stream-scene-row-wrap.stream-edit-focus.stream-playback-focus .stream-scene-row {
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-teal) 65%, transparent),
+    inset 3px 0 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
+}
+
+.stream-scene-row-wrap.drag-source {
+  opacity: 0.55;
+}
+
+.stream-scene-row {
+  display: grid;
+  grid-template-columns: 1.85rem 3rem minmax(8rem, 1.4fr) minmax(7.5rem, 1fr) 4.5rem 5rem auto;
+  gap: calc(var(--gutter) * 0.85);
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0.2rem 0.3rem;
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  line-height: 1.0;
+  text-align: left;
+}
+
+.stream-scene-row:not(.stream-scene-row--header) {
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.stream-scene-row:not(.stream-scene-row--header):active {
+  cursor: grabbing;
+}
+
+.stream-scene-row:not(.stream-scene-row--header) .stream-scene-expand,
+.stream-scene-row:not(.stream-scene-row--header) .stream-row-action {
+  cursor: pointer;
+}
+
+.stream-scene-row:not(.stream-scene-row--header):hover,
+.stream-scene-row.stream-playback-focus,
+.stream-scene-row.stream-edit-focus {
+  background: color-mix(in srgb, var(--stream-thread-base, var(--accent-teal)) 18%, var(--stream-thread-dim, transparent));
+}
+
+.stream-scene-row.running {
+  background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 50%, var(--stream-thread-dim, transparent));
+}
+
+.stream-scene-row.preloading {
+  background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 22%, var(--stream-thread-dim, transparent));
+}
+
+.stream-scene-row.paused {
+  background: color-mix(in srgb, var(--accent-ochre) 14%, transparent);
+}
+
+.stream-scene-row.disabled {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--stream-thread-dim, transparent) 55%, transparent);
+}
+
+.stream-scene-row.disabled .stream-scene-expand.icon-button,
+.stream-scene-row.disabled .stream-scene-row-actions .stream-row-action.icon-button {
+  color: var(--text-secondary);
+}
+
+.stream-scene-row.disabled .stream-scene-expand.icon-button:hover:not(:disabled),
+.stream-scene-row.disabled .stream-scene-row-actions .stream-row-action.icon-button:hover:not(:disabled) {
+  color: var(--accent-teal);
+}
+
+.stream-scene-row.complete {
+  color: var(--text-secondary);
+  opacity: 0.72;
+}
+
+.stream-scene-row.failed {
+  background: color-mix(in srgb, var(--status-critical) 18%, transparent);
+}
+
+.stream-scene-row.error {
+  background: color-mix(in srgb, var(--status-critical) 18%, transparent);
+}
+
+.stream-scene-row--authoring-error:not(.disabled) {
+  background: color-mix(in srgb, var(--status-critical) 14%, transparent);
+}
+
+.stream-scene-row.running.stream-scene-row--authoring-error:not(.disabled),
+.stream-scene-row.preloading.stream-scene-row--authoring-error:not(.disabled) {
+  background: color-mix(in srgb, var(--status-critical) 22%, color-mix(in srgb, var(--accent-teal) 35%, transparent));
+}
+
+.stream-scene-row-wrap--authoring-error {
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--status-critical) 45%, transparent);
+}
+
+.stream-scene-subcue-line--error {
+  margin: 0 -0.25rem;
+  padding: 0.15rem 0.25rem;
+  border-radius: 3px;
+  border-bottom-color: color-mix(in srgb, var(--status-critical) 28%, var(--border-subtle));
+  color: color-mix(in srgb, var(--status-critical) 55%, var(--text-secondary));
+  background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+}
+
+.stream-scene-subcue-line--error:last-child {
+  border-bottom: 0;
+}
+
+.stream-scene-edit--authoring-error {
+  box-shadow: inset 0 3px 0 0 color-mix(in srgb, var(--status-critical) 40%, transparent);
+}
+
+.stream-scene-row.skipped {
+  background: color-mix(in srgb, var(--accent-ochre) 16%, transparent);
+}
+
+.stream-scene-row.dragging {
+  opacity: 0.85;
+}
+
+.stream-scene-row--header {
+  padding: 0.32rem 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stream-scene-expand.icon-button {
+  width: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+
+.stream-scene-expand .control-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.stream-scene-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.12rem;
+}
+
+.stream-scene-row-actions .stream-row-action.icon-button {
+  width: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+
+.stream-scene-row-actions .stream-row-action .control-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.stream-scene-row-progress {
+  height: 3px;
+  width: var(--stream-row-progress, 0%);
+  background: var(--stream-row-progress-color, var(--accent-teal));
+  pointer-events: none;
+}
+
+.stream-scene-row-progress--indeterminate {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-subtle) 50%, transparent);
+}
+
+.stream-scene-row-progress--indeterminate::after {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  animation: stream-row-progress-indeterminate 1.1s ease-in-out infinite;
+  background: var(--stream-row-progress-color, var(--accent-teal));
+  content: "";
+}
+
+@keyframes stream-row-progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.stream-scene-subcue-list {
+  padding: 0.3rem 0.45rem 0.45rem 4.35rem;
+  background: color-mix(in srgb, var(--surface-low) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.stream-scene-subcue-line {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 35%, transparent);
+}
+
+.stream-scene-subcue-line:last-child {
+  border-bottom: 0;
+}
+
+.stream-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.stream-scene-note-input {
+  min-height: 4rem;
+  resize: vertical;
+}
+
+.stream-scene-form .stream-scene-note-field {
+  grid-column: 1 / -1;
+}
+
+.stream-scene-form .stream-scene-form-row {
+  margin-top: 0.35rem;
+}
+
+.stream-at-timecode-reminder.hint {
+  margin: 6px 0 0;
+  line-height: 1.35;
+}
+
+.stream-scene-form .stream-subcue-field-grid > .stream-scene-form-row {
+  margin-top: 0;
+}
+
+.stream-scene-form .button-row {
+  justify-content: flex-start;
+}
+
+.stream-scene-loop-detail {
+  display: grid;
+  gap: var(--compact);
+  margin: 0.35rem 0 0.5rem;
+  padding: var(--compact);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-low);
+}
+

@@ -1,0 +1,34 @@
+.media-pool .pool-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(6.5rem, 10rem);
+  gap: var(--compact);
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin-bottom: var(--compact);
+}
+
+.media-pool .pool-toolbar label {
+  display: block;
+  min-width: 0;
+}
+
+.media-pool .pool-toolbar input[type='search'] {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.media-pool .pool-tab {
+  min-height: 1.45rem;
+  padding: 0.18rem 0.35rem;
+  font-size: 0.66rem;
+}
+
+.media-pool .pool-toolbar input,
+.media-pool .pool-toolbar select {
+  min-height: 1.5rem;
+  padding: 0.18rem 0.35rem;
+  font-size: 0.68rem;
+}
+

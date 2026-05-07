@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, PersistedAudioSubCueConfig } from '../../../../shared/types';
 import { buildAudioSubCuePreviewPayload, createAudioSubCueWaveformEditor } from './audioSubCueWaveformEditor';
 
@@ -12,10 +12,15 @@ class FakeResizeObserver {
 }
 
 beforeEach(() => {
+  document.body.innerHTML = '';
   (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
   window.xtream = {
     audioRuntime: { preview: vi.fn() },
   } as unknown as typeof window.xtream;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('audioSubCueWaveformEditor', () => {
@@ -48,6 +53,41 @@ describe('audioSubCueWaveformEditor', () => {
 
     expect(patches).toEqual([{ loop: { enabled: true, iterations: { type: 'infinite' } } }]);
   });
+
+  it('disables preview transport when no output bus can be selected', () => {
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ outputIds: [] }),
+      currentState: directorState({ noOutputs: true }),
+      patchSubCue: vi.fn(),
+    });
+
+    const play = editor.querySelector('.stream-audio-waveform-transport') as HTMLButtonElement;
+
+    expect(play.disabled).toBe(true);
+  });
+
+  it('stops transient preview playback when the editor is removed', async () => {
+    vi.useFakeTimers();
+    const preview = vi.fn();
+    window.xtream = {
+      audioRuntime: { preview },
+    } as unknown as typeof window.xtream;
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ durationOverrideMs: 5000 }),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    const play = editor.querySelector('.stream-audio-waveform-transport') as HTMLButtonElement;
+    play.click();
+    editor.remove();
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ type: 'play-audio-subcue-preview' }));
+    expect(preview).toHaveBeenCalledWith({ type: 'stop-audio-subcue-preview', previewId: 'subcue-preview:sub-a' });
+  });
 });
 
 function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): PersistedAudioSubCueConfig {
@@ -66,7 +106,7 @@ function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): Persi
   };
 }
 
-function directorState(options: { noUrl?: boolean } = {}): DirectorState {
+function directorState(options: { noUrl?: boolean; noOutputs?: boolean } = {}): DirectorState {
   return {
     audioSources: {
       aud: {
@@ -80,10 +120,12 @@ function directorState(options: { noUrl?: boolean } = {}): DirectorState {
         ready: true,
       },
     },
-    outputs: {
-      'out-a': { id: 'out-a', label: 'A', sources: [], busLevelDb: 0, pan: 0, ready: true, physicalRoutingAvailable: true, fallbackReason: 'none' },
-      'out-b': { id: 'out-b', label: 'B', sources: [], busLevelDb: -6, pan: -0.25, sinkId: 'sink-b', ready: true, physicalRoutingAvailable: true, fallbackReason: 'none' },
-    },
+    outputs: options.noOutputs
+      ? {}
+      : {
+          'out-a': { id: 'out-a', label: 'A', sources: [], busLevelDb: 0, pan: 0, ready: true, physicalRoutingAvailable: true, fallbackReason: 'none' },
+          'out-b': { id: 'out-b', label: 'B', sources: [], busLevelDb: -6, pan: -0.25, sinkId: 'sink-b', ready: true, physicalRoutingAvailable: true, fallbackReason: 'none' },
+        },
     visuals: {},
   } as unknown as DirectorState;
 }

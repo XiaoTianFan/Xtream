@@ -11,9 +11,9 @@ The control window loads a single bundle from `src/renderer/control.css` (`contr
 | 3 | `base.css` | Global reset, `body`, buttons, inputs, `input[type="range"].mini-slider` |
 | 4 | `shell.css` | App shell, rail, frame, launch / extraction overlays, loading scrims |
 | 5 | `patch-layout.css` | Patch grid, top bar, workspace, operator footer, surface cards (through pre-pool chrome) |
-| 6 | `patch-media-pool.css` | Panels, media pool columns, splitter, pool tabs, mappings |
-| 7 | `patch-mixer-display.css` | Mixer strips, meters, displays, previews, routing modals, patch output-source rows |
-| 8 | `stream.css` | Stream surface (header, transport, scene list, scene edit, subcues, stream-only media queries) |
+| 6 | `patch-media-pool/index.css` | Panels, media pool columns, splitter, pool tabs, mappings |
+| 7 | `patch-mixer-display/index.css` | Mixer strips, meters, displays, previews, routing modals, patch output-source rows |
+| 8 | `stream/index.css` | Stream surface (header, transport, scene list, scene edit, subcues, stream-only media queries) |
 | 9 | `config-layout.css` | Config surface: tab strip host, resizable bottom log pane (`--config-log-height`) |
 | 10 | `shared-components.css` | Cross-surface primitives: `.db-control`, `.badge`, `.status-footer`, `.sr-only`, `.icon-button`, `.control-icon` |
 

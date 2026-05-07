@@ -26,7 +26,7 @@
   overflow: hidden;
 }
 
-/* Tab strip: reuse Stream tab classes (`.stream-workspace-tab-row` + `.stream-tabs` + `.pool-tab` from stream.css). */
+/* Tab strip: reuse Stream tab classes (`.stream-workspace-tab-row` + `.stream-tabs` + `.pool-tab` from stream/index.css). */
 .config-surface-upper .stream-workspace-tab-row {
   flex-shrink: 0;
 }

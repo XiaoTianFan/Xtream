@@ -1,0 +1,424 @@
+.stream-flow-root {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stream-flow-toolbar {
+  position: absolute;
+  z-index: 6;
+  top: var(--compact);
+  right: var(--compact);
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-low);
+}
+
+.stream-flow-toolbar .icon-button {
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+}
+
+.stream-flow-canvas,
+.stream-gantt-root {
+  background:
+    linear-gradient(color-mix(in srgb, var(--border-subtle) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border-subtle) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--border-subtle) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border-subtle) 16%, transparent) 1px, transparent 1px);
+  background-color: var(--surface-low);
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    0 0;
+  background-size:
+    96px 96px,
+    96px 96px,
+    24px 24px,
+    24px 24px;
+}
+
+.stream-flow-canvas {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 520px;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.stream-flow-canvas:active {
+  cursor: grabbing;
+}
+
+.stream-flow-content-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.stream-flow-card-layer,
+.stream-flow-link-layer {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.stream-flow-link-layer {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.stream-flow-card-node {
+  position: absolute;
+  z-index: 2;
+  min-width: 10rem;
+  min-height: 6.5rem;
+  overflow: visible;
+}
+
+.stream-flow-card-node::after {
+  position: absolute;
+  top: -0.25rem;
+  bottom: -0.25rem;
+  left: 100%;
+  z-index: 2;
+  width: 2.3rem;
+  content: "";
+}
+
+.stream-flow-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0.38rem;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0.55rem 0.55rem 0;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.stream-flow-card:active {
+  cursor: grabbing;
+}
+
+.stream-flow-card-node button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.stream-flow-card--threaded {
+  background: color-mix(in srgb, var(--stream-thread-dim) 54%, var(--surface));
+}
+
+.stream-flow-card.stream-flow-card--authoring-error {
+  border-color: color-mix(in srgb, var(--status-critical) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface));
+}
+
+.stream-flow-card.status-running {
+  border-color: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 64%, var(--border-subtle));
+}
+
+.stream-flow-card.status-paused {
+  background: color-mix(in srgb, var(--accent-ochre) 14%, var(--surface));
+}
+
+.stream-flow-card.status-failed,
+.stream-flow-card.status-error {
+  background: color-mix(in srgb, var(--status-critical) 13%, var(--surface));
+}
+
+.stream-flow-card.status-preloading {
+  background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 16%, var(--surface));
+}
+
+.stream-flow-card.status-complete {
+  opacity: 0.78;
+}
+
+.stream-flow-card.status-skipped {
+  opacity: 0.58;
+}
+
+.stream-flow-card.status-disabled,
+.stream-flow-card--temporary-disabled {
+  opacity: 0.42;
+}
+
+.stream-flow-card.selected,
+.stream-flow-card.stream-playback-focus {
+  border-color: var(--stream-thread-bright, var(--accent-teal));
+  box-shadow: inset 0 0 0 1px var(--stream-thread-bright, var(--accent-teal));
+}
+
+.stream-flow-card.stream-edit-focus:not(.stream-playback-focus) {
+  border-top-color: var(--accent-ochre);
+  box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
+}
+
+.stream-flow-card.stream-edit-focus.stream-playback-focus {
+  border-color: var(--stream-thread-bright, var(--accent-teal));
+  box-shadow:
+    inset 0 0 0 1px var(--stream-thread-bright, var(--accent-teal)),
+    inset 0 2px 0 0 color-mix(in srgb, var(--accent-ochre) 75%, transparent);
+}
+
+.stream-flow-card-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.stream-flow-card-header strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-flow-number {
+  color: var(--stream-thread-bright, var(--accent-ochre));
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+}
+
+.stream-flow-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(2.4rem, 1fr));
+  gap: 0.25rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stream-flow-preview-tile,
+.stream-flow-preview-empty {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 2.2rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-low) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  line-height: 1.2;
+}
+
+.stream-flow-preview-tile img,
+.stream-flow-preview-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stream-flow-preview-tile span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.3rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-flow-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin: 0 -0.55rem;
+  padding: 0.34rem 0.55rem;
+  background: var(--stream-thread-dim, color-mix(in srgb, var(--surface-low) 86%, transparent));
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 0.64rem;
+  line-height: 1.2;
+}
+
+.stream-flow-card-footer span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-flow-card-hover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  opacity: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  transition: opacity 120ms ease;
+}
+
+.stream-flow-card:hover .stream-flow-card-hover,
+.stream-flow-card:focus-within .stream-flow-card-hover {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.stream-flow-hover-action.icon-button {
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+}
+
+.stream-flow-add-follower.icon-button {
+  position: absolute;
+  top: calc(50% - 0.78rem);
+  left: calc(100% + 0.45rem);
+  z-index: 3;
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-0.2rem);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.stream-flow-card-node:hover .stream-flow-add-follower,
+.stream-flow-card-node:focus-within .stream-flow-add-follower {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.stream-flow-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 0.85rem;
+  height: 0.85rem;
+  cursor: nwse-resize;
+}
+
+.stream-flow-resize-handle::after {
+  position: absolute;
+  right: 0.22rem;
+  bottom: 0.2rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1px solid var(--text-secondary);
+  border-bottom: 1px solid var(--text-secondary);
+  content: "";
+}
+
+.stream-flow-card-progress {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-subtle) 50%, transparent);
+}
+
+.stream-flow-card-progress::after {
+  display: block;
+  width: var(--stream-flow-progress, 0%);
+  height: 100%;
+  background: var(--stream-thread-bright, var(--accent-teal));
+  content: "";
+}
+
+.stream-flow-card-progress--indeterminate::after {
+  width: 42%;
+  animation: stream-row-progress-indeterminate 1.2s linear infinite;
+}
+
+.stream-flow-trigger-link,
+.stream-flow-warning-link,
+.stream-flow-main-curve,
+.stream-flow-main-curve-glow {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.stream-flow-trigger-link {
+  stroke: var(--stream-flow-link-color, var(--border-strong));
+  stroke-width: 1.8;
+  opacity: 0.82;
+}
+
+.stream-flow-main-curve {
+  stroke: color-mix(in srgb, var(--text-secondary) 38%, transparent);
+  stroke-dasharray: 6 8;
+  stroke-linecap: round;
+  stroke-width: 2.2;
+}
+
+.stream-flow-main-curve-glow {
+  stroke: var(--accent-teal);
+  stroke-dasharray: 1;
+  stroke-dashoffset: calc((1 - var(--stream-flow-main-progress, 0)) * 1);
+  stroke-linecap: round;
+  stroke-width: 4;
+  opacity: 0.42;
+}
+
+.stream-flow-main-curve-glow.is-running {
+  animation: stream-flow-curve-pulse 1.45s ease-in-out infinite;
+}
+
+.stream-flow-warning-link {
+  stroke: color-mix(in srgb, var(--status-critical) 62%, transparent);
+  stroke-dasharray: 5 5;
+  stroke-width: 1.5;
+}
+
+.stream-flow-warning-stub rect {
+  fill: color-mix(in srgb, var(--status-critical) 12%, var(--surface));
+  stroke: color-mix(in srgb, var(--status-critical) 52%, var(--border-subtle));
+  vector-effect: non-scaling-stroke;
+}
+
+.stream-flow-warning-stub text {
+  fill: var(--text-secondary);
+  font-size: 0.68rem;
+  font-family: var(--font-data);
+}
+
+@keyframes stream-flow-curve-pulse {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+
+  50% {
+    opacity: 0.72;
+  }
+}
+

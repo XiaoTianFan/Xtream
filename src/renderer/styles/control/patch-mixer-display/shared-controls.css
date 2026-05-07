@@ -1,0 +1,67 @@
+.mixer-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--compact);
+}
+
+.mixer-toggles button {
+  width: 1.7rem;
+  min-width: 1.7rem;
+  padding: 0;
+}
+
+.mixer-toggles button.active {
+  border-color: var(--accent-ochre);
+  color: var(--accent-ochre);
+}
+
+.asset-meta {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-action {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  min-height: 1.25rem;
+  opacity: 0;
+  padding: 0;
+}
+
+.media-list-region .asset-row:hover .row-action,
+.media-list-region .asset-row:focus-within .row-action {
+  opacity: 1;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 8rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-deep);
+  padding: var(--compact);
+}
+
+.context-menu-item {
+  width: 100%;
+  min-height: 1.55rem;
+  padding: 0.2rem 0.4rem;
+  text-align: left;
+}
+

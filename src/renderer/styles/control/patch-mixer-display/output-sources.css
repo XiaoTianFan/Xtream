@@ -1,0 +1,99 @@
+.output-source-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 20rem) minmax(22rem, 1fr) auto;
+  gap: var(--gutter);
+  align-items: end;
+  border: 1px solid var(--outline-variant);
+  background: color-mix(in srgb, var(--surface-low) 72%, var(--blend-black));
+  padding: var(--gutter);
+}
+
+.output-source-info {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  align-self: center;
+}
+
+.output-source-info > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.output-source-info > small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.output-source-level {
+  min-width: 0;
+  width: 100%;
+}
+
+.output-source-actions {
+  align-self: end;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.output-source-actions button:not(:last-child) {
+  min-width: var(--utility-button-height);
+  padding-right: 0.45rem;
+  padding-left: 0.45rem;
+}
+
+.output-source-actions button.active {
+  border-color: var(--accent-ochre);
+  color: var(--accent-ochre);
+}
+
+.output-source-actions button {
+  white-space: nowrap;
+}
+
+.output-source-list .db-control input[type="number"] {
+  box-sizing: border-box;
+  height: var(--utility-button-height);
+  min-height: var(--utility-button-height);
+  padding: 0 0.4rem;
+  line-height: 1.2;
+  font-size: 0.72rem;
+}
+
+.output-source-list .db-control {
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 4.5rem;
+}
+
+.button-row.compact {
+  gap: var(--compact);
+}
+
+.operator-footer .button-row {
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .output-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .output-source-mid,
+  .output-source-actions {
+    grid-column: 1 / -1;
+  }
+}

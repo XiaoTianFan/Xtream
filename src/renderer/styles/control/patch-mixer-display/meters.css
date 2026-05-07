@@ -1,0 +1,264 @@
+/*
+ * Scale ticks are position:absolute → no intrinsic width. In-flow ::after (“-60”) sizes max-content column.
+ * Ticks are left-aligned so short labels don’t leave a wide empty band on the strip side of the graticule.
+ */
+.output-meter {
+  --output-meter-lane-w: 1.65rem; /* not full strip width: narrow VU, stable vs lane count */
+
+  display: grid;
+  grid-template-columns: max-content var(--output-meter-lane-w);
+  grid-template-rows: minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  width: min-content;
+  min-width: min-content;
+  min-height: 0;
+  gap: 0.2rem 0.12rem;
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.output-meter-scale {
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  z-index: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: visible;
+  color: var(--scale-text);
+  font-size: 0.5rem;
+  line-height: 1;
+  text-align: right;
+}
+
+/* Longest tick text; establishes column width (abs children do not) */
+.output-meter-scale::after {
+  content: '-60';
+  display: inline-block;
+  height: 0;
+  overflow: hidden;
+  vertical-align: top;
+  font-size: 0.5rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: transparent;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.output-meter-scale-tick {
+  position: absolute;
+  right: 0;
+  left: auto;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding-right: 0.02rem; /* sit close to the VU column */
+  white-space: nowrap;
+  text-align: right;
+  text-overflow: clip;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.output-meter-lanes {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  /* Split the fixed well evenly; minmax(…,1fr) was letting the column grow with parent space. */
+  grid-template-columns: repeat(var(--meter-lane-count, 1), minmax(0, 1fr));
+  gap: 1px;
+}
+
+.output-meter-lane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.12rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.output-meter-segments {
+  display: grid;
+  grid-template-rows: repeat(20, minmax(2px, 1fr));
+  gap: 1px;
+  align-content: stretch;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--meter-well-border);
+  background: var(--meter-bg);
+  padding: 1px;
+}
+
+.output-meter-segments span {
+  background: var(--meter-segment-inactive);
+}
+
+.output-meter-segments span[data-active="true"][data-zone="nominal"] {
+  background: var(--meter-nominal);
+}
+
+.output-meter-segments span[data-active="true"][data-zone="approaching"] {
+  background: var(--meter-zone-approaching);
+}
+
+.output-meter-segments span[data-active="true"][data-zone="hot"] {
+  background: var(--accent-ochre);
+}
+
+.output-meter-segments span[data-active="true"][data-zone="danger"] {
+  background: var(--status-critical);
+}
+
+.output-meter-lane-label,
+.output-meter-peak {
+  overflow: hidden;
+  font-size: 0.5rem;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.output-meter-peak {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5ch;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.audio-fader {
+  --fader-label-inset: 0.62rem;
+  position: relative;
+  display: grid;
+  align-self: stretch;
+  place-items: center;
+  /* Border box: drag column + inline-end graticule for dB labels */
+  box-sizing: border-box;
+  width: 2.27rem;
+  min-width: 2.27rem;
+  padding-inline-end: var(--fader-label-inset);
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+.audio-fader-rail {
+  position: absolute;
+  inset: -0.1rem auto -0.1rem calc((100% - var(--fader-label-inset)) / 2);
+  width: 0.34rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--meter-well-border);
+  background: var(--fader-rail-gradient);
+  box-shadow:
+    0 0 0 1px var(--shadow-inset-light),
+    0 0.4rem 1.2rem var(--shadow-heavy) inset;
+}
+
+.audio-fader-cap {
+  position: absolute;
+  left: calc((100% - var(--fader-label-inset)) / 2);
+  top: calc(100% - var(--fader-position, 83.33%));
+  z-index: 1;
+  width: 1.1rem;
+  height: 1.62rem;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--fader-cap-border);
+  background:
+    var(--fader-cap-highlight-gradient),
+    var(--fader-cap-body-gradient);
+  /* Softer x-extent so less is clipped at strip edge */
+  box-shadow:
+    0 2px 4px var(--shadow-medium),
+    0 0 0 1px var(--shadow-soft) inset;
+  pointer-events: none;
+}
+
+.audio-fader-scale {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--fader-label-inset);
+  min-width: 0;
+  pointer-events: none;
+  color: var(--scale-text);
+  font-size: 0.5rem;
+  line-height: 1;
+  text-align: left;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-fader-scale-tick {
+  position: absolute;
+  right: 0;
+  left: 0;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  padding-left: 0.05rem; /* space between rail and first digit */
+}
+
+input[type="range"].mini-slider.audio-fader-input {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: calc(100% - var(--fader-label-inset));
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  opacity: 0;
+  cursor: ns-resize;
+}
+
+input[type="range"].mini-slider.audio-fader-input::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+input[type="range"].mini-slider.audio-fader-input::-webkit-slider-thumb {
+  width: 1.5rem;
+  height: 1.75rem;
+  margin: 0;
+  background: transparent;
+}
+
+input[type="range"].mini-slider.audio-fader-input::-moz-range-track {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+input[type="range"].mini-slider.audio-fader-input::-moz-range-progress {
+  background: transparent;
+}
+
+input[type="range"].mini-slider.audio-fader-input::-moz-range-thumb {
+  width: 1.5rem;
+  height: 1.75rem;
+  border: 0;
+  background: transparent;
+}
+

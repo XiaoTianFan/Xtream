@@ -1,0 +1,252 @@
+.stream-output-gantt-root {
+  display: grid;
+  grid-template-rows: auto minmax(7.5rem, 1fr);
+  min-width: 0;
+  min-height: 11rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 84%, transparent);
+  background: var(--surface-low);
+}
+
+.stream-output-gantt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--compact);
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.32rem 0.42rem;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.stream-output-gantt-toolbar h3 {
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-output-gantt-toolbar .icon-button {
+  width: 1.45rem;
+  min-width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+}
+
+.stream-output-gantt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.42rem;
+}
+
+.stream-output-gantt-body--empty {
+  justify-content: center;
+}
+
+.stream-output-gantt-empty {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.18rem;
+  min-height: 6.5rem;
+  border: 1px dashed var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.stream-output-gantt-empty strong {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.stream-output-gantt-row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(14rem, 1fr);
+  gap: 0.32rem;
+  align-items: stretch;
+  min-height: 2.35rem;
+  width: 100%;
+  max-width: none;
+}
+
+.stream-output-gantt-row-header {
+  display: grid;
+  align-content: center;
+  gap: 0.08rem;
+  min-width: 0;
+  border-left: 2px solid color-mix(in srgb, var(--stream-thread-bright, var(--border-strong)) 62%, transparent);
+  padding: 0.18rem 0.18rem 0.18rem 0.35rem;
+}
+
+.stream-output-gantt-row.is-live .stream-output-gantt-row-header {
+  border-left-color: var(--accent-teal);
+}
+
+.stream-output-gantt-row-header strong,
+.stream-output-gantt-row-audio,
+.stream-output-gantt-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-output-gantt-row-header strong {
+  color: var(--text-primary);
+  font-size: 0.68rem;
+  line-height: 1.05;
+}
+
+.stream-output-gantt-row-audio {
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  line-height: 1.05;
+}
+
+.stream-output-gantt-row-meta {
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 0.54rem;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.stream-output-gantt-track {
+  position: relative;
+  min-width: 0;
+  min-height: 2.35rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--border-subtle) 18%, transparent) 0 1px,
+      transparent 1px 10%
+    ),
+    color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.stream-output-gantt-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--stream-output-gantt-cursor, 0%);
+  z-index: 3;
+  width: 2px;
+  background: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+
+.stream-output-gantt-row.is-live .stream-output-gantt-cursor {
+  background: var(--accent-teal);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--accent-teal) 38%, transparent);
+}
+
+.stream-output-gantt-bar {
+  position: absolute;
+  top: 0.34rem;
+  bottom: 0.34rem;
+  z-index: 2;
+  display: grid;
+  align-content: center;
+  min-width: 0.85rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 58%, var(--border-subtle));
+  border-radius: 3px;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 30%, transparent) 0 var(--stream-output-gantt-bar-cursor, 0%),
+      transparent var(--stream-output-gantt-bar-cursor, 0%) 100%
+    ),
+    color-mix(in srgb, var(--stream-thread-dim, var(--surface-low)) 76%, var(--surface));
+  color: var(--text-primary);
+  padding: 0.16rem 0.26rem;
+}
+
+.stream-output-gantt-bar.is-live {
+  border-color: color-mix(in srgb, var(--accent-teal) 72%, var(--stream-thread-bright, var(--accent-teal)));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-teal) 26%, transparent);
+}
+
+.stream-output-gantt-bar.is-orphaned {
+  opacity: 0.68;
+}
+
+.stream-output-gantt-bar-title,
+.stream-output-gantt-bar-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-output-gantt-bar-title {
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.stream-output-gantt-bar-meta {
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 0.5rem;
+  line-height: 1.05;
+}
+
+.stream-output-detail-strip {
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.stream-output-detail-strip .mixer-strip {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+
+@media (max-width: 980px) {
+  .stream-scene-edit {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-scene-row {
+    grid-template-columns: 1.5rem 2.1rem minmax(0, 1fr) minmax(0, 0.65fr) minmax(0, 0.65fr) 3rem minmax(4.25rem, auto);
+    gap: 0.3rem;
+    font-size: 0.74rem;
+  }
+
+  .stream-output-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-output-detail-strip {
+    justify-content: flex-start;
+  }
+
+  .stream-output-gantt-row {
+    grid-template-columns: 1fr;
+    gap: 0.18rem;
+  }
+
+  .stream-output-gantt-row-header {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 0.35rem;
+  }
+}

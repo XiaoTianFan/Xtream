@@ -1,0 +1,221 @@
+.stream-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--compact);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+  padding: calc(var(--gutter) + var(--compact)) var(--pane-padding) var(--compact);
+}
+
+.stream-header-main {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--gutter);
+  min-width: 0;
+}
+
+.stream-header-center {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gutter);
+  min-width: 0;
+  max-width: 100%;
+  justify-self: center;
+  width: 100%;
+}
+
+.stream-header .stream-transport.transport-cluster {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+}
+
+.stream-timecode-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.stream-duration-total {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.stream-transport-stack {
+  display: grid;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.stream-transport-status {
+  max-width: 22rem;
+  color: var(--accent-ochre);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stream-header .transport-cluster button {
+  height: var(--transport-button-height);
+  min-height: var(--transport-button-height);
+  padding-block: 0;
+}
+
+.stream-header .transport-cluster .icon-button {
+  width: var(--transport-button-height);
+  min-width: var(--transport-button-height);
+}
+
+.stream-header .transport-cluster .control-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.stream-header .transport-cluster .stream-rate-button {
+  width: auto;
+  min-width: 5rem;
+  padding-inline: 0.55rem;
+  font-size: 0.9rem;
+}
+
+.stream-header .utility-cluster button {
+  height: var(--utility-button-height);
+  min-height: var(--utility-button-height);
+}
+
+.stream-header .utility-cluster {
+  flex-wrap: nowrap;
+}
+
+.stream-transport,
+.stream-show-actions {
+  display: flex;
+  gap: var(--compact);
+  align-items: center;
+}
+
+.stream-timeline-row {
+  display: block;
+  min-width: 0;
+}
+
+.stream-timeline-row .timeline-control {
+  position: relative;
+  width: 100%;
+}
+
+.stream-timeline-segment-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  overflow: hidden;
+  background: var(--stream-rail-segments, var(--outline-variant));
+  pointer-events: none;
+}
+
+.stream-timeline-segment-progress {
+  width: var(--progress, 0%);
+  height: 100%;
+  background: var(--stream-rail-progress-segments, transparent);
+}
+
+.stream-timeline-slider.stream-timeline-slider {
+  position: relative;
+  z-index: 1;
+  --slider-fill: transparent;
+  --slider-rail: transparent;
+  accent-color: transparent;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-webkit-slider-thumb {
+  border-color: color-mix(in srgb, var(--surface) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
+}
+
+.stream-timeline-slider.stream-timeline-slider::-moz-range-track,
+.stream-timeline-slider.stream-timeline-slider::-moz-range-progress {
+  background: transparent;
+}
+
+.stream-timeline-slider.stream-timeline-slider::-moz-range-thumb {
+  border-color: color-mix(in srgb, var(--surface) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--text-primary) 72%, var(--surface));
+}
+
+.stream-scene-title-stack {
+  display: grid;
+  align-content: center;
+  align-items: start;
+  justify-items: start;
+  gap: 0.1rem;
+  box-sizing: border-box;
+  flex: 1 1 0;
+  max-width: var(--header-text-stack-width);
+  min-width: 0;
+  line-height: 1.1;
+  text-align: left;
+}
+
+.stream-header-editable,
+.stream-header-inline-input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.stream-header-editable {
+  overflow: hidden;
+  border: 1px solid transparent;
+  padding: 0.05rem 0;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-header-editable:not(.disabled) {
+  cursor: text;
+}
+
+.stream-header-editable:not(.disabled):hover,
+.stream-header-editable:not(.disabled):focus-visible {
+  border-bottom-color: var(--accent-teal);
+  outline: none;
+}
+
+.stream-title-label {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.stream-note-label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.stream-header-editable.empty {
+  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
+}
+
+.stream-header-inline-input {
+  width: 100%;
+  min-height: 0;
+  border-color: var(--accent-teal);
+  padding: 0.05rem 0.25rem;
+  background: var(--surface-low);
+  line-height: 1.1;
+}
+

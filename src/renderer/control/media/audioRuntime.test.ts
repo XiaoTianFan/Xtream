@@ -10,6 +10,7 @@ import {
   getAudioRuntimeDebugSnapshot,
   getRuntimeAudioTarget,
   getEffectiveOutputGain,
+  playAudioSubCuePreview,
   resetAudioRuntimeForTests,
   syncVirtualAudioGraph,
 } from './audioRuntime';
@@ -282,6 +283,37 @@ describe('getRuntimeAudioTarget', () => {
 
     expect(getRuntimeAudioTarget(source, 11, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 3, audible: true });
     expect(getRuntimeAudioTarget(source, 15, { enabled: false, startSeconds: 0 }).audible).toBe(false);
+  });
+
+  it('keeps infinite selected-range Stream audio audible beyond the source play time cap', () => {
+    const source = {
+      ...graphTestState().audioSources.s1,
+      durationSeconds: undefined,
+      playbackRate: 1,
+      runtimeOffsetSeconds: 0,
+      runtimeSourceStartSeconds: 2,
+      runtimeSourceEndSeconds: 6,
+      runtimeLoop: { enabled: true, startSeconds: 2, endSeconds: 6 },
+    };
+
+    expect(getRuntimeAudioTarget(source, 13, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 3, audible: true });
+  });
+});
+
+describe('audio sub-cue preview runtime', () => {
+  it('automatically disposes finite previews at play time', () => {
+    playAudioSubCuePreview({
+      previewId: 'preview-a',
+      audioSourceId: 's1',
+      url: 'file:///F:/media/a.wav',
+      outputId: 'o1',
+      playbackRate: 1,
+      playTimeMs: 1000,
+    });
+
+    vi.advanceTimersByTime(1000);
+
+    expect(closeContext).toHaveBeenCalledTimes(1);
   });
 });
 

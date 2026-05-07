@@ -65,6 +65,8 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   let previewStartedAtMs: number | undefined;
   let previewPausedAtMs = 0;
   let previewFrame: number | undefined;
+  let previewStopTimer: number | undefined;
+  let disposed = false;
 
   const previewId = `subcue-preview:${sub.id}`;
   const root = document.createElement('div');
@@ -77,23 +79,16 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (!payload || !window.xtream.audioRuntime.preview) {
       return;
     }
-    void window.xtream.audioRuntime.preview({ type: 'play-audio-subcue-preview', payload });
-    previewPlaying = true;
-    previewStartedAtMs = performance.now();
-    previewPausedAtMs = 0;
-    startPreviewTicker();
+    startPreview(payload, previewPausedAtMs);
   });
   const pauseButton = createRailButton('Pause', () => {
-    if (!window.xtream.audioRuntime.preview) {
-      return;
-    }
-    void window.xtream.audioRuntime.preview({ type: 'pause-audio-subcue-preview', previewId });
-    previewPlaying = false;
-    previewPausedAtMs = getPreviewElapsedMs();
-    render();
+    pausePreview();
   });
   playButton.classList.add('stream-audio-waveform-transport');
   pauseButton.classList.add('stream-audio-waveform-transport');
+  const previewAvailable = Boolean(buildAudioSubCuePreviewPayload(sub, currentState, previewId)) && Boolean(window.xtream.audioRuntime.preview);
+  playButton.disabled = !previewAvailable;
+  pauseButton.disabled = !previewAvailable;
 
   const levelButton = createModeButton('Level', true, () => {
     automationMode = 'level';
@@ -127,20 +122,20 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     createDraggableNumberField(
       'Play ms',
       Math.round(sub.durationOverrideMs ?? getAudioSubCueBaseDurationMs(sub, source?.durationSeconds) ?? selectedDurationMs ?? 0),
-      (durationOverrideMs) => patchSubCue({ durationOverrideMs }),
+      (durationOverrideMs) => patchAndRefreshPreview({ durationOverrideMs }),
       { min: 0, step: 1, dragStep: 5, integer: true, disabled: infinite },
     ),
-    createInfiniteLoopToggle(infinite, (enabled) => patchSubCue({ loop: enabled ? infiniteLoopPolicy() : { enabled: false } })),
-    createDraggableNumberField('Start ms', sub.startOffsetMs ?? 0, (startOffsetMs) => patchSubCue({ startOffsetMs }), {
+    createInfiniteLoopToggle(infinite, (enabled) => patchAndRefreshPreview({ loop: enabled ? infiniteLoopPolicy() : { enabled: false } })),
+    createDraggableNumberField('Start ms', sub.startOffsetMs ?? 0, (startOffsetMs) => patchAndRefreshPreview({ startOffsetMs }), {
       min: 0,
       step: 1,
       dragStep: 5,
       integer: true,
     }),
     createDraggableNumberField('Pitch', clampPitchShiftSemitones(sub.pitchShiftSemitones), (pitchShiftSemitones) => {
-      patchSubCue({ pitchShiftSemitones: clampPitchShiftSemitones(pitchShiftSemitones) });
+      patchAndRefreshPreview({ pitchShiftSemitones: clampPitchShiftSemitones(pitchShiftSemitones) });
     }, { min: -12, max: 12, step: 1, dragStep: 0.05 }),
-    createDraggableNumberField('Rate', sub.playbackRate ?? 1, (playbackRate) => patchSubCue({ playbackRate: Math.max(0.01, playbackRate ?? 1) }), {
+    createDraggableNumberField('Rate', sub.playbackRate ?? 1, (playbackRate) => patchAndRefreshPreview({ playbackRate: Math.max(0.01, playbackRate ?? 1) }), {
       min: 0.01,
       step: 0.01,
       dragStep: 0.002,
@@ -155,6 +150,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const section = createSubCueSection('Timing', root);
   const resizeObserver = new ResizeObserver(() => render());
   resizeObserver.observe(stage);
+  const disconnectObserver = createDisconnectObserver(section, () => cleanup());
 
   canvas.addEventListener('pointermove', (event) => {
     const point = canvasPoint(canvas, event);
@@ -195,13 +191,13 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     const point = canvasPoint(canvas, event);
     const target = hitTest(point.x, point.y);
     if (target.type === 'fade-in') {
-      patchSubCue({ fadeIn: { durationMs: sub.fadeIn?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeIn?.curve) } });
+      patchAndRefreshPreview({ fadeIn: { durationMs: sub.fadeIn?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeIn?.curve) } });
     } else if (target.type === 'fade-out') {
-      patchSubCue({ fadeOut: { durationMs: sub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeOut?.curve) } });
+      patchAndRefreshPreview({ fadeOut: { durationMs: sub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(sub.fadeOut?.curve) } });
     } else if (target.type === 'automation-point') {
       const key = automationMode === 'level' ? 'levelAutomation' : 'panAutomation';
       const points = (activeAutomationPoints() ?? []).filter((_point, index) => index !== target.index);
-      patchSubCue({ [key]: points.length ? points : undefined } as Partial<PersistedAudioSubCueConfig>);
+      patchAndRefreshPreview({ [key]: points.length ? points : undefined } as Partial<PersistedAudioSubCueConfig>);
     }
   });
 
@@ -257,7 +253,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
         endMs: drag.target.type === 'range-end' ? mediaMs : range.endMs ?? sourceDurationMs,
         durationMs: sourceDurationMs,
       });
-      patchSubCue({
+      patchAndRefreshPreview({
         sourceStartMs: next.sourceStartMs,
         sourceEndMs: next.sourceEndMs,
         durationOverrideMs: Math.round((next.selectedDurationMs ?? 0) / Math.max(0.01, sub.playbackRate ?? 1)),
@@ -265,7 +261,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       return;
     }
     if (drag.target.type === 'fade-in') {
-      patchSubCue({
+      patchAndRefreshPreview({
         fadeIn: {
           durationMs: clampFadeDurationMs(mediaMs - range.startMs, range.durationMs),
           curve: sub.fadeIn?.curve ?? 'linear',
@@ -274,7 +270,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       return;
     }
     if (drag.target.type === 'fade-out') {
-      patchSubCue({
+      patchAndRefreshPreview({
         fadeOut: {
           durationMs: clampFadeDurationMs((range.endMs ?? sourceDurationMs) - mediaMs, range.durationMs),
           curve: sub.fadeOut?.curve ?? 'linear',
@@ -284,6 +280,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
     if (drag.target.type === 'automation-point') {
       applyAutomationPoint(x, y, drag.target.index);
+      return;
+    }
+    if (drag.target.type === 'automation-body') {
+      applyAutomationPoint(x, y);
     }
   }
 
@@ -302,7 +302,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     const next = existingIndex === undefined ? [...points, point] : points.map((current, index) => (index === existingIndex ? point : current));
     const clamped = clampAutomationPointsForWaveform(next, automationMode, selectedDuration);
     const key = automationMode === 'level' ? 'levelAutomation' : 'panAutomation';
-    patchSubCue({ [key]: clamped } as Partial<PersistedAudioSubCueConfig>);
+    patchAndRefreshPreview({ [key]: clamped } as Partial<PersistedAudioSubCueConfig>);
   }
 
   function render(): void {
@@ -476,6 +476,123 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     };
     previewFrame = window.requestAnimationFrame(tick);
   }
+
+  function patchAndRefreshPreview(update: Partial<PersistedAudioSubCueConfig>): void {
+    patchSubCue(update);
+    if (!previewPlaying) {
+      return;
+    }
+    const payload = buildAudioSubCuePreviewPayload({ ...sub, ...update }, currentState, previewId);
+    if (!payload || !window.xtream.audioRuntime.preview) {
+      stopPreview(true);
+      return;
+    }
+    startPreview(payload, 0);
+  }
+
+  function startPreview(payload: AudioSubCuePreviewPayload, resumeFromMs: number): void {
+    disconnectObserver.markConnected();
+    clearPreviewStopTimer();
+    void window.xtream.audioRuntime.preview({ type: 'play-audio-subcue-preview', payload });
+    previewPlaying = true;
+    previewPausedAtMs = 0;
+    previewStartedAtMs = performance.now() - Math.max(0, resumeFromMs);
+    schedulePreviewUiStop(payload, resumeFromMs);
+    startPreviewTicker();
+    render();
+  }
+
+  function pausePreview(): void {
+    if (!window.xtream.audioRuntime.preview || (!previewPlaying && previewPausedAtMs <= 0)) {
+      return;
+    }
+    void window.xtream.audioRuntime.preview({ type: 'pause-audio-subcue-preview', previewId });
+    previewPlaying = false;
+    previewPausedAtMs = getPreviewElapsedMs();
+    clearPreviewStopTimer();
+    render();
+  }
+
+  function stopPreview(sendCommand: boolean): void {
+    if (sendCommand && window.xtream.audioRuntime.preview && (previewPlaying || previewPausedAtMs > 0)) {
+      void window.xtream.audioRuntime.preview({ type: 'stop-audio-subcue-preview', previewId });
+    }
+    previewPlaying = false;
+    previewStartedAtMs = undefined;
+    previewPausedAtMs = 0;
+    clearPreviewStopTimer();
+    if (previewFrame !== undefined) {
+      window.cancelAnimationFrame(previewFrame);
+      previewFrame = undefined;
+    }
+    render();
+  }
+
+  function schedulePreviewUiStop(payload: AudioSubCuePreviewPayload, resumeFromMs: number): void {
+    clearPreviewStopTimer();
+    if (payload.loop?.enabled || payload.playTimeMs === undefined) {
+      return;
+    }
+    previewStopTimer = window.setTimeout(() => {
+      stopPreview(false);
+    }, Math.max(0, payload.playTimeMs - resumeFromMs));
+  }
+
+  function clearPreviewStopTimer(): void {
+    if (previewStopTimer !== undefined) {
+      window.clearTimeout(previewStopTimer);
+      previewStopTimer = undefined;
+    }
+  }
+
+  function cleanup(): void {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    disconnectObserver.disconnect();
+    resizeObserver.disconnect();
+    window.removeEventListener('beforeunload', cleanup);
+    stopPreview(true);
+  }
+}
+
+function createDisconnectObserver(element: HTMLElement, cleanup: () => void): { disconnect: () => void; markConnected: () => void } {
+  let wasConnected = element.isConnected;
+  const createdAtMs = performance.now();
+  let interval: number | undefined;
+  const stopWatching = () => {
+    observer.disconnect();
+    if (interval !== undefined) {
+      window.clearInterval(interval);
+      interval = undefined;
+    }
+  };
+  const checkConnection = () => {
+    if (element.isConnected) {
+      wasConnected = true;
+      return;
+    }
+    if (wasConnected) {
+      cleanup();
+      return;
+    }
+    if (performance.now() - createdAtMs > 1000) {
+      stopWatching();
+    }
+  };
+  const observer = new MutationObserver(() => {
+    checkConnection();
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  interval = window.setInterval(checkConnection, 250);
+  window.addEventListener('beforeunload', cleanup);
+  return {
+    disconnect: stopWatching,
+    markConnected: () => {
+      wasConnected = wasConnected || element.isConnected;
+    },
+  };
 }
 
 function createRailButton(label: string, onClick: () => void): HTMLButtonElement {

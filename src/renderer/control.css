@@ -9,8 +9,8 @@
 @import "./styles/control/shell.css";
 @import "./styles/control/shell-modal.css";
 @import "./styles/control/patch-layout.css";
-@import "./styles/control/patch-media-pool.css";
-@import "./styles/control/patch-mixer-display.css";
-@import "./styles/control/stream.css";
+@import "./styles/control/patch-media-pool/index.css";
+@import "./styles/control/patch-mixer-display/index.css";
+@import "./styles/control/stream/index.css";
 @import "./styles/control/config-layout.css";
 @import "./styles/control/shared-components.css";

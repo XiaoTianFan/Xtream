@@ -231,6 +231,81 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.visuals[visualId]).toMatchObject({ opacity: 0.4 });
   });
 
+  it('does not project infinite audio sub-cues with the source duration as a play-time cap', () => {
+    const state = {
+      paused: true,
+      rate: 1,
+      anchorWallTimeMs: 0,
+      offsetSeconds: 0,
+      loop: { enabled: false, startSeconds: 0 },
+      globalAudioMuted: false,
+      globalDisplayBlackout: false,
+      globalAudioMuteFadeOutSeconds: 1,
+      globalDisplayBlackoutFadeOutSeconds: 1,
+      visuals: {},
+      audioSources: {
+        a1: { id: 'a1', type: 'external-file', label: 'Loop', url: 'file://loop.wav', durationSeconds: 4, ready: true },
+      },
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [],
+          busLevelDb: 0,
+          ready: true,
+          physicalRoutingAvailable: true,
+        },
+      },
+      displays: {},
+      activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+      audioRendererReady: true,
+      readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+      corrections: { displays: {} },
+      previews: {},
+      audioExtractionFormat: 'm4a',
+      controlDisplayPreviewMaxFps: 15,
+      performanceMode: false,
+    } as DirectorState;
+    const streamState = {
+      stream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      validationMessages: [],
+      runtime: {
+        status: 'running',
+        originWallTimeMs: 0,
+        offsetStreamMs: 0,
+        sceneStates: {},
+        activeAudioSubCues: [
+          {
+            sceneId: 'scene-1',
+            subCueId: 'aud',
+            audioSourceId: 'a1',
+            outputId: 'output-main',
+            streamStartMs: 0,
+            localStartMs: 0,
+            sourceStartMs: 1000,
+            sourceEndMs: 3000,
+            levelDb: 0,
+            playbackRate: 1,
+            mediaLoop: { enabled: true, startSeconds: 1, endSeconds: 3 },
+          },
+        ],
+      },
+    } satisfies StreamEnginePublicState;
+
+    const derived = deriveDirectorStateForStream(state, streamState);
+    const audioId = derived.outputs['output-main'].sources[0]?.audioSourceId ?? '';
+
+    expect(derived.audioSources[audioId]?.durationSeconds).toBeUndefined();
+    expect(derived.audioSources[audioId]).toMatchObject({
+      runtimeSourceStartSeconds: 1,
+      runtimeSourceEndSeconds: 3,
+      runtimeLoop: { enabled: true, startSeconds: 1, endSeconds: 3 },
+    });
+  });
+
   it('projects overlapping scene cues with their own absolute runtime offsets', () => {
     vi.spyOn(Date, 'now').mockReturnValue(40_000);
     const state = {

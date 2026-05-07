@@ -1,6 +1,7 @@
 import { app, ipcMain, type BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mergeAppControlSettings } from '../appControlSettings';
 import type { CapturePermissionController } from '../capturePermissions';
 import { getControlUiStateForPath, saveControlUiStateForPath } from '../controlUiStateStore';
@@ -412,6 +413,14 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     const state = director.updateAudioMetadata(report);
     streamEngine.refreshMediaDurations();
     return state;
+  });
+
+  ipcMain.handle('audio-source:read-file-buffer', async (_event, url: string): Promise<ArrayBuffer | undefined> => {
+    if (typeof url !== 'string' || !url.startsWith('file:')) {
+      return undefined;
+    }
+    const data = await fs.promises.readFile(fileURLToPath(url));
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   });
 
   ipcMain.handle('output:create', () => {

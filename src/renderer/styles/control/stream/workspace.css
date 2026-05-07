@@ -1,0 +1,126 @@
+.stream-middle {
+  display: grid;
+  /* Third track reserves space for list/flow so the media column cannot eat the whole row. */
+  grid-template-columns: minmax(260px, var(--stream-media-width)) var(--splitter-hit) minmax(12.5rem, 1fr);
+  /* Never collapse below three side-by-side tracks; narrower viewports scroll (see .stream-surface-panel). */
+  min-width: calc(260px + var(--splitter-hit) + 12.5rem);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stream-media-pool,
+.stream-workspace-pane,
+.stream-bottom-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--panel-padding-top) var(--pane-padding) var(--pane-padding);
+}
+
+.stream-workspace-content,
+.stream-bottom-content,
+.stream-detail-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.stream-workspace-tab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  background: var(--surface-low);
+}
+
+.stream-workspace-tab-row .stream-tabs {
+  min-width: 0;
+}
+
+.stream-tabs {
+  position: relative;
+  display: flex;
+  gap: 0;
+  min-width: 0;
+  background: var(--surface-low);
+  padding: var(--compact) var(--compact) 0;
+}
+
+.stream-tab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  background: var(--surface-low);
+}
+
+.stream-tab-row .stream-tabs {
+  min-width: 0;
+}
+
+.stream-tab-row > .icon-button {
+  align-self: center;
+  margin: var(--compact) var(--compact) var(--compact) 0;
+  width: 1.4rem;
+  min-width: 1.4rem;
+  min-height: 1.4rem;
+  height: 1.4rem;
+}
+
+.stream-tabs::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  height: 1px;
+  background: var(--border-subtle);
+  content: "";
+}
+
+.stream-tabs .pool-tab {
+  position: relative;
+  z-index: 1;
+  min-height: 1.3rem;
+  padding: 0.1rem 0.45rem;
+  border-color: transparent;
+  border-top-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.stream-tabs .pool-tab.active,
+.stream-tabs .pool-tab:focus-visible {
+  border-color: transparent;
+  border-top-color: var(--accent-teal);
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.stream-tabs .pool-tab.active::after,
+.stream-tabs .pool-tab:focus-visible::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  height: 1px;
+  background: var(--surface);
+  content: "";
+}
+
+.stream-workspace-content,
+.stream-bottom-content {
+  height: calc(100% - 1.55rem);
+}
+
+.stream-bottom-content:has(> .stream-scene-edit) {
+  overflow: hidden;
+}
+
+.stream-bottom-content > .output-panel,
+.stream-bottom-content > .display-list {
+  height: calc(100% - var(--gutter));
+  margin-top: var(--gutter);
+}
+

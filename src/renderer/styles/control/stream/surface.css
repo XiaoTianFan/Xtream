@@ -1,0 +1,13 @@
+/** Stream surface: header, timeline, scenes, scene edit / subcues, stream `@media`. */
+
+.stream-surface {
+  --stream-media-width: 21rem;
+  --stream-bottom-height: 18rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) var(--splitter-hit) minmax(220px, var(--stream-bottom-height));
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 0;
+}
+

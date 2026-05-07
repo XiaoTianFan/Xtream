@@ -1,0 +1,202 @@
+.visual-pool-card {
+  --visual-pool-grid-badge-w: 1.65rem;
+  --visual-pool-grid-badge-h: 1.125rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+
+.visual-pool-card:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: 1px;
+}
+
+.visual-pool-card.selected {
+  outline: 1px solid var(--accent-teal);
+  outline-offset: -1px;
+}
+
+.visual-pool-card__preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  min-height: 3.5rem;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--video-bg);
+}
+
+.visual-pool-card__preview img,
+.visual-pool-card__preview video,
+.visual-pool-card__preview canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.visual-pool-card__live-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 3.5rem;
+}
+
+.visual-pool-card__live-video {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.visual-pool-card__live-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--video-bg);
+}
+
+.visual-pool-card__preview-fallback {
+  margin: 0;
+  padding: var(--compact);
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  text-align: center;
+}
+
+.visual-pool-card__preview--live {
+  outline: none;
+}
+
+.visual-pool-card__preview--live:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: -2px;
+}
+
+.visual-pool-card__live-idle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 3.5rem;
+}
+
+.visual-pool-card__live-hover-actions {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: var(--compact);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  pointer-events: none;
+}
+
+.visual-pool-card__preview--live:is(:hover, :focus-within) .visual-pool-card__live-hover-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.visual-pool-card__live-preview-off-hint {
+  max-width: 92%;
+  text-align: center;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  color: var(--text-secondary);
+}
+
+.visual-pool-card__live-overlay-btn {
+  box-sizing: border-box;
+  width: 2.65rem;
+  height: 2.65rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, var(--surface) 92%, var(--button-hover-text)),
+    color-mix(in srgb, var(--surface) 72%, var(--surface-darker))
+  );
+  box-shadow:
+    inset 0 2px 3px var(--live-overlay-highlight),
+    inset 0 -3px 5px var(--shadow-inset-deep),
+    0 4px 14px var(--shadow-heavy);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.visual-pool-card__live-overlay-btn:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: 2px;
+}
+
+.visual-pool-card__live-overlay-btn .control-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.visual-pool-card__footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) var(--visual-pool-grid-badge-w, 1.65rem);
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.4rem;
+  min-height: 2.25rem;
+}
+
+.visual-pool-card__text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.visual-pool-card__label {
+  overflow: hidden;
+  font-size: 0.7rem;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-pool-card__meta {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-pool-card__status {
+  align-self: center;
+}
+
+.visual-pool-card:hover .visual-pool-card__tail .row-action,
+.visual-pool-card:focus-within .visual-pool-card__tail .row-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pool-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--compact);
+  margin-bottom: var(--compact);
+}
+

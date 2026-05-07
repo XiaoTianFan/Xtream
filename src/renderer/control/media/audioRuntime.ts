@@ -667,6 +667,11 @@ export function handleAudioSubCuePreviewCommand(command: AudioSubCuePreviewComma
 }
 
 export function playAudioSubCuePreview(payload: AudioSubCuePreviewPayload): void {
+  const existing = previewRuntimes.get(payload.previewId);
+  if (existing && canResumePreviewRuntime(existing, payload)) {
+    resumeAudioSubCuePreview(existing, payload);
+    return;
+  }
   stopAudioSubCuePreview(payload.previewId);
   const context = new AudioContext();
   const element = createHiddenAudioOutput();
@@ -702,9 +707,7 @@ export function playAudioSubCuePreview(payload: AudioSubCuePreviewPayload): void
   void configurePreviewRouting(runtime);
   syncPreviewAutomation(runtime);
   runtime.automationTimer = window.setInterval(() => syncPreviewAutomation(runtime), 25);
-  if (!payload.loop?.enabled && payload.playTimeMs !== undefined) {
-    runtime.stopTimer = window.setTimeout(() => stopAudioSubCuePreview(payload.previewId), Math.max(0, payload.playTimeMs));
-  }
+  armPreviewStopTimer(runtime);
   void context.resume();
   requestMediaPlay(element);
 }
@@ -723,6 +726,17 @@ export function pauseAudioSubCuePreview(previewId: string): void {
     window.clearTimeout(runtime.stopTimer);
     runtime.stopTimer = undefined;
   }
+}
+
+function resumeAudioSubCuePreview(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): void {
+  runtime.payload = payload;
+  runtime.startedAtContextSeconds = runtime.context.currentTime - runtime.pausedAtMs / 1000;
+  runtime.element.playbackRate = Math.max(0.01, payload.playbackRate ?? 1);
+  syncPreviewAutomation(runtime);
+  armPreviewStopTimer(runtime);
+  void runtime.context.resume();
+  requestMediaPlay(runtime.element, undefined, true);
+  void runtime.sinkElement?.play().catch(() => undefined);
 }
 
 export function stopAudioSubCuePreview(previewId: string): void {
@@ -1169,6 +1183,18 @@ function getPreviewLocalMs(runtime: AudioSubCuePreviewRuntime): number {
   return Math.max(0, (runtime.context.currentTime - runtime.startedAtContextSeconds) * 1000);
 }
 
+function armPreviewStopTimer(runtime: AudioSubCuePreviewRuntime): void {
+  if (runtime.stopTimer !== undefined) {
+    window.clearTimeout(runtime.stopTimer);
+    runtime.stopTimer = undefined;
+  }
+  if (runtime.payload.loop?.enabled || runtime.payload.playTimeMs === undefined) {
+    return;
+  }
+  const remainingMs = Math.max(0, runtime.payload.playTimeMs - runtime.pausedAtMs);
+  runtime.stopTimer = window.setTimeout(() => stopAudioSubCuePreview(runtime.payload.previewId), remainingMs);
+}
+
 function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
   const localMs = getPreviewLocalMs(runtime);
   const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
@@ -1191,6 +1217,21 @@ function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
   runtime.gainNode.gain.setTargetAtTime(gain, now, SOURCE_GAIN_SMOOTH_SECONDS);
   runtime.panner.pan.setTargetAtTime(clampAudioPan(evaluateAudioSubCuePan(runtime.payload.pan, runtime.payload.panAutomation, localMs)), now, SOURCE_GAIN_SMOOTH_SECONDS);
   updatePitchShiftNode(runtime.pitchNode, runtime.payload.pitchShiftSemitones);
+}
+
+function canResumePreviewRuntime(runtime: AudioSubCuePreviewRuntime, payload: AudioSubCuePreviewPayload): boolean {
+  return (
+    runtime.element.paused &&
+    runtime.pausedAtMs > 0 &&
+    runtime.payload.url === payload.url &&
+    runtime.payload.outputId === payload.outputId &&
+    runtime.payload.outputSinkId === payload.outputSinkId &&
+    runtime.payload.sourceStartMs === payload.sourceStartMs &&
+    runtime.payload.sourceEndMs === payload.sourceEndMs &&
+    runtime.payload.channelMode === payload.channelMode &&
+    runtime.payload.channelCount === payload.channelCount &&
+    runtime.payload.loop?.enabled === payload.loop?.enabled
+  );
 }
 
 function disposePreviewRuntime(runtime: AudioSubCuePreviewRuntime): void {

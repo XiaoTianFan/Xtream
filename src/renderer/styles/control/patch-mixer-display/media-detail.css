@@ -1,0 +1,130 @@
+.output-source-list {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 0.5rem;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: var(--compact);
+}
+
+.details-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--gutter);
+  margin-top: var(--gutter);
+  min-height: 0;
+  min-width: 0;
+}
+
+.media-detail-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gutter);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 11rem;
+  min-width: 0;
+}
+
+.media-detail-layout__preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-deep);
+}
+
+.media-detail-layout__meta {
+  min-width: 0;
+  overflow: auto;
+}
+
+.media-detail-layout__meta .detail-card {
+  margin: 0;
+}
+
+.media-detail-preview-mount {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.media-detail-preview-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--compact);
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--gutter);
+}
+
+.media-detail-preview-shell .local-preview-controls {
+  align-self: stretch;
+}
+
+.media-detail-layout__preview img,
+.media-detail-layout__preview video {
+  width: 100%;
+  height: 100%;
+  min-height: 5rem;
+  max-height: min(50vh, 18rem);
+  object-fit: contain;
+  background: var(--video-bg);
+}
+
+.media-detail-layout__preview audio {
+  width: 100%;
+}
+
+.stream-detail-body .media-detail-layout {
+  flex: 1 1 auto;
+  min-height: 12rem;
+}
+
+@media (max-width: 780px) {
+  .media-detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.details-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--compact);
+}
+
+.detail-status {
+  max-width: 50%;
+  overflow: hidden;
+  font-family: var(--font-data);
+  font-size: 0.68rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-card {
+  display: grid;
+  gap: var(--gutter);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  padding: var(--gutter);
+}
+
+.detail-card--output {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--gutter);
+  min-height: 0;
+}
+

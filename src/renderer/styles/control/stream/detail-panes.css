@@ -1,0 +1,52 @@
+.stream-scene-edit-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.stream-scene-form {
+  min-width: 0;
+}
+
+.stream-mixer-pane,
+.stream-display-pane,
+.stream-detail-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.stream-detail-pane .panel-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stream-detail-body {
+  padding: var(--gutter) 0 0;
+}
+
+.stream-output-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(var(--mixer-strip-w), max-content);
+  align-items: stretch;
+  gap: var(--gutter);
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stream-display-detail-card {
+  width: 100%;
+}
+
+.stream-output-detail-controls {
+  align-self: start;
+  align-content: start;
+  grid-auto-rows: max-content;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+

@@ -1,0 +1,179 @@
+.mixer-strip {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  justify-items: center;
+  gap: var(--gutter);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--mixer-strip-w);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  padding: 0.45rem;
+}
+
+.mixer-strip.solo {
+  border-color: var(--accent-ochre);
+}
+
+.mixer-label-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.mixer-label-row .mixer-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: start;
+}
+
+.mixer-db,
+.mixer-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mixer-db {
+  font-variant-numeric: tabular-nums;
+  min-width: 5.5ch;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.mixer-strip-pan {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+}
+
+.mixer-strip-pan .pan-knob--mixer {
+  margin-block: -0.12rem 0.05rem;
+}
+
+/* Constant-power pan: 240° travel (-1 left … +1 right), minimal inline footprint. */
+.pan-knob {
+  --pan-knob-size: 1.7rem;
+  position: relative;
+  box-sizing: border-box;
+  width: var(--pan-knob-size);
+  height: var(--pan-knob-size);
+  flex: 0 0 auto;
+}
+
+.pan-knob--row {
+  --pan-knob-size: 1.85rem;
+}
+
+.pan-knob--mixer {
+  --pan-knob-size: 1.5rem;
+}
+
+.pan-knob-face {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50% !important;
+  background: var(--surface-low);
+  box-shadow:
+    inset 0 1px 1px var(--shadow-inset-highlight),
+    inset 0 -2px 4px var(--shadow-inset-deep);
+  pointer-events: none;
+  inset: 0;
+}
+
+.pan-knob-dial {
+  position: absolute;
+  inset: 0;
+  border-radius: 50% !important;
+}
+
+.pan-knob-pointer {
+  position: absolute;
+  bottom: 50%;
+  left: 50%;
+  width: 2px;
+  height: 43%;
+  margin-left: -1px;
+  transform: rotate(calc(var(--pan-knob-rotate, 0) * 1deg));
+  transform-origin: center bottom;
+  border-radius: 999px 999px 4px 4px !important;
+  background: color-mix(in srgb, var(--accent-teal) 86%, var(--button-hover-text));
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent-teal) 42%, transparent);
+}
+
+.pan-knob-pointer::after {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  content: "";
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--surface-low) 72%, var(--blend-black));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-teal) 74%, var(--text-primary));
+}
+
+.pan-knob .pan-knob-input {
+  position: absolute;
+  z-index: 1;
+  cursor: ew-resize;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  appearance: none;
+}
+
+.output-source-mid {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto;
+  align-items: end;
+  gap: 0.45rem 0.65rem;
+  min-width: 0;
+}
+
+.output-source-mid .output-source-pan {
+  margin-bottom: 0.15rem;
+}
+
+.mixer-strip-body {
+  justify-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  /* Slight extra end padding: fader “0” sits inset; balances optical weight vs scale column */
+  padding-inline: 0.1rem 0.28rem;
+}
+
+.mixer-strip-track {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  min-width: min-content;
+  box-sizing: border-box;
+}
+

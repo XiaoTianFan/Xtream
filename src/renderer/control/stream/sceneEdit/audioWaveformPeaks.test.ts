@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AudioSourceState, DirectorState } from '../../../../shared/types';
 import {
   clearAudioWaveformPeakCache,
@@ -9,6 +9,10 @@ import {
 } from './audioWaveformPeaks';
 
 describe('audioWaveformPeaks', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('downsamples multiple channels into peak buckets', () => {
     const buckets = downsampleAudioPeaks(
       [
@@ -58,6 +62,30 @@ describe('audioWaveformPeaks', () => {
     expect(first).toMatchObject({ durationMs: 1000, channelCount: 1 });
     expect(first?.buckets).toHaveLength(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(decodeImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the preload file reader when fetch cannot read a file URL', async () => {
+    clearAudioWaveformPeakCache();
+    const state = directorState();
+    const readFileBuffer = vi.fn(async () => new ArrayBuffer(8));
+    vi.stubGlobal('window', {
+      xtream: {
+        audioSources: { readFileBuffer },
+      },
+    });
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('file fetch blocked');
+    });
+    const decodeImpl = vi.fn(async () => ({
+      sampleRate: 2,
+      channelData: [Float32Array.from([-0.5, 0.5])],
+    }));
+
+    const peaks = await loadAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 1, fetchImpl, decodeImpl });
+
+    expect(peaks).toMatchObject({ durationMs: 1000, channelCount: 1 });
+    expect(readFileBuffer).toHaveBeenCalledWith('file://external.wav');
     expect(decodeImpl).toHaveBeenCalledTimes(1);
   });
 });

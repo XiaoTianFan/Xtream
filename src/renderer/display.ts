@@ -45,6 +45,8 @@ const DISPLAY_SYNC_INTERVAL_MS = 500;
 const DISPLAY_DRIFT_SEEK_THRESHOLD_SECONDS = 0.5;
 const SYNC_KEY_SEEK_THRESHOLD_SECONDS = 0.12;
 
+type RenderMode = 'patch' | 'stream' | 'missing';
+
 type VideoPlaybackQualitySnapshot = {
   totalVideoFrames?: number;
   droppedVideoFrames?: number;
@@ -73,6 +75,8 @@ const displayRoot = root;
 
 const identifyOverlay = document.querySelector<HTMLElement>('#displayIdentifyOverlay');
 let identifyHideTimer: number | undefined;
+let currentRenderMode: RenderMode | undefined;
+let currentStreamZoneSignature = '';
 
 function setupIdentifyFlashOverlay(): (() => void) | undefined {
   if (!identifyOverlay) {
@@ -96,6 +100,30 @@ function setupIdentifyFlashOverlay(): (() => void) | undefined {
 
 const unsubscribeIdentifyFlash = setupIdentifyFlashOverlay();
 
+function cleanupMediaForVisualId(visualId: VisualId): void {
+  const cleanup = liveVisualCleanups.get(visualId);
+  if (cleanup) {
+    cleanup();
+    liveVisualCleanups.delete(visualId);
+  }
+  videoElements.delete(visualId);
+}
+
+function cleanupMediaInElement(element: Element): void {
+  const ids = new Set<VisualId>();
+  if (element instanceof HTMLElement && element.dataset.visualId) {
+    ids.add(element.dataset.visualId);
+  }
+  for (const child of element.querySelectorAll<HTMLElement>('[data-visual-id]')) {
+    if (child.dataset.visualId) {
+      ids.add(child.dataset.visualId);
+    }
+  }
+  for (const id of ids) {
+    cleanupMediaForVisualId(id);
+  }
+}
+
 function cleanupRenderedMedia(): void {
   for (const cleanup of liveVisualCleanups.values()) {
     cleanup();
@@ -108,6 +136,8 @@ function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId,
   displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
   cleanupRenderedMedia();
   displayRoot.replaceChildren();
+  currentRenderMode = 'patch';
+  currentStreamZoneSignature = '';
   for (const visualId of getLayoutVisualIds(layout)) {
     displayRoot.append(createVisualElement(visualId, visualsById[visualId]));
   }
@@ -115,27 +145,32 @@ function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId,
 
 function renderStreamFrame(frame: StreamDisplayFrame): void {
   displayRoot.className = frame.layout.type === 'split' ? 'display-root split stream-frame' : 'display-root stream-frame';
-  cleanupRenderedMedia();
-  displayRoot.replaceChildren();
   const zoneIds = frame.layout.type === 'split' ? (['L', 'R'] as const) : (['single'] as const);
-  for (const zoneId of zoneIds) {
-    const output = document.createElement('section');
-    output.className = 'display-output display-output-zone';
-    output.dataset.zoneId = zoneId;
-    const zone = frame.zones.find((candidate) => candidate.zoneId === zoneId);
-    const visibleLayers = (zone?.layers ?? []).filter((layer) => layer.selected && layer.opacity > 0.0001);
-    if (visibleLayers.length === 0) {
-      const visualLabel = document.createElement('span');
-      visualLabel.textContent = zoneId === 'single' ? 'NO SIGNAL' : zoneId;
-      const visualMeta = document.createElement('small');
-      visualMeta.textContent = 'no stream visual';
-      output.append(visualLabel, visualMeta);
-    } else {
-      visibleLayers.forEach((layer, index) => {
-        output.append(createStreamLayerElement(layer, index));
-      });
+  const zoneSignature = `${frame.displayId}:${frame.layout.type}:${zoneIds.join('|')}`;
+  if (currentRenderMode !== 'stream' || currentStreamZoneSignature !== zoneSignature) {
+    cleanupRenderedMedia();
+    displayRoot.replaceChildren();
+    currentRenderMode = 'stream';
+    currentStreamZoneSignature = zoneSignature;
+    for (const zoneId of zoneIds) {
+      const output = document.createElement('section');
+      output.className = 'display-output display-output-zone';
+      output.dataset.zoneId = zoneId;
+      displayRoot.append(output);
     }
-    displayRoot.append(output);
+  }
+  for (const zoneId of zoneIds) {
+    const output =
+      displayRoot.querySelector<HTMLElement>(`.display-output-zone[data-zone-id="${zoneId}"]`) ??
+      document.createElement('section');
+    if (!output.isConnected) {
+      output.className = 'display-output display-output-zone';
+      output.dataset.zoneId = zoneId;
+      displayRoot.append(output);
+    }
+    const zone = frame.zones.find((candidate) => candidate.zoneId === zoneId);
+    const selectedLayers = (zone?.layers ?? []).filter((layer) => layer.selected);
+    reconcileStreamZone(output, zoneId, selectedLayers);
   }
 }
 
@@ -153,24 +188,29 @@ function handleState(state: DirectorState): void {
   const display = effectiveState.displays[displayId];
   if (!display) {
     document.title = formatDisplayWindowTitle({ id: displayId });
-    displayRoot.replaceChildren();
-    const missing = document.createElement('section');
-    missing.className = 'display-output';
-    missing.textContent = 'UNMAPPED';
-    displayRoot.append(missing);
+    if (currentRenderMode !== 'missing') {
+      cleanupRenderedMedia();
+      displayRoot.replaceChildren();
+      const missing = document.createElement('section');
+      missing.className = 'display-output';
+      missing.textContent = 'UNMAPPED';
+      displayRoot.append(missing);
+      currentRenderMode = 'missing';
+      currentStreamZoneSignature = '';
+      currentRenderSignature = '';
+    }
     return;
   }
   document.title = formatDisplayWindowTitle(display);
-  const renderSignature = streamFrame
-    ? createStreamFrameRenderSignature(streamFrame)
-    : createRenderSignature(display.layout, effectiveState.visuals);
-  if (currentRenderSignature !== renderSignature) {
-    if (streamFrame) {
-      renderStreamFrame(streamFrame);
-    } else {
+  if (streamFrame) {
+    renderStreamFrame(streamFrame);
+    currentRenderSignature = createStreamFrameRenderSignature(streamFrame);
+  } else {
+    const renderSignature = createRenderSignature(display.layout, effectiveState.visuals);
+    if (currentRenderMode !== 'patch' || currentRenderSignature !== renderSignature) {
       renderLayout(display.layout, effectiveState.visuals);
+      currentRenderSignature = renderSignature;
     }
-    currentRenderSignature = renderSignature;
   }
   syncVideoElements(display, effectiveState);
 }
