@@ -130,7 +130,8 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       audioRenderSignature = '';
     }
     header.sync(state);
-    const nextAudioRenderSignature = mixerPanel.createRenderSignature(state);
+    const presentation = options.getPresentationState() ?? state;
+    const nextAudioRenderSignature = mixerPanel.createRenderSignature(presentation);
     const nextVisualRenderSignature = mediaPool.createRenderSignature(state);
     if (
       !options.isPanelInteractionActive(elements.visualList) &&
@@ -148,7 +149,6 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
       mixerPanel.renderOutputs(state);
     }
     mixerPanel.syncOutputMeters(state);
-    const presentation = options.getPresentationState() ?? state;
     const nextDisplayRenderSignature = displayWorkspace.createRenderSignature(presentation);
     if (!options.isPanelInteractionActive(elements.displayList) && displayRenderSignature !== nextDisplayRenderSignature) {
       displayRenderSignature = nextDisplayRenderSignature;
@@ -158,6 +158,19 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     }
     detailsPane.render(state);
     void embeddedAudioImport.maybePromptEmbeddedAudioImport(state);
+  }
+
+  function syncPresentationMixer(): void {
+    if (!currentState) {
+      return;
+    }
+    const presentation = options.getPresentationState() ?? currentState;
+    const nextAudioRenderSignature = mixerPanel.createRenderSignature(presentation);
+    if (!options.isPanelInteractionActive(elements.outputPanel) && audioRenderSignature !== nextAudioRenderSignature) {
+      audioRenderSignature = nextAudioRenderSignature;
+      mixerPanel.renderOutputs(currentState);
+    }
+    mixerPanel.syncOutputMeters(currentState);
   }
 
   function install(): void {
@@ -241,6 +254,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     syncPreviewElements: (presentation: DirectorState) => {
       syncPreviewElements(presentation);
     },
+    syncPresentationMixer,
     dismissContextMenu: mediaPool.dismissContextMenu,
     handleWorkspaceTransportKeydown: (event: KeyboardEvent) => header.handleWorkspaceTransportKeydown(event),
     clearSelection,

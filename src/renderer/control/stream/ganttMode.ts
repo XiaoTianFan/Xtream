@@ -13,6 +13,24 @@ const MIN_GANTT_ZOOM = 0.02;
 const MAX_GANTT_ZOOM = 4;
 const GANTT_WHEEL_ZOOM_FACTOR = 1.12;
 
+let activeGanttContextMenu: HTMLElement | undefined;
+
+function dismissGanttContextMenu(): void {
+  activeGanttContextMenu?.remove();
+  activeGanttContextMenu = undefined;
+}
+
+function positionMenu(menu: HTMLElement, clientX: number, clientY: number): void {
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(clientX, window.innerWidth - bounds.width - 4)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - bounds.height - 4)}px`;
+}
+
+function ensureContextMenuDismissListeners(): void {
+  document.addEventListener('click', dismissGanttContextMenu, { once: true });
+  window.addEventListener('blur', dismissGanttContextMenu, { once: true });
+}
+
 function statusLabel(status: string): string {
   return status.replace('-', ' ');
 }
@@ -41,6 +59,29 @@ function createEmptyState(): HTMLElement {
   detail.textContent = 'Start playback to monitor main and parallel thread instances.';
   empty.append(title, detail);
   return empty;
+}
+
+function showTimelineContextMenu(event: MouseEvent, lane: StreamGanttLaneProjection): void {
+  if (lane.kind === 'main') {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  dismissGanttContextMenu();
+  ensureContextMenuDismissListeners();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu audio-source-menu stream-gantt-menu';
+  menu.setAttribute('role', 'menu');
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  const remove = createButton('Remove timeline', 'secondary context-menu-item', () => {
+    dismissGanttContextMenu();
+    void window.xtream.stream.transport({ type: 'remove-timeline', timelineId: lane.id });
+  });
+  remove.setAttribute('role', 'menuitem');
+  menu.append(remove);
+  document.body.append(menu);
+  positionMenu(menu, event.clientX, event.clientY);
+  activeGanttContextMenu = menu;
 }
 
 function applyThreadColor(el: HTMLElement, bar: StreamGanttBarProjection): void {
@@ -90,6 +131,7 @@ function createLane(lane: StreamGanttLaneProjection): HTMLElement {
   row.dataset.baseMinWidthPx = String(lane.minWidthPx);
   row.dataset.baseTrackWidthPx = String(lane.trackMinWidthPx);
   row.style.minWidth = `${lane.minWidthPx}px`;
+  row.addEventListener('contextmenu', (event) => showTimelineContextMenu(event, lane));
 
   const header = document.createElement('div');
   header.className = 'stream-gantt-lane-header';
@@ -262,6 +304,13 @@ export function createStreamGanttMode(_stream: PersistedStreamConfig, ctx: Strea
   body.addEventListener('wheel', (event) => handleGanttWheel(root, event), { passive: false });
   root.append(createToolbar(root), body);
   renderGanttBody(root, ctx.streamState);
+  const destroyObserver = new MutationObserver(() => {
+    if (!root.isConnected) {
+      dismissGanttContextMenu();
+      destroyObserver.disconnect();
+    }
+  });
+  destroyObserver.observe(document.body, { childList: true, subtree: true });
   return root;
 }
 

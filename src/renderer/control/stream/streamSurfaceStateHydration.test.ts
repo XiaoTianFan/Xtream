@@ -419,6 +419,6 @@ describe('createStreamSurfaceController state hydration', () => {
     controller.applyStreamState(runningStreamPublic(500));
 
     expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createStreamFlowMode).mock.calls.at(-1)?.[1].mode).toBe('flow');
+    expect((vi.mocked(createStreamFlowMode).mock.calls.at(-1)?.[1] as StreamWorkspacePaneContext | undefined)?.mode).toBe('flow');
   });
 });

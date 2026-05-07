@@ -385,32 +385,45 @@ export function createStreamFlowMode(stream: PersistedStreamConfig, ctx: StreamF
   canvasHost.className = 'stream-flow-canvas';
   root.append(canvasHost);
 
-  let projection = createProjection(stream, ctx);
-  const canvas = new FlowReteCanvas(canvasHost, {
-    initialViewport: stream.flowViewport,
-    onViewportChange: (flowViewport) => {
-      void window.xtream.stream.edit({ type: 'update-stream', flowViewport });
-    },
-  });
-  root.prepend(createToolbar(canvas, () => projection, ctx));
-  canvas.setOverlayBounds(projection.bounds);
-  renderCards({ stream, ctx, projection, canvas, root });
-  renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
-  canvasHost.addEventListener('contextmenu', (event) => {
-    if ((event.target as HTMLElement).closest('.stream-flow-card, .stream-flow-toolbar')) {
+  let initialized = false;
+  let canvas: FlowReteCanvas | undefined;
+  let destroyObserver: MutationObserver | undefined;
+
+  const initializeCanvas = (): void => {
+    if (initialized || !root.isConnected) {
       return;
     }
-    showRootContextMenu(event, canvas, ctx);
-  });
-  const destroyObserver = new MutationObserver(() => {
-    if (!root.isConnected) {
-      canvas.destroy();
-      dismissFlowContextMenu();
-      destroyObserver.disconnect();
-    }
-  });
-  destroyObserver.observe(document.body, { childList: true, subtree: true });
-  projection = createProjection(stream, ctx);
+    initialized = true;
+    let projection = createProjection(stream, ctx);
+    canvas = new FlowReteCanvas(canvasHost, {
+      initialViewport: stream.flowViewport,
+      onViewportChange: (flowViewport) => {
+        void window.xtream.stream.edit({ type: 'update-stream', flowViewport });
+      },
+    });
+    root.prepend(createToolbar(canvas, () => projection, ctx));
+    canvas.setOverlayBounds(projection.bounds);
+    renderCards({ stream, ctx, projection, canvas, root });
+    renderFlowLinks(canvas.overlay, projection, ctx.streamState?.runtime?.status === 'running');
+    canvasHost.addEventListener('contextmenu', (event) => {
+      if ((event.target as HTMLElement).closest('.stream-flow-card, .stream-flow-toolbar')) {
+        return;
+      }
+      showRootContextMenu(event, canvas!, ctx);
+    });
+    destroyObserver = new MutationObserver(() => {
+      if (!root.isConnected) {
+        canvas?.destroy();
+        canvas = undefined;
+        dismissFlowContextMenu();
+        destroyObserver?.disconnect();
+      }
+    });
+    destroyObserver.observe(document.body, { childList: true, subtree: true });
+    projection = createProjection(stream, ctx);
+  };
+
+  window.queueMicrotask(initializeCanvas);
   return root;
 }
 

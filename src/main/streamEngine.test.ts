@@ -1686,6 +1686,8 @@ describe('StreamEngine', () => {
   });
 
   it('header Play from playback focus matches row Run from here for a middle scene', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 5 }, v3: { id: 'v3', durationSeconds: 5 } } as DirectorState['visuals'],
     });
@@ -1725,6 +1727,47 @@ describe('StreamEngine', () => {
     expect(timelines.filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
     expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.canonicalThreadId === 'thread:c' && instance.timelineId !== state.runtime?.mainTimelineId)).toBe(true);
     expect(main?.orderedThreadInstanceIds.some((id) => state.runtime?.threadInstances?.[id]?.canonicalThreadId === 'thread:c')).toBe(false);
+  });
+
+  it('removes a selected parallel runtime timeline without removing the main timeline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    const withParallel = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    const parallelId = Object.values(withParallel.runtime?.timelineInstances ?? {}).find((timeline) => timeline.kind === 'parallel')?.id;
+
+    const state = engine.applyTransport({ type: 'remove-timeline', timelineId: parallelId! });
+
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(0);
+    expect(state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined).toBeDefined();
+    expect(Object.values(state.runtime?.threadInstances ?? {}).some((instance) => instance.timelineId === parallelId)).toBe(false);
+    expect(state.runtime?.sceneStates.b?.status).toBe('ready');
+  });
+
+  it('ignores remove timeline for the main runtime timeline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 10 }, v2: { id: 'v2', durationSeconds: 10 }, v3: { id: 'v3', durationSeconds: 10 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installThreeThreadStream(stream);
+    engine.loadFromShow({ stream });
+    const running = engine.applyTransport({ type: 'play', sceneId: 'a', source: 'global' });
+    const mainId = running.runtime?.mainTimelineId;
+
+    const state = engine.applyTransport({ type: 'remove-timeline', timelineId: mainId! });
+
+    expect(state.runtime?.mainTimelineId).toBe(mainId);
+    expect(mainId ? state.runtime?.timelineInstances?.[mainId] : undefined).toBeDefined();
   });
 
   it('running future-thread parallel spawn compacts following main threads and shortens main duration', () => {

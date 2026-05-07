@@ -321,6 +321,9 @@ export class StreamEngine extends EventEmitter {
       case 'back-to-first':
         this.handleBackToFirst();
         break;
+      case 'remove-timeline':
+        this.removeTimeline(command.timelineId);
+        break;
       case 'seek':
         this.seek(command.timeMs);
         break;
@@ -1252,6 +1255,47 @@ export class StreamEngine extends EventEmitter {
         this.manualSceneStartOverrides.delete(sceneId);
       }
     }
+  }
+
+  private removeTimeline(timelineId: string): void {
+    if (!this.runtime?.timelineInstances || !this.runtime.threadInstances) {
+      return;
+    }
+    const timeline = this.runtime.timelineInstances[timelineId];
+    if (!timeline || timeline.kind === 'main' || timelineId === this.runtime.mainTimelineId) {
+      return;
+    }
+    const removedThreadIds = new Set<StreamThreadId>();
+    const instanceIds = new Set([
+      ...timeline.orderedThreadInstanceIds,
+      ...Object.entries(this.runtime.threadInstances)
+        .filter(([, instance]) => instance.timelineId === timelineId)
+        .map(([id]) => id),
+    ]);
+    for (const instanceId of instanceIds) {
+      const instance = this.runtime.threadInstances[instanceId];
+      if (!instance) {
+        continue;
+      }
+      removedThreadIds.add(instance.canonicalThreadId);
+      delete this.runtime.threadInstances[instanceId];
+    }
+    delete this.runtime.timelineInstances[timelineId];
+    this.runtime.timelineOrder = (this.runtime.timelineOrder ?? []).filter((id) => id !== timelineId);
+    for (const [sceneId, threadId] of Object.entries(this.playbackTimeline.threadPlan?.threadBySceneId ?? {}) as Array<[SceneId, StreamThreadId]>) {
+      if (removedThreadIds.has(threadId)) {
+        this.manualSceneStartOverrides.delete(sceneId);
+      }
+    }
+    const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances[this.runtime.mainTimelineId] : undefined;
+    if (!mainTimeline && Object.keys(this.runtime.timelineInstances).length === 0) {
+      this.ensureIdleRuntime(this.firstEnabledSceneId(), this.runtime.currentStreamMs ?? this.runtime.pausedAtStreamMs ?? 0);
+      return;
+    }
+    if (mainTimeline) {
+      this.recalculateMainTimelineInstanceLayout();
+    }
+    this.recomputeRuntime();
   }
 
   private handleBackToFirst(): void {

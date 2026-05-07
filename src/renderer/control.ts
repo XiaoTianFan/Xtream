@@ -369,6 +369,7 @@ window.xtream.stream.onState((state) => {
   const previousValidation = latestStreamState ? JSON.stringify(latestStreamState.validationMessages) : '';
   latestStreamState = state;
   streamSurface.applyStreamState(state);
+  patchSurface.syncPresentationMixer();
   const newValidation = JSON.stringify(state.validationMessages);
   if (previousValidation !== newValidation && currentState) {
     surfaceRouter.render(currentState);
@@ -380,6 +381,7 @@ window.xtream.stream.onState((state) => {
 void window.xtream.stream.getState().then((s) => {
   latestStreamState = s;
   streamSurface.applyStreamState(s);
+  patchSurface.syncPresentationMixer();
   patchSurface.syncTransportInputs();
   flushGlobalSessionShell();
 });

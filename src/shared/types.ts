@@ -802,6 +802,7 @@ export type StreamCommand =
   | { type: 'stop' }
   | { type: 'jump-next'; referenceSceneId?: SceneId }
   | { type: 'back-to-first' }
+  | { type: 'remove-timeline'; timelineId: string }
   | { type: 'seek'; timeMs: number };
 
 export type StreamEditCommand =

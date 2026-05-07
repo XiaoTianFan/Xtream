@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CalculatedStreamTimeline, PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
 import { createStreamGanttMode, syncStreamGanttRuntimeChrome } from './ganttMode';
 
@@ -129,6 +129,38 @@ function publicState(cursorMs = 500): StreamEnginePublicState {
   };
 }
 
+function publicStateWithParallel(): StreamEnginePublicState {
+  const state = publicState();
+  state.runtime!.timelineOrder = ['timeline:main', 'timeline:parallel'];
+  state.runtime!.timelineInstances!['timeline:parallel'] = {
+    id: 'timeline:parallel',
+    kind: 'parallel',
+    status: 'running',
+    orderedThreadInstanceIds: ['a-copy'],
+    cursorMs: 250,
+    durationMs: 1000,
+  };
+  state.runtime!.threadInstances!['a-copy'] = {
+    id: 'a-copy',
+    canonicalThreadId: 'thread:a',
+    timelineId: 'timeline:parallel',
+    rootSceneId: 'a',
+    launchSceneId: 'a',
+    launchLocalMs: 0,
+    state: 'running',
+    timelineStartMs: 0,
+    durationMs: 1000,
+    copiedFromThreadInstanceId: 'a-inst',
+  };
+  return state;
+}
+
+afterEach(() => {
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
+  delete (window as unknown as { xtream?: unknown }).xtream;
+});
+
 describe('createStreamGanttMode', () => {
   it('renders runtime lanes, thread bars, and cursor position', () => {
     const root = createStreamGanttMode(stream(), { streamState: publicState() });
@@ -223,5 +255,28 @@ describe('createStreamGanttMode', () => {
 
     expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.minWidth).toBe(zoomedWidth);
     expect(root.querySelector<HTMLElement>('.stream-gantt-track')?.style.getPropertyValue('--stream-gantt-cursor')).toBe('75.000%');
+  });
+
+  it('shows remove timeline on non-main lane context menu', () => {
+    const transport = vi.fn(() => Promise.resolve(publicStateWithParallel()));
+    (window as unknown as { xtream: unknown }).xtream = { stream: { transport } };
+    const root = createStreamGanttMode(stream(), { streamState: publicStateWithParallel() });
+    document.body.append(root);
+    const parallelLane = root.querySelector<HTMLElement>('.stream-gantt-lane.is-parallel')!;
+
+    parallelLane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 32, clientY: 44 }));
+    document.querySelector<HTMLButtonElement>('.stream-gantt-menu .context-menu-item')?.click();
+
+    expect(transport).toHaveBeenCalledWith({ type: 'remove-timeline', timelineId: 'timeline:parallel' });
+  });
+
+  it('does not show remove timeline on the main lane context menu', () => {
+    const root = createStreamGanttMode(stream(), { streamState: publicStateWithParallel() });
+    document.body.append(root);
+    const mainLane = root.querySelector<HTMLElement>('.stream-gantt-lane.is-main')!;
+
+    mainLane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 32, clientY: 44 }));
+
+    expect(document.querySelector('.stream-gantt-menu')).toBeNull();
   });
 });

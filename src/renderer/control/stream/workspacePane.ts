@@ -34,7 +34,6 @@ export function renderStreamWorkspacePane(panel: HTMLElement, stream: PersistedS
     ctx.mode,
     (next) => {
       ctx.setMode(next);
-      ctx.requestRender();
     },
   );
   const tabRow = document.createElement('div');
