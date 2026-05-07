@@ -152,7 +152,7 @@ export function createTransportController({ getState, getIsStreamPlaybackActive,
         } else {
           input.disabled = true;
           try {
-            const nextState = await sendTransport({ type: 'seek', seconds: result.seconds });
+            const nextState = await sendTransport({ type: 'seek', seconds: result.seconds, seekKind: 'manual', seekSource: 'timecode' });
             if (timecodeEditor === input) {
               timecodeEditor = undefined;
               elements.timecode.textContent = formatTimecode(getDirectorSeconds(nextState));

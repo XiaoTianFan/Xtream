@@ -14,7 +14,8 @@ export async function sendLoggedPatchTransport(
   surface: string = 'patch',
 ): Promise<DirectorState> {
   const operationId = command.operationId ?? createOperationId('patch-transport');
-  const commandWithOperation = { ...command, operationId };
+  const commandWithOperation: TransportCommand =
+    command.type === 'seek' ? { ...command, operationId, seekKind: command.seekKind ?? 'manual' } : { ...command, operationId };
   logSessionEvent({
     runId: operationId,
     checkpoint: `ui_patch_transport_${checkpointPart(command.type)}`,
@@ -23,6 +24,8 @@ export async function sendLoggedPatchTransport(
     extra: {
       command: commandWithOperation,
       surface,
+      seekKind: commandWithOperation.type === 'seek' ? commandWithOperation.seekKind : undefined,
+      seekSource: commandWithOperation.type === 'seek' ? commandWithOperation.seekSource : undefined,
     },
   });
   return window.xtream.director.transport(commandWithOperation);

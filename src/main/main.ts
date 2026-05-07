@@ -13,6 +13,7 @@ import { createAudioWindow, createControlWindow } from './appWindows';
 import { createCapturePermissionController } from './capturePermissions';
 import { persistControlUiSnapshotFromRenderer } from './controlUiStateStore';
 import { registerIpcHandlers } from './ipc/registerIpcHandlers';
+import { StreamSceneStateTransitionLogger } from './sessionStreamSceneLog';
 import {
   buildMediaUrls,
   getDefaultShowConfigPath,
@@ -55,6 +56,7 @@ import { checkAndPromptRuntimeUpdateReminder } from './runtimeUpdateReminder';
 
 const director = new Director();
 const streamEngine = new StreamEngine(director);
+const streamSceneStateTransitionLogger = new StreamSceneStateTransitionLogger();
 director.setStreamPlaybackGate(() => streamEngine.isStreamPlaybackActive());
 
 function applyAppPersistedDirectorGlobals(): void {
@@ -852,7 +854,12 @@ app.whenReady().then(() => {
   capturePermissions.installCapturePermissionHandlers();
   applyAppPersistedDirectorGlobals();
   director.on('state', (state) => broadcastDirectorState(state));
-  streamEngine.on('state', (streamState) => broadcastStreamState(streamState));
+  streamEngine.on('state', (streamState) => {
+    for (const row of streamSceneStateTransitionLogger.collect(streamState)) {
+      forwardSessionLogFromMain(row);
+    }
+    broadcastStreamState(streamState);
+  });
 
   controlWindow = openControlWindow();
   audioWindow = openAudioWindow();

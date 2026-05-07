@@ -206,7 +206,11 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
         runId,
         checkpoint: `engine_patch_transport_${checkpointPart}`,
         domain: 'patch',
-        extra: { command },
+        extra: {
+          command,
+          seekKind: command.type === 'seek' ? command.seekKind ?? 'manual' : undefined,
+          seekSource: command.type === 'seek' ? command.seekSource : undefined,
+        },
       });
       return state;
     } catch (error: unknown) {
@@ -909,7 +913,25 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
 
   ipcMain.handle('renderer:drift', (_event, report: DriftReport) => {
     if (!isShuttingDown()) {
-      director.ingestDrift(report);
+      const state = director.ingestDrift(report);
+      const correction = report.kind === 'display' && report.displayId ? state.corrections.displays[report.displayId] : state.corrections.audio;
+      if (correction?.action === 'seek') {
+        logOperation({
+          runId: `patch-drift-${correction.revision}`,
+          checkpoint: 'engine_patch_seek_drift_correction',
+          domain: 'patch',
+          extra: {
+            seekKind: 'drift_correction',
+            railKind: report.kind,
+            displayId: report.displayId,
+            targetSeconds: correction.targetSeconds,
+            driftSeconds: correction.driftSeconds,
+            correctionRevision: correction.revision,
+            reason: correction.reason,
+            reportedAtWallTimeMs: report.reportedAtWallTimeMs,
+          },
+        });
+      }
     }
   });
 

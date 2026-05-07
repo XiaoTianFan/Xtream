@@ -50,7 +50,7 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
         return;
       }
       if (!state.paused) {
-        void transport.sendTransport({ type: 'seek', seconds: 0 });
+        void transport.sendTransport({ type: 'seek', seconds: 0, seekKind: 'manual', seekSource: 'restart' });
       } else {
         void transport.sendTransport({ type: 'play' });
       }
@@ -71,7 +71,14 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     });
     elements.timelineScrubber.addEventListener('change', () => {
       transport.holdTimelineScrubDraft(1000);
-      void transport.sendTransport({ type: 'seek', seconds: Number(elements.timelineScrubber.value) || 0 }).finally(transport.finishTimelineScrub);
+      void transport
+        .sendTransport({
+          type: 'seek',
+          seconds: Number(elements.timelineScrubber.value) || 0,
+          seekKind: 'manual',
+          seekSource: 'timeline_scrubber',
+        })
+        .finally(transport.finishTimelineScrub);
     });
     elements.loopActivateButton.addEventListener('click', () => {
       const state = options.getState();
@@ -149,7 +156,9 @@ export function createPatchHeaderController(options: PatchHeaderControllerOption
     if (ui.playDisabled) {
       return false;
     }
-    void transport.sendTransport({ type: 'seek', seconds: 0 }).then(() => void transport.sendTransport({ type: 'play' }));
+    void transport
+      .sendTransport({ type: 'seek', seconds: 0, seekKind: 'manual', seekSource: 'keyboard_restart' })
+      .then(() => void transport.sendTransport({ type: 'play' }));
     event.preventDefault();
     event.stopPropagation();
     return true;

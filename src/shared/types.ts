@@ -878,6 +878,9 @@ type SessionOperationCommandMeta = {
   operationId?: string;
 };
 
+export type PatchSeekKind = 'manual' | 'drift_correction';
+export type PatchSeekSource = 'timecode' | 'timeline_scrubber' | 'restart' | 'keyboard_restart';
+
 export type StreamCommand =
   | ({ type: 'play'; sceneId?: SceneId; source?: 'global' | 'scene-row' | 'flow-card' } & SessionOperationCommandMeta)
   | ({ type: 'pause' } & SessionOperationCommandMeta)
@@ -1137,7 +1140,7 @@ export type TransportCommand =
   | ({ type: 'play' } & SessionOperationCommandMeta)
   | ({ type: 'pause' } & SessionOperationCommandMeta)
   | ({ type: 'stop' } & SessionOperationCommandMeta)
-  | ({ type: 'seek'; seconds: number } & SessionOperationCommandMeta)
+  | ({ type: 'seek'; seconds: number; seekKind?: PatchSeekKind; seekSource?: PatchSeekSource } & SessionOperationCommandMeta)
   | ({ type: 'set-rate'; rate: number } & SessionOperationCommandMeta)
   | ({ type: 'set-loop'; loop: LoopState } & SessionOperationCommandMeta);
 
