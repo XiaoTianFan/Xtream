@@ -70,6 +70,39 @@ function installInfiniteLoopSideThreadStream(stream: ReturnType<typeof getDefaul
   };
 }
 
+function installInfiniteLoopWithTwoMainThreads(stream: ReturnType<typeof getDefaultStreamPersistence>['stream']): void {
+  stream.sceneOrder = ['loop', 'b', 'c'];
+  stream.scenes = {
+    loop: {
+      id: 'loop',
+      title: 'Loop',
+      trigger: { type: 'manual' },
+      loop: { enabled: true, iterations: { type: 'infinite' } },
+      preload: { enabled: false },
+      subCueOrder: ['aud'],
+      subCues: { aud: { id: 'aud', kind: 'audio', audioSourceId: 'a-loop', outputIds: ['output-main'] } },
+    },
+    b: {
+      id: 'b',
+      title: 'B',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v-b', targets: [{ displayId: 'd1' }] } },
+    },
+    c: {
+      id: 'c',
+      title: 'C',
+      trigger: { type: 'manual' },
+      loop: { enabled: false },
+      preload: { enabled: false },
+      subCueOrder: ['vis'],
+      subCues: { vis: { id: 'vis', kind: 'visual', visualId: 'v-c', targets: [{ displayId: 'd1' }] } },
+    },
+  };
+}
+
 describe('StreamEngine', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -2332,6 +2365,78 @@ describe('StreamEngine', () => {
     expect(state.runtime?.sceneStates.loop?.status).toBe('running');
     expect(state.runtime?.playbackFocusSceneId).toBe('main');
     expect(state.runtime?.cursorSceneId).toBe('main');
+  });
+
+  it('keeps focus on a main thread while an infinite detached thread keeps looping', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      audioSources: { 'a-loop': { id: 'a-loop', durationSeconds: 5 } } as DirectorState['audioSources'],
+      visuals: { 'v-b': { id: 'v-b', durationSeconds: 5 }, 'v-c': { id: 'v-c', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopWithTwoMainThreads(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.advanceTimersByTime(1_500);
+
+    let state = engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    expect(state.runtime?.playbackFocusSceneId).toBe('b');
+    expect(state.runtime?.cursorSceneId).toBe('b');
+    expect(state.runtime?.sceneStates.loop?.status).toBe('running');
+
+    vi.advanceTimersByTime(1_000);
+    state = engine.getPublicState();
+
+    expect(state.runtime?.playbackFocusSceneId).toBe('b');
+    expect(state.runtime?.cursorSceneId).toBe('b');
+    expect(state.runtime?.sceneStates.b?.status).toBe('running');
+    expect(state.runtime?.activeAudioSubCues?.filter((cue) => cue.sceneId === 'loop')).toHaveLength(1);
+    expect(state.runtime?.activeAudioSubCues?.find((cue) => cue.sceneId === 'loop')?.runtimeInstanceId).toBeDefined();
+  });
+
+  it('continues from B to C while preserving a single detached infinite loop instance and frozen main pause clock', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const director = createDirector({
+      audioSources: { 'a-loop': { id: 'a-loop', durationSeconds: 5 } } as DirectorState['audioSources'],
+      visuals: { 'v-b': { id: 'v-b', durationSeconds: 5 }, 'v-c': { id: 'v-c', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    installInfiniteLoopWithTwoMainThreads(stream);
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play', sceneId: 'loop', source: 'global' });
+    vi.advanceTimersByTime(1_000);
+    engine.applyTransport({ type: 'play', sceneId: 'b', source: 'scene-row' });
+    vi.advanceTimersByTime(5_100);
+
+    const beforeC = engine.getPublicState();
+    const pausedMain = beforeC.runtime?.mainTimelineId ? beforeC.runtime.timelineInstances?.[beforeC.runtime.mainTimelineId] : undefined;
+    expect(beforeC.runtime?.status).toBe('running');
+    expect(pausedMain?.status).toBe('paused');
+    expect(beforeC.runtime?.currentStreamMs).toBe(5_000);
+    expect(beforeC.runtime?.sceneStates.c?.status).toBe('ready');
+
+    let state = engine.applyTransport({ type: 'play', sceneId: 'c', source: 'scene-row' });
+    let main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+
+    expect(main?.status).toBe('running');
+    expect(state.runtime?.sceneStates.c?.status).toBe('running');
+    expect(state.runtime?.playbackFocusSceneId).toBe('c');
+    expect(state.runtime?.activeAudioSubCues?.filter((cue) => cue.sceneId === 'loop')).toHaveLength(1);
+    expect(Object.values(state.runtime?.timelineInstances ?? {}).filter((timeline) => timeline.kind === 'parallel')).toHaveLength(1);
+
+    vi.advanceTimersByTime(1_000);
+    state = engine.applyTransport({ type: 'pause' });
+    main = state.runtime?.mainTimelineId ? state.runtime.timelineInstances?.[state.runtime.mainTimelineId] : undefined;
+
+    expect(state.runtime?.status).toBe('paused');
+    expect(main?.status).toBe('paused');
+    expect(state.runtime?.currentStreamMs).toBe(6_000);
+    expect(state.runtime?.pausedAtStreamMs).toBe(6_000);
+    expect(state.runtime?.activeAudioSubCues?.filter((cue) => cue.sceneId === 'loop')).toHaveLength(1);
   });
 
   it('header Play fallback starts the first main timeline thread, not an earlier at-timecode side thread', () => {

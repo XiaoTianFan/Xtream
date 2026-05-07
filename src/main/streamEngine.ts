@@ -511,6 +511,32 @@ export class StreamEngine extends EventEmitter {
     return Math.max(0, (timeline.cursorMs ?? 0) - instance.timelineStartMs);
   }
 
+  private sceneIsOnMainTimeline(sceneId: SceneId): boolean {
+    const resolved = this.resolveThreadForScene(sceneId);
+    return resolved?.mainSegment !== undefined && !this.isDetachedSideThread(resolved.thread);
+  }
+
+  private activeDetachedThreadInstanceForScene(sceneId: SceneId): StreamRuntimeThreadInstance | undefined {
+    const resolved = this.resolveThreadForScene(sceneId);
+    if (!resolved || !this.isDetachedSideThread(resolved.thread)) {
+      return undefined;
+    }
+    const ordered = this.orderedThreadInstancesFor(resolved.thread.threadId);
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const instance = ordered[i];
+      const timeline = this.runtime?.timelineInstances?.[instance.timelineId];
+      if (
+        timeline?.kind === 'parallel' &&
+        timeline.orderedThreadInstanceIds.includes(instance.id) &&
+        (timeline.status === 'running' || timeline.status === 'paused') &&
+        (instance.state === 'running' || instance.state === 'paused' || instance.state === 'ready')
+      ) {
+        return instance;
+      }
+    }
+    return undefined;
+  }
+
   private pauseMainTimelineAtManualBoundaryIfNeeded(): SceneId[] {
     const runtime = this.runtime;
     const mainTimeline = runtime?.mainTimelineId ? runtime.timelineInstances?.[runtime.mainTimelineId] : undefined;
@@ -841,16 +867,22 @@ export class StreamEngine extends EventEmitter {
       if (launchLocalMs >= localNow) {
         if (timeline) {
           const nextCursor = activeInstance.timelineStartMs + launchLocalMs;
+          timeline.status = 'running';
           timeline.cursorMs = nextCursor;
           timeline.offsetMs = nextCursor;
           timeline.originWallTimeMs = now;
+          timeline.pausedAtMs = undefined;
         }
+        activeInstance.state = 'running';
         if (activeInstance.timelineId === this.runtime.mainTimelineId) {
           const segment = resolved.mainSegment;
           const nextMainMs = segment ? segment.startMs + launchLocalMs : this.sceneStartMs(sceneId) ?? currentMs;
           this.runtime.offsetStreamMs = nextMainMs;
           this.runtime.currentStreamMs = nextMainMs;
           this.runtime.originWallTimeMs = now;
+          this.streamPlayReferenceSceneId = sceneId;
+          this.streamPlaybackAnchorMs = nextMainMs;
+          this.streamPlayIsolatedToReferenceThread = true;
           this.dispatchedControlSubCues.clear();
           this.refreshScheduleConsumedIdsAfterSeek(nextMainMs);
         }
@@ -1657,7 +1689,7 @@ export class StreamEngine extends EventEmitter {
         continue;
       }
       const e = schedule.entries[id];
-      if (e?.endMs !== undefined && e.endMs < streamMs) {
+      if (e?.endMs !== undefined && e.endMs <= streamMs) {
         this.scheduleConsumedSceneIds.add(id);
       }
     }
@@ -2063,6 +2095,14 @@ export class StreamEngine extends EventEmitter {
         continue;
       }
       const previous = this.runtime.sceneStates[sceneId];
+      const detachedInstance = this.activeDetachedThreadInstanceForScene(sceneId);
+      if (detachedInstance) {
+        const detachedState = this.sceneStateForThreadInstance(sceneId, detachedInstance, previous);
+        if (detachedState) {
+          sceneStates[sceneId] = detachedState;
+          continue;
+        }
+      }
       if (this.skippedByThreadLaunchSceneIds.has(sceneId)) {
         sceneStates[sceneId] = {
           sceneId,
@@ -2241,13 +2281,16 @@ export class StreamEngine extends EventEmitter {
     this.applyCanonicalSceneStateSummary(sceneStates);
 
     const runningEntries = Object.values(sceneStates).filter((s) => s.status === 'running' || s.status === 'paused');
-    if (runningEntries.length > 0) {
+    const cursorEntries = this.runtime.mainTimelineId
+      ? runningEntries.filter((state) => this.sceneIsOnMainTimeline(state.sceneId))
+      : runningEntries;
+    if (cursorEntries.length > 0) {
       this.manualTailResumeIdleHold = false;
-      const candidateSceneId = runningEntries.reduce((latest, state) => {
+      const candidateSceneId = cursorEntries.reduce((latest, state) => {
         const latestStart = latest.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
         const stateStart = state.scheduledStartMs ?? Number.NEGATIVE_INFINITY;
         return stateStart >= latestStart ? state : latest;
-      }, runningEntries[0]).sceneId;
+      }, cursorEntries[0]).sceneId;
       const prevCursor = this.runtime.cursorSceneId;
       const prevSt = prevCursor ? sceneStates[prevCursor] : undefined;
       const prevStart = prevSt?.scheduledStartMs;
@@ -2362,6 +2405,17 @@ export class StreamEngine extends EventEmitter {
   private getRuntimeStreamMs(atWallTimeMs = Date.now()): number {
     if (!this.runtime) {
       return 0;
+    }
+    const mainTimeline = this.runtime.mainTimelineId ? this.runtime.timelineInstances?.[this.runtime.mainTimelineId] : undefined;
+    if (mainTimeline?.kind === 'main') {
+      if ((mainTimeline.status === 'running' || mainTimeline.status === 'idle') && mainTimeline.originWallTimeMs !== undefined) {
+        return (mainTimeline.offsetMs ?? mainTimeline.cursorMs ?? 0) + (atWallTimeMs - mainTimeline.originWallTimeMs) * this.getGlobalRate();
+      }
+      return mainTimeline.pausedAtMs ?? mainTimeline.cursorMs ?? mainTimeline.offsetMs ?? this.runtime.currentStreamMs ?? this.runtime.offsetStreamMs ?? 0;
+    }
+    const detachedClock = this.detachedMainCursorFallback(Number.NaN, atWallTimeMs);
+    if (Number.isFinite(detachedClock)) {
+      return detachedClock;
     }
     if (this.runtime.status === 'running' || this.runtime.status === 'preloading') {
       if (this.manualTailResumeIdleHold) {
