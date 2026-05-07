@@ -2291,10 +2291,20 @@ export class StreamEngine extends EventEmitter {
   }
 
   private audioProjectionKey(cue: StreamRuntimeAudioSubCue): string {
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.outputId}:${cue.streamStartMs}:${cue.localStartMs}`;
+  }
+
+  private canonicalAudioProjectionKey(cue: StreamRuntimeAudioSubCue): string {
     return `${cue.sceneId}:${cue.subCueId}:${cue.outputId}:${cue.streamStartMs}:${cue.localStartMs}`;
   }
 
   private visualProjectionKey(cue: StreamRuntimeVisualSubCue): string {
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}:${cue.streamStartMs}:${
+      cue.localStartMs
+    }`;
+  }
+
+  private canonicalVisualProjectionKey(cue: StreamRuntimeVisualSubCue): string {
     return `${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}:${cue.streamStartMs}:${cue.localStartMs}`;
   }
 
@@ -2375,6 +2385,8 @@ export class StreamEngine extends EventEmitter {
     }
     const audioKeys = new Set(activeAudio.map((cue) => this.audioProjectionKey(cue)));
     const visualKeys = new Set(activeVisual.map((cue) => this.visualProjectionKey(cue)));
+    const canonicalAudioKeys = new Map(activeAudio.map((cue, index) => [this.canonicalAudioProjectionKey(cue), index]));
+    const canonicalVisualKeys = new Map(activeVisual.map((cue, index) => [this.canonicalVisualProjectionKey(cue), index]));
     const timelineIds = this.runtime.timelineOrder ?? Object.keys(this.runtime.timelineInstances);
     for (const timelineId of timelineIds) {
       const timeline = this.runtime.timelineInstances[timelineId];
@@ -2414,15 +2426,33 @@ export class StreamEngine extends EventEmitter {
           this.collectActiveSubCues(scene, timelineGlobalZeroMs + instance.timelineStartMs + localStartMs, currentMs, nextAudio, nextVisual, instance.id);
           for (const cue of nextAudio) {
             const key = this.audioProjectionKey(cue);
+            const canonicalKey = this.canonicalAudioProjectionKey(cue);
+            const canonicalIndex = canonicalAudioKeys.get(canonicalKey);
+            if (canonicalIndex !== undefined && activeAudio[canonicalIndex]?.runtimeInstanceId === undefined) {
+              activeAudio[canonicalIndex] = cue;
+              audioKeys.add(key);
+              canonicalAudioKeys.delete(canonicalKey);
+              continue;
+            }
             if (!audioKeys.has(key)) {
               audioKeys.add(key);
+              canonicalAudioKeys.set(canonicalKey, activeAudio.length);
               activeAudio.push(cue);
             }
           }
           for (const cue of nextVisual) {
             const key = this.visualProjectionKey(cue);
+            const canonicalKey = this.canonicalVisualProjectionKey(cue);
+            const canonicalIndex = canonicalVisualKeys.get(canonicalKey);
+            if (canonicalIndex !== undefined && activeVisual[canonicalIndex]?.runtimeInstanceId === undefined) {
+              activeVisual[canonicalIndex] = cue;
+              visualKeys.add(key);
+              canonicalVisualKeys.delete(canonicalKey);
+              continue;
+            }
             if (!visualKeys.has(key)) {
               visualKeys.add(key);
+              canonicalVisualKeys.set(canonicalKey, activeVisual.length);
               activeVisual.push(cue);
             }
           }

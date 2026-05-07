@@ -9,6 +9,8 @@ import type {
   StreamPausedPlayBehavior,
   StreamParallelTimelineSeekBehavior,
   StreamPlaybackSettings,
+  VisualMingleAlgorithm,
+  VisualMingleMode,
 } from '../../../shared/types';
 import type { SurfaceController } from '../app/surfaceRouter';
 import { createSurfaceStateSignature } from '../app/surfaceSignatures';
@@ -35,6 +37,7 @@ const CONFIG_TAB_SESSION_KEY = 'xtream.control.config.tab.v1';
 type ConfigTabId = 'overview' | 'project' | 'diagnostics' | 'advanced';
 
 const CONFIG_TAB_ORDER: ConfigTabId[] = ['overview', 'project', 'diagnostics', 'advanced'];
+const VISUAL_MINGLE_ALGORITHMS: VisualMingleAlgorithm[] = ['latest', 'alpha-over', 'additive', 'multiply', 'screen', 'lighten', 'darken', 'crossfade'];
 
 function readStoredConfigTab(): ConfigTabId {
   try {
@@ -381,6 +384,9 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
   streamPlayback.append(createHint('These Stream transport preferences are stored in your show project file.'));
   void renderStreamPlaybackSettings(streamPlayback, options);
 
+  const displayComposition = createSurfaceCard('Stream display composition');
+  renderDisplayCompositionSettings(displayComposition, state, options);
+
   const advancedPlaceholder = createSurfaceCard('Advanced');
   advancedPlaceholder.append(createHint('Reserved for future settings.'));
 
@@ -388,11 +394,67 @@ function panelForTab(tab: ConfigTabId, state: DirectorState, options: ConfigSurf
     case 'overview':
       return wrapConfigOverviewPanels(summary, topology, appConfiguration);
     case 'project':
-      return wrapSurfaceGrid(showProject, streamPlayback);
+      return wrapSurfaceGrid(showProject, streamPlayback, displayComposition);
     case 'diagnostics':
       return renderDiagnosticsContent(state, options);
     case 'advanced':
       return wrapSurfaceGrid(advancedPlaceholder);
+  }
+}
+
+function visualMingleLabel(value: string): string {
+  return value.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function renderDisplayCompositionSettings(card: HTMLElement, state: DirectorState, options: ConfigSurfaceOptions): void {
+  const displays = Object.values(state.displays).sort((left, right) => left.id.localeCompare(right.id));
+  if (displays.length === 0) {
+    card.append(createHint('No display windows are available yet.'));
+    return;
+  }
+  card.append(createHint('These per-display Stream composition settings are saved in the show project. Patch display layouts stay unchanged.'));
+  const commit = async (
+    displayId: string,
+    visualMingle: { mode?: VisualMingleMode; algorithm: VisualMingleAlgorithm; defaultTransitionMs?: number },
+  ) => {
+    await window.xtream.displays.update(displayId, { visualMingle });
+    options.renderState(await window.xtream.director.getState());
+  };
+  for (const display of displays) {
+    const current = state.displayVisualMingle?.[display.id] ?? { mode: 'prioritize-latest' as const, algorithm: 'latest' as const, defaultTransitionMs: 0 };
+    const block = document.createElement('div');
+    block.className = 'detail-card';
+    const title = createDetailTitle(display.label ?? display.id);
+    const modeSelect = createSelect(
+      'Conflict mode',
+      [
+        ['prioritize-latest', 'Prioritize latest'],
+        ['layered', 'Layered rendering'],
+      ],
+      current.mode ?? 'prioritize-latest',
+      (mode) => void commit(display.id, { ...current, mode: mode as VisualMingleMode }),
+    );
+    const algorithmSelect = createSelect(
+      'Visual mingle algorithm',
+      VISUAL_MINGLE_ALGORITHMS.map((algorithm): [VisualMingleAlgorithm, string] => [algorithm, visualMingleLabel(algorithm)]),
+      current.algorithm ?? 'latest',
+      (algorithm) => void commit(display.id, { ...current, algorithm: algorithm as VisualMingleAlgorithm }),
+    );
+    block.append(
+      title,
+      modeSelect,
+      algorithmSelect,
+      createNumberDetailControl(
+        'Transition (ms)',
+        current.defaultTransitionMs ?? 0,
+        0,
+        10_000,
+        50,
+        (defaultTransitionMs) => commit(display.id, { ...current, defaultTransitionMs: Math.round(defaultTransitionMs) }),
+        options.renderState,
+      ),
+    );
+    card.append(block);
   }
 }
 

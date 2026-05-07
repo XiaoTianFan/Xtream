@@ -1,4 +1,12 @@
-import type { DirectorState, DisplayWindowState, StreamEnginePublicState, VirtualOutputState, VisualId, VisualMingleAlgorithm } from '../../../shared/types';
+import type {
+  DirectorState,
+  DisplayWindowState,
+  StreamEnginePublicState,
+  VirtualOutputState,
+  VisualId,
+  VisualMingleAlgorithm,
+  VisualMingleMode,
+} from '../../../shared/types';
 import type { SelectedEntity } from '../shared/types';
 import { applyMediaDetailLivePreview } from '../patch/mediaDetailLivePreview';
 import { attachAudioMediaDetailMount, attachVisualMediaDetailMount, type MediaDetailSharedDeps } from '../patch/mediaDetailSharedForms';
@@ -223,18 +231,39 @@ function createStreamDisplayDetailCard(
   monitorLayoutRow.append(monitor, layoutControl);
 
   const minglePersist = state.displayVisualMingle?.[display.id];
+  const mingleMode = minglePersist?.mode ?? 'prioritize-latest';
+  const mingleAlgorithm = minglePersist?.algorithm ?? 'latest';
   const mingleAlgo: VisualMingleAlgorithm[] = ['latest', 'alpha-over', 'additive', 'multiply', 'screen', 'lighten', 'darken', 'crossfade'];
+  const mingleModeSelect = createSelect(
+    'Visual conflict mode',
+    [
+      ['prioritize-latest', 'Prioritize latest'],
+      ['layered', 'Layered rendering'],
+    ],
+    mingleMode,
+    (mode) =>
+      void window.xtream.displays
+        .update(display.id, {
+          visualMingle: {
+            mode: mode as VisualMingleMode,
+            algorithm: mingleAlgorithm,
+            defaultTransitionMs: minglePersist?.defaultTransitionMs,
+          },
+        })
+        .then(refreshDirector),
+  );
   const mingleSelect = createSelect(
     'Visual mingle algorithm',
     mingleAlgo.map((alg): [VisualMingleAlgorithm, string] => [
       alg,
       alg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
     ]),
-    minglePersist?.algorithm ?? 'latest',
+    mingleAlgorithm,
     (algorithm) =>
       void window.xtream.displays
         .update(display.id, {
           visualMingle: {
+            mode: mingleMode,
             algorithm: algorithm as VisualMingleAlgorithm,
             defaultTransitionMs: minglePersist?.defaultTransitionMs,
           },
@@ -259,7 +288,8 @@ function createStreamDisplayDetailCard(
     void window.xtream.displays
       .update(display.id, {
         visualMingle: {
-          algorithm: minglePersist?.algorithm ?? 'latest',
+          mode: mingleMode,
+          algorithm: mingleAlgorithm,
           ...(ms !== undefined ? { defaultTransitionMs: ms } : {}),
         },
       })
@@ -270,6 +300,7 @@ function createStreamDisplayDetailCard(
   card.append(
     toolbar,
     monitorLayoutRow,
+    mingleModeSelect,
     mingleSelect,
     transWrap,
     createStreamDetailLine('Status', displayWorkspace?.getDisplayStatusLabel(display) ?? 'Display'),

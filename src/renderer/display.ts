@@ -15,7 +15,7 @@ import type {
 import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/media/mediaSync';
 import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
 import { attachLiveVisualStream, reportLiveVisualError } from './control/media/liveCaptureRuntime';
-import { deriveDirectorStateForStream } from './streamProjection';
+import { buildStreamDisplayFrames, deriveDirectorStateForStream, type StreamDisplayFrame, type StreamDisplayLayer } from './streamProjection';
 import { formatDisplayWindowTitle } from '../shared/displayWindowTitle';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
@@ -96,22 +96,53 @@ function setupIdentifyFlashOverlay(): (() => void) | undefined {
 
 const unsubscribeIdentifyFlash = setupIdentifyFlashOverlay();
 
-function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): void {
-  displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
+function cleanupRenderedMedia(): void {
   for (const cleanup of liveVisualCleanups.values()) {
     cleanup();
   }
   liveVisualCleanups.clear();
-  displayRoot.replaceChildren();
   videoElements.clear();
+}
+
+function renderLayout(layout: VisualLayoutProfile, visualsById: Record<VisualId, VisualState>): void {
+  displayRoot.className = layout.type === 'split' ? 'display-root split' : 'display-root';
+  cleanupRenderedMedia();
+  displayRoot.replaceChildren();
   for (const visualId of getLayoutVisualIds(layout)) {
     displayRoot.append(createVisualElement(visualId, visualsById[visualId]));
+  }
+}
+
+function renderStreamFrame(frame: StreamDisplayFrame): void {
+  displayRoot.className = frame.layout.type === 'split' ? 'display-root split stream-frame' : 'display-root stream-frame';
+  cleanupRenderedMedia();
+  displayRoot.replaceChildren();
+  const zoneIds = frame.layout.type === 'split' ? (['L', 'R'] as const) : (['single'] as const);
+  for (const zoneId of zoneIds) {
+    const output = document.createElement('section');
+    output.className = 'display-output display-output-zone';
+    output.dataset.zoneId = zoneId;
+    const zone = frame.zones.find((candidate) => candidate.zoneId === zoneId);
+    const visibleLayers = (zone?.layers ?? []).filter((layer) => layer.selected && layer.opacity > 0.0001);
+    if (visibleLayers.length === 0) {
+      const visualLabel = document.createElement('span');
+      visualLabel.textContent = zoneId === 'single' ? 'NO SIGNAL' : zoneId;
+      const visualMeta = document.createElement('small');
+      visualMeta.textContent = 'no stream visual';
+      output.append(visualLabel, visualMeta);
+    } else {
+      visibleLayers.forEach((layer, index) => {
+        output.append(createStreamLayerElement(layer, index));
+      });
+    }
+    displayRoot.append(output);
   }
 }
 
 function handleState(state: DirectorState): void {
   latestDirectorState = state;
   const effectiveState = deriveDirectorStateForStream(state, currentStreamState);
+  const streamFrame = buildStreamDisplayFrames(state, currentStreamState)[displayId];
   currentState = effectiveState;
   currentDirectorSeconds = getDirectorSeconds(effectiveState);
   displayRoot.style.setProperty(
@@ -130,9 +161,15 @@ function handleState(state: DirectorState): void {
     return;
   }
   document.title = formatDisplayWindowTitle(display);
-  const renderSignature = createRenderSignature(display.layout, effectiveState.visuals);
+  const renderSignature = streamFrame
+    ? createStreamFrameRenderSignature(streamFrame)
+    : createRenderSignature(display.layout, effectiveState.visuals);
   if (currentRenderSignature !== renderSignature) {
-    renderLayout(display.layout, effectiveState.visuals);
+    if (streamFrame) {
+      renderStreamFrame(streamFrame);
+    } else {
+      renderLayout(display.layout, effectiveState.visuals);
+    }
     currentRenderSignature = renderSignature;
   }
   syncVideoElements(display, effectiveState);
@@ -240,6 +277,73 @@ function createVisualElement(visualId: VisualId, visual: VisualState | undefined
   return visualElement;
 }
 
+function createStreamLayerElement(layer: StreamDisplayLayer, index: number): HTMLElement {
+  const layerElement = document.createElement('div');
+  layerElement.className = `display-layer display-layer--${layer.blendAlgorithm}`;
+  layerElement.dataset.layerId = layer.layerId;
+  layerElement.dataset.visualId = layer.layerId;
+  layerElement.dataset.sourceVisualId = layer.sourceVisualId;
+  layerElement.dataset.sceneId = layer.sceneId;
+  layerElement.dataset.subCueId = layer.subCueId;
+  layerElement.style.zIndex = String(index + 1);
+  layerElement.style.opacity = String(layer.opacity);
+  layerElement.style.setProperty('--display-layer-transition', `${layer.transitionMs}ms`);
+  layerElement.style.mixBlendMode = cssBlendMode(layer.blendAlgorithm);
+  const visual = layer.visual;
+  if (visual.kind === 'live') {
+    const video = document.createElement('video');
+    video.dataset.visualId = layer.layerId;
+    applyVisualStyle(video, visual);
+    observeVideoFrames(video);
+    layerElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(layer.layerId, `stream live ${visual.capture.source}`)] : []));
+    void attachLiveVisualStream(visual, video, {})
+      .then((attachment) => {
+        liveVisualCleanups.set(layer.layerId, attachment.cleanup);
+      })
+      .catch((error: unknown) => {
+        reportLiveVisualError(visual, {}, error instanceof Error ? error.message : 'Live visual capture failed.');
+      });
+    return layerElement;
+  }
+  if (visual.type === 'image' && visual.url) {
+    const image = document.createElement('img');
+    image.src = visual.url;
+    image.alt = visual.label;
+    applyVisualStyle(image, visual);
+    layerElement.append(image, ...(showDiagnosticsOverlay ? [createOverlay(layer.layerId, 'stream image layer')] : []));
+    return layerElement;
+  }
+  if (visual.url) {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.src = visual.url;
+    video.dataset.visualId = layer.layerId;
+    applyVisualStyle(video, visual);
+    observeVideoFrames(video);
+    layerElement.append(video, ...(showDiagnosticsOverlay ? [createOverlay(layer.layerId, 'stream video layer')] : []));
+    videoElements.set(layer.layerId, video);
+    return layerElement;
+  }
+  const visualLabel = document.createElement('span');
+  visualLabel.textContent = visual.label;
+  const visualMeta = document.createElement('small');
+  visualMeta.textContent = 'stream visual missing media';
+  layerElement.append(visualLabel, visualMeta);
+  return layerElement;
+}
+
+function cssBlendMode(algorithm: StreamDisplayLayer['blendAlgorithm']): string {
+  if (algorithm === 'additive') {
+    return 'plus-lighter';
+  }
+  if (algorithm === 'alpha-over' || algorithm === 'latest' || algorithm === 'crossfade') {
+    return 'normal';
+  }
+  return algorithm;
+}
+
 function isStreamRuntimeVisualId(visualId: string): boolean {
   return visualId.startsWith('stream-visual:');
 }
@@ -267,6 +371,23 @@ function createRenderSignature(layout: VisualLayoutProfile, visualsById: Record<
     }:${visual?.contrast ?? 1}:${visual?.playbackRate ?? 1}`;
   });
   return `${describeLayout(layout)}|${visualParts.join('|')}`;
+}
+
+function createStreamFrameRenderSignature(frame: StreamDisplayFrame): string {
+  const zones = frame.zones.map((zone) => {
+    const layers = zone.layers
+      .filter((layer) => layer.selected)
+      .map((layer) => {
+        const visual = layer.visual;
+        return `${layer.layerId}:${layer.order}:${layer.opacity}:${layer.blendAlgorithm}:${visual.kind}:${
+          visual.kind === 'live' ? JSON.stringify(visual.capture) : visual.url ?? 'empty'
+        }:${visual.ready ? 'ready' : 'not-ready'}:${visual.error ?? ''}:${visual.opacity ?? 1}:${visual.brightness ?? 1}:${
+          visual.contrast ?? 1
+        }:${visual.playbackRate ?? 1}`;
+      });
+    return `${zone.zoneId}[${layers.join(',')}]`;
+  });
+  return `stream:${frame.displayId}:${frame.layout.type}:${frame.mode}:${frame.algorithm}:${frame.transitionMs}:${zones.join('|')}`;
 }
 
 function syncVideoElements(display: DisplayWindowState, state: DirectorState): void {
@@ -323,7 +444,7 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
 }
 
 function applyVisualStyle(element: HTMLElement, visual: VisualState): void {
-  element.style.opacity = String(visual.opacity ?? 1);
+  element.style.opacity = element.closest('.display-layer') ? '1' : String(visual.opacity ?? 1);
   element.style.filter = `brightness(${visual.brightness ?? 1}) contrast(${visual.contrast ?? 1})`;
 }
 

@@ -405,11 +405,16 @@ export type VisualMingleAlgorithm =
   | 'darken'
   | 'crossfade';
 
+export type VisualMingleMode = 'prioritize-latest' | 'layered';
+
+export type VisualMingleSettings = {
+  mode?: VisualMingleMode;
+  algorithm: VisualMingleAlgorithm;
+  defaultTransitionMs?: number;
+};
+
 export type PersistedDisplayConfigV8 = PersistedDisplayConfig & {
-  visualMingle?: {
-    algorithm: VisualMingleAlgorithm;
-    defaultTransitionMs?: number;
-  };
+  visualMingle?: VisualMingleSettings;
 };
 
 export type SceneTrigger =

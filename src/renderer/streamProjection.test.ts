@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, StreamEnginePublicState } from '../shared/types';
-import { deriveDirectorStateForStream } from './streamProjection';
+import { buildStreamDisplayFrames, deriveDirectorStateForStream } from './streamProjection';
 
 describe('deriveDirectorStateForStream', () => {
   afterEach(() => {
@@ -369,4 +369,248 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.offsetSeconds).toBe(10);
     expect(derived.anchorWallTimeMs).toBe(99_000);
   });
+
+  it('prioritizes the deterministic latest stream layer per display zone by default', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState({
+      displayVisualMingle: {
+        d1: { mode: 'prioritize-latest', algorithm: 'latest', defaultTransitionMs: 0 },
+      },
+    });
+    const streamState = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+      { runtimeInstanceId: 'inst-2', sceneId: 'b', subCueId: 'vis-b', visualId: 'v2', streamStartMs: 2000 },
+    ]);
+
+    const frame = buildStreamDisplayFrames(state, streamState).d1;
+    const layers = frame?.zones[0]?.layers ?? [];
+
+    expect(frame?.mode).toBe('prioritize-latest');
+    expect(layers).toHaveLength(2);
+    expect(layers.filter((layer) => layer.selected).map((layer) => layer.sourceVisualId)).toEqual(['v2']);
+  });
+
+  it('keeps simultaneous stream layers when display composition mode is layered', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState({
+      displayVisualMingle: {
+        d1: { mode: 'layered', algorithm: 'screen', defaultTransitionMs: 0 },
+      },
+    });
+    const streamState = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+      { runtimeInstanceId: 'inst-2', sceneId: 'b', subCueId: 'vis-b', visualId: 'v2', streamStartMs: 2000 },
+    ]);
+
+    const frame = buildStreamDisplayFrames(state, streamState).d1;
+    const layers = frame?.zones[0]?.layers ?? [];
+
+    expect(frame?.algorithm).toBe('screen');
+    expect(layers.map((layer) => [layer.sourceVisualId, layer.selected, layer.blendAlgorithm])).toEqual([
+      ['v1', true, 'screen'],
+      ['v2', true, 'screen'],
+    ]);
+  });
+
+  it('does not collapse copied stream instances that share scene, sub-cue, and target', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState({
+      displayVisualMingle: {
+        d1: { mode: 'layered', algorithm: 'alpha-over', defaultTransitionMs: 0 },
+      },
+    });
+    const streamState = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+      { runtimeInstanceId: 'inst-copy', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000 },
+    ]);
+
+    const layers = buildStreamDisplayFrames(state, streamState).d1?.zones[0]?.layers ?? [];
+
+    expect(layers).toHaveLength(2);
+    expect(new Set(layers.map((layer) => layer.layerId)).size).toBe(2);
+    expect(layers.map((layer) => layer.runtimeInstanceId)).toEqual(['inst-1', 'inst-copy']);
+  });
+
+  it('keeps split display zones independent', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const state = streamDisplayFrameDirectorState({
+      displays: {
+        d1: { id: 'd1', layout: { type: 'split', visualIds: [undefined, undefined] }, fullscreen: false, health: 'ready' },
+      },
+      displayVisualMingle: {
+        d1: { mode: 'prioritize-latest', algorithm: 'latest', defaultTransitionMs: 0 },
+      },
+    });
+    const streamState = streamDisplayFrameState([
+      { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 1000, zoneId: 'L' },
+      { runtimeInstanceId: 'inst-2', sceneId: 'b', subCueId: 'vis-b', visualId: 'v2', streamStartMs: 2000, zoneId: 'R' },
+    ]);
+
+    const frame = buildStreamDisplayFrames(state, streamState).d1;
+
+    expect(frame?.layout.type).toBe('split');
+    expect(frame?.zones.map((zone) => [zone.zoneId, zone.layers.filter((layer) => layer.selected).map((layer) => layer.sourceVisualId)])).toEqual([
+      ['L', ['v1']],
+      ['R', ['v2']],
+    ]);
+  });
+
+  it('applies orphan fade and prioritize-latest crossfade opacity in render frames', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_250);
+    const state = streamDisplayFrameDirectorState({
+      displayVisualMingle: {
+        d1: { mode: 'prioritize-latest', algorithm: 'crossfade', defaultTransitionMs: 200 },
+      },
+    });
+    const streamState = streamDisplayFrameState(
+      [
+        { runtimeInstanceId: 'inst-1', sceneId: 'a', subCueId: 'vis-a', visualId: 'v1', streamStartMs: 900 },
+        { runtimeInstanceId: 'inst-2', sceneId: 'b', subCueId: 'vis-b', visualId: 'v2', streamStartMs: 1000 },
+      ],
+      { currentStreamMs: 1100 },
+    );
+    streamState.runtime!.activeVisualSubCues![0]!.fadeOutStartedWallTimeMs = 1000;
+    streamState.runtime!.activeVisualSubCues![0]!.fadeOutDurationMs = 500;
+
+    const layers = buildStreamDisplayFrames(state, streamState).d1?.zones[0]?.layers ?? [];
+
+    expect(layers.map((layer) => [layer.sourceVisualId, layer.selected, Number(layer.opacity.toFixed(2))])).toEqual([
+      ['v1', true, 0.25],
+      ['v2', true, 0.5],
+    ]);
+  });
 });
+
+function streamDisplayFrameDirectorState(overrides: Partial<DirectorState> = {}): DirectorState {
+  return {
+    paused: true,
+    rate: 1,
+    anchorWallTimeMs: 0,
+    offsetSeconds: 0,
+    loop: { enabled: false, startSeconds: 0 },
+    globalAudioMuted: false,
+    globalDisplayBlackout: false,
+    globalAudioMuteFadeOutSeconds: 1,
+    globalDisplayBlackoutFadeOutSeconds: 1,
+    visuals: {
+      v1: { id: 'v1', kind: 'file', type: 'video', label: 'One', url: 'file://one.mp4', durationSeconds: 10, ready: true },
+      v2: { id: 'v2', kind: 'file', type: 'video', label: 'Two', url: 'file://two.mp4', durationSeconds: 10, ready: true },
+    },
+    audioSources: {},
+    outputs: {},
+    displays: {
+      d1: { id: 'd1', layout: { type: 'single' }, fullscreen: false, health: 'ready' },
+    },
+    activeTimeline: { assignedVideoIds: [], activeAudioSourceIds: [] },
+    audioRendererReady: true,
+    readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+    corrections: { displays: {} },
+    previews: {},
+    audioExtractionFormat: 'm4a',
+    controlDisplayPreviewMaxFps: 15,
+    performanceMode: false,
+    ...overrides,
+  } as DirectorState;
+}
+
+function streamDisplayFrameState(
+  cues: Array<{
+    runtimeInstanceId: string;
+    sceneId: string;
+    subCueId: string;
+    visualId: string;
+    streamStartMs: number;
+    zoneId?: 'single' | 'L' | 'R';
+  }>,
+  runtime: { currentStreamMs?: number } = {},
+): StreamEnginePublicState {
+  const sceneOrder = Array.from(new Set(cues.map((cue) => cue.sceneId)));
+  const timelineInstances = Object.fromEntries(
+    cues.map((cue, index) => [
+      `timeline-${index + 1}`,
+      {
+        id: `timeline-${index + 1}`,
+        kind: index === 0 ? 'main' : 'parallel',
+        status: 'running',
+        orderedThreadInstanceIds: [cue.runtimeInstanceId],
+        cursorMs: runtime.currentStreamMs ?? 3000,
+      },
+    ]),
+  ) as NonNullable<NonNullable<StreamEnginePublicState['runtime']>['timelineInstances']>;
+  const threadInstances = Object.fromEntries(
+    cues.map((cue, index) => [
+      cue.runtimeInstanceId,
+      {
+        id: cue.runtimeInstanceId,
+        canonicalThreadId: `thread-${cue.sceneId}`,
+        timelineId: `timeline-${index + 1}`,
+        rootSceneId: cue.sceneId,
+        launchSceneId: cue.sceneId,
+        launchLocalMs: 0,
+        state: 'running',
+        timelineStartMs: 0,
+      },
+    ]),
+  ) as NonNullable<NonNullable<StreamEnginePublicState['runtime']>['threadInstances']>;
+  return {
+    stream: {
+      id: 'stream-main',
+      label: 'Main',
+      sceneOrder,
+      scenes: Object.fromEntries(
+        sceneOrder.map((sceneId) => [
+          sceneId,
+          {
+            id: sceneId,
+            trigger: { type: 'manual' },
+            loop: { enabled: false },
+            preload: { enabled: false },
+            subCueOrder: cues.filter((cue) => cue.sceneId === sceneId).map((cue) => cue.subCueId),
+            subCues: {},
+          },
+        ]),
+      ),
+    },
+    playbackStream: {
+      id: 'stream-main',
+      label: 'Main',
+      sceneOrder,
+      scenes: Object.fromEntries(
+        sceneOrder.map((sceneId) => [
+          sceneId,
+          {
+            id: sceneId,
+            trigger: { type: 'manual' },
+            loop: { enabled: false },
+            preload: { enabled: false },
+            subCueOrder: cues.filter((cue) => cue.sceneId === sceneId).map((cue) => cue.subCueId),
+            subCues: {},
+          },
+        ]),
+      ),
+    },
+    editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+    playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+    validationMessages: [],
+    runtime: {
+      status: 'running',
+      originWallTimeMs: 0,
+      offsetStreamMs: runtime.currentStreamMs ?? 3000,
+      currentStreamMs: runtime.currentStreamMs ?? 3000,
+      sceneStates: {},
+      timelineOrder: Object.keys(timelineInstances),
+      timelineInstances,
+      threadInstances,
+      activeVisualSubCues: cues.map((cue) => ({
+        runtimeInstanceId: cue.runtimeInstanceId,
+        sceneId: cue.sceneId,
+        subCueId: cue.subCueId,
+        visualId: cue.visualId,
+        target: { displayId: 'd1', ...(cue.zoneId && cue.zoneId !== 'single' ? { zoneId: cue.zoneId } : {}) },
+        streamStartMs: cue.streamStartMs,
+        localStartMs: 0,
+        playbackRate: 1,
+      })),
+    },
+  } satisfies StreamEnginePublicState;
+}
