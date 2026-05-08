@@ -2,21 +2,17 @@ import type {
   DirectorState,
   PersistedVisualSubCueConfig,
   SceneId,
-  SceneLoopPolicy,
   SubCueId,
   VisualDisplayTarget,
   VisualId,
 } from '../../../../shared/types';
 import { createSelect } from '../../shared/dom';
 import { createStreamDetailLine } from '../streamDom';
-import { createFadeFields } from './fadeFields';
-import { createLoopPolicyEditor } from './loopPolicyEditors';
-import { createOptionalNumberField, createRequiredNumberField } from './numericField';
 import {
   createSubCueEmptyNote,
-  createSubCueFieldGrid,
   createSubCueSection,
 } from './subCueFormControls';
+import { createVisualSubCuePreviewLaneEditor } from './visualSubCuePreviewLaneEditor';
 
 export type VisualSubCueFormDeps = {
   sceneId: SceneId;
@@ -124,20 +120,12 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
     ),
   );
 
-  const loopPol: SceneLoopPolicy = sub.loop ?? { enabled: false };
   form.append(
-    createSubCueSection(
-      'Timing',
-      createSubCueFieldGrid(
-        createRequiredNumberField('Playback rate', sub.playbackRate ?? 1, (v) => patchSubCue({ playbackRate: v }), 0.01),
-        createOptionalNumberField('Freeze frame (ms)', sub.freezeFrameMs, (v) => patchSubCue({ freezeFrameMs: v }), { min: 0 }),
-        createOptionalNumberField('Start offset (ms)', sub.startOffsetMs, (v) => patchSubCue({ startOffsetMs: v }), { min: 0 }),
-        createOptionalNumberField('Duration override (ms)', sub.durationOverrideMs, (v) => patchSubCue({ durationOverrideMs: v }), { min: 0 }),
-        createFadeFields('Fade in', sub.fadeIn, (next) => patchSubCue({ fadeIn: next })),
-        createFadeFields('Fade out', sub.fadeOut, (next) => patchSubCue({ fadeOut: next })),
-      ),
-      createLoopPolicyEditor(loopPol, 'Loop', (next) => patchSubCue({ loop: next })),
-    ),
+    createVisualSubCuePreviewLaneEditor({
+      sub,
+      currentState,
+      patchSubCue,
+    }),
   );
 
   form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));

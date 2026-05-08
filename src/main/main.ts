@@ -59,6 +59,8 @@ const streamEngine = new StreamEngine(director);
 const streamSceneStateTransitionLogger = new StreamSceneStateTransitionLogger();
 director.setStreamPlaybackGate(() => streamEngine.isStreamPlaybackActive());
 
+const SHOW_CONFIG_AUTO_SAVE_DELAY_MS = 2 * 60 * 1000;
+
 function applyAppPersistedDirectorGlobals(): void {
   director.applyPersistedAppControlSettings(readAppControlSettings(app.getPath('userData')));
 }
@@ -281,6 +283,10 @@ function cancelPendingAutosaveWithoutFlush(): void {
   }
 }
 
+function isPlaybackEngineActiveForAutoSave(): boolean {
+  return director.isPatchTransportPlaying() || streamEngine.isStreamPlaybackActive();
+}
+
 function scheduleShowConfigAutoSave(): void {
   if (isShuttingDown || !currentShowConfigPath) {
     return;
@@ -291,6 +297,10 @@ function scheduleShowConfigAutoSave(): void {
   }
   autoSaveTimer = setTimeout(() => {
     autoSaveTimer = undefined;
+    if (isPlaybackEngineActiveForAutoSave()) {
+      scheduleShowConfigAutoSave();
+      return;
+    }
     if (currentShowConfigPath) {
       const runId = `autosave-${Date.now()}-${randomBytes(3).toString('hex')}`;
       forwardSessionLogFromMain({
@@ -325,7 +335,7 @@ function scheduleShowConfigAutoSave(): void {
           });
         });
     }
-  }, 250);
+  }, SHOW_CONFIG_AUTO_SAVE_DELAY_MS);
 }
 
 function flushShowConfigAutoSave(): void {

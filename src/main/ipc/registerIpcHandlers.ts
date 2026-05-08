@@ -74,6 +74,7 @@ import type {
   VisualMetadataReport,
   VisualSubCuePreviewCommand,
   VisualSubCuePreviewPosition,
+  VisualSubCuePreviewSnapshotReport,
   VisualUpdate,
   VirtualOutputId,
   VirtualOutputSourceSelectionUpdate,
@@ -528,13 +529,38 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
   });
 
   ipcMain.handle('visual:subcue-preview', (_event, command: VisualSubCuePreviewCommand) => {
-    displayRegistry?.sendVisualPreviewCommand(command);
+    const result = displayRegistry?.sendVisualPreviewCommand(command) ?? {
+      previewId: command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId,
+      targetDisplayIds: command.type === 'play-visual-subcue-preview' ? [...new Set(command.payload.targets.map((target) => target.displayId))] : [],
+      deliveredDisplayIds: [],
+      missingDisplayIds: command.type === 'play-visual-subcue-preview' ? [...new Set(command.payload.targets.map((target) => target.displayId))] : [],
+    };
+    if (command.type === 'play-visual-subcue-preview') {
+      for (const displayId of result.missingDisplayIds) {
+        director.updatePreviewStatus({
+          key: `visual-subcue:${command.payload.previewId}:${displayId}`,
+          displayId,
+          visualId: command.payload.visualId,
+          ready: false,
+          error: 'Assigned display window is not open.',
+          reportedAtWallTimeMs: Date.now(),
+        });
+      }
+    }
+    return result;
   });
 
   ipcMain.handle('visual:subcue-preview-position', (_event, position: VisualSubCuePreviewPosition) => {
     const controlWindow = getControlWindow();
     if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
       controlWindow.webContents.send('visual:subcue-preview-position', position);
+    }
+  });
+
+  ipcMain.handle('visual:subcue-preview-snapshot', (_event, report: VisualSubCuePreviewSnapshotReport) => {
+    const controlWindow = getControlWindow();
+    if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
+      controlWindow.webContents.send('visual:subcue-preview-snapshot', report);
     }
   });
 

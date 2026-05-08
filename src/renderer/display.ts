@@ -528,6 +528,7 @@ function appendVisualPreviewMedia(layer: HTMLElement, runtime: VisualPreviewRunt
       .then((attachment) => {
         if (layer.isConnected) {
           liveVisualCleanups.set(layerId, attachment.cleanup);
+          reportLivePreviewSnapshotWhenReady(visual, video, runtime.localTimeMs);
           reportVisualPreviewStatus(runtime.payload, true);
         } else {
           attachment.cleanup();
@@ -629,7 +630,7 @@ function syncVisualPreviewRuntime(runtime: VisualPreviewRuntime, forceReport: bo
       continue;
     }
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
-      const targetSeconds = (frozen ? clampFreezeTargetSeconds(freezeMs!, visual.durationSeconds) * 1000 : sourceTimeMs) / 1000;
+      const targetSeconds = frozen ? clampFreezeTargetSeconds(freezeMs! / 1000, visual.durationSeconds) : sourceTimeMs / 1000;
       if (Math.abs(video.currentTime - targetSeconds) > 0.08) {
         video.currentTime = targetSeconds;
       }
@@ -737,6 +738,38 @@ function reportVisualPreviewStatus(payload: VisualSubCuePreviewPayload, ready: b
     error,
     reportedAtWallTimeMs: Date.now(),
   });
+}
+
+function reportLivePreviewSnapshotWhenReady(visual: VisualState, video: HTMLVideoElement, timeMs: number): void {
+  let reported = false;
+  const report = (): void => {
+    if (reported) {
+      return;
+    }
+    if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+      return;
+    }
+    reported = true;
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 90;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    void window.xtream.visualRuntime.reportSubCuePreviewSnapshot({
+      visualId: visual.id,
+      dataUrl: canvas.toDataURL('image/jpeg', 0.72),
+      timeMs,
+    });
+  };
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    report();
+    return;
+  }
+  video.addEventListener('loadedmetadata', report, { once: true });
+  video.addEventListener('canplay', report, { once: true });
 }
 
 function scheduleVisualPreviewFrame(): void {

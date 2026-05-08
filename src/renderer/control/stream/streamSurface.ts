@@ -182,6 +182,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
 
   function render(state: DirectorState): void {
     currentState = state;
+    const previousStreamState = streamState;
     const latest = options.getLatestStreamState();
     if (latest && latest !== streamState) {
       streamState = latest;
@@ -193,7 +194,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     // is still undefined and `applyEngineSoloOutputIds` cannot hydrate solo from the IPC cache.
     // Re-apply once director state exists on every stream render (no-op if solo already matches).
     mixerPanel?.applyEngineSoloOutputIds(options.getEngineSoloOutputIds());
-    syncSelectedScene();
+    syncSelectedScene(previousStreamState);
     renderCurrent();
   }
 

@@ -52,7 +52,9 @@ import type {
   VisualId,
   VisualMetadataReport,
   VisualSubCuePreviewCommand,
+  VisualSubCuePreviewDispatchResult,
   VisualSubCuePreviewPosition,
+  VisualSubCuePreviewSnapshotReport,
   VisualState,
   VisualUpdate,
   VirtualOutputId,
@@ -178,9 +180,12 @@ const api = {
     },
   },
   visualRuntime: {
-    preview: (command: VisualSubCuePreviewCommand): Promise<void> => ipcRenderer.invoke('visual:subcue-preview', command),
+    preview: (command: VisualSubCuePreviewCommand): Promise<VisualSubCuePreviewDispatchResult> =>
+      ipcRenderer.invoke('visual:subcue-preview', command),
     reportSubCuePreviewPosition: (position: VisualSubCuePreviewPosition): Promise<void> =>
       ipcRenderer.invoke('visual:subcue-preview-position', position),
+    reportSubCuePreviewSnapshot: (report: VisualSubCuePreviewSnapshotReport): Promise<void> =>
+      ipcRenderer.invoke('visual:subcue-preview-snapshot', report),
     onSubCuePreviewCommand: (callback: (command: VisualSubCuePreviewCommand) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, command: VisualSubCuePreviewCommand) => callback(command);
       ipcRenderer.on('visual:subcue-preview-command', listener);
@@ -190,6 +195,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent, position: VisualSubCuePreviewPosition) => callback(position);
       ipcRenderer.on('visual:subcue-preview-position', listener);
       return () => ipcRenderer.removeListener('visual:subcue-preview-position', listener);
+    },
+    onSubCuePreviewSnapshot: (callback: (report: VisualSubCuePreviewSnapshotReport) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, report: VisualSubCuePreviewSnapshotReport) => callback(report);
+      ipcRenderer.on('visual:subcue-preview-snapshot', listener);
+      return () => ipcRenderer.removeListener('visual:subcue-preview-snapshot', listener);
     },
   },
   stream: {

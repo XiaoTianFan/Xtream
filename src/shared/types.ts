@@ -274,6 +274,19 @@ export type VisualSubCuePreviewPosition = {
   paused: boolean;
 };
 
+export type VisualSubCuePreviewDispatchResult = {
+  previewId: string;
+  targetDisplayIds: DisplayWindowId[];
+  deliveredDisplayIds: DisplayWindowId[];
+  missingDisplayIds: DisplayWindowId[];
+};
+
+export type VisualSubCuePreviewSnapshotReport = {
+  visualId: VisualId;
+  dataUrl: string;
+  timeMs?: number;
+};
+
 export type VisualSubCuePreviewCommand =
   | { type: 'play-visual-subcue-preview'; payload: VisualSubCuePreviewPayload }
   | { type: 'pause-visual-subcue-preview'; previewId: string }
@@ -1291,8 +1304,9 @@ export type IpcChannels = {
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
   'audio:subcue-preview': (command: AudioSubCuePreviewCommand) => void;
   'audio:subcue-preview-position': (position: AudioSubCuePreviewPosition) => void;
-  'visual:subcue-preview': (command: VisualSubCuePreviewCommand) => void;
+  'visual:subcue-preview': (command: VisualSubCuePreviewCommand) => VisualSubCuePreviewDispatchResult;
   'visual:subcue-preview-position': (position: VisualSubCuePreviewPosition) => void;
+  'visual:subcue-preview-snapshot': (report: VisualSubCuePreviewSnapshotReport) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:prompt-unsaved-if-needed': (kind: ShowUnsavedPromptKind) => Promise<boolean>;
   'show:save': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult;

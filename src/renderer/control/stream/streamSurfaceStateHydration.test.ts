@@ -248,6 +248,34 @@ function runningStreamPublic(cursorMs = 0): StreamEnginePublicState {
   } as unknown as StreamEnginePublicState;
 }
 
+function runningTwoSceneStreamPublic(runtimeFocusSceneId = 'scene-a', cursorMs = 0): StreamEnginePublicState {
+  const pub = twoSceneStreamPublic();
+  return {
+    ...pub,
+    runtime: {
+      status: 'running',
+      cursorSceneId: runtimeFocusSceneId,
+      playbackFocusSceneId: runtimeFocusSceneId,
+      sceneStates: {
+        'scene-a': {
+          sceneId: 'scene-a',
+          status: runtimeFocusSceneId === 'scene-a' ? 'running' : 'ready',
+          scheduledStartMs: 0,
+          progress: runtimeFocusSceneId === 'scene-a' ? cursorMs / 1000 : undefined,
+        },
+        'scene-b': {
+          sceneId: 'scene-b',
+          status: runtimeFocusSceneId === 'scene-b' ? 'running' : 'ready',
+          scheduledStartMs: 1000,
+          progress: runtimeFocusSceneId === 'scene-b' ? cursorMs / 1000 : undefined,
+        },
+      },
+      currentStreamMs: cursorMs,
+      expectedDurationMs: 2000,
+    },
+  } as unknown as StreamEnginePublicState;
+}
+
 function streamPublicWithFlowLayout(): StreamEnginePublicState {
   const pub = streamPublic();
   const stream = structuredClone(pub.stream);
@@ -379,6 +407,36 @@ describe('createStreamSurfaceController state hydration', () => {
       playbackFocusSceneId: 'scene-b',
     });
     expect(syncStreamHeaderRuntime).not.toHaveBeenCalled();
+  });
+
+  it('keeps manual playback focus during director renders while runtime focus is unchanged', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamHeader, syncStreamHeaderRuntime } = await import('./streamHeader');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const latest = runningTwoSceneStreamPublic('scene-a', 100);
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => latest,
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus: vi.fn(),
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(director());
+    const workspaceCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    workspaceCtx?.setPlaybackAndEditFocus('scene-b');
+    workspaceCtx?.refreshSceneSelectionUi();
+    vi.mocked(renderStreamHeader).mockClear();
+    vi.mocked(syncStreamHeaderRuntime).mockClear();
+
+    controller.render(director());
+
+    expect(renderStreamHeader).not.toHaveBeenCalled();
+    expect(vi.mocked(syncStreamHeaderRuntime).mock.calls.at(-1)?.[4]).toBe('scene-b');
   });
 
   it('syncs flow viewport and card geometry updates without rerendering the workspace pane', async () => {

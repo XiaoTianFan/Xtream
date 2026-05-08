@@ -1,0 +1,282 @@
+/**
+ * @vitest-environment happy-dom
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DirectorState, PersistedVisualSubCueConfig, VisualState, VisualSubCuePreviewPosition } from '../../../../shared/types';
+import { buildVisualSubCuePreviewPayload, createVisualSubCuePreviewLaneEditor } from './visualSubCuePreviewLaneEditor';
+import { clearVisualPreviewSnapshotCache } from './visualPreviewSnapshots';
+
+class FakeResizeObserver {
+  observe = vi.fn();
+  disconnect = vi.fn();
+  unobserve = vi.fn();
+}
+
+beforeEach(() => {
+  document.body.innerHTML = '';
+  (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+  window.xtream = {
+    visualRuntime: { preview: vi.fn(), onSubCuePreviewPosition: vi.fn() },
+  } as unknown as typeof window.xtream;
+});
+
+afterEach(() => {
+  clearVisualPreviewSnapshotCache();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe('visualSubCuePreviewLaneEditor', () => {
+  it('builds display-window preview payloads for assigned targets', () => {
+    const payload = buildVisualSubCuePreviewPayload(
+      visualSubCue({ playbackRate: 2, targets: [{ displayId: 'display-a' }, { displayId: 'display-b', zoneId: 'R' }] }),
+      directorState(),
+      'preview-a',
+      1250,
+    );
+
+    expect(payload).toMatchObject({
+      previewId: 'preview-a',
+      visualId: 'vid',
+      targets: [{ displayId: 'display-a' }, { displayId: 'display-b', zoneId: 'R' }],
+      playTimeMs: 5000,
+      playbackRate: 2,
+      startedAtLocalMs: 1250,
+    });
+  });
+
+  it('shows video playback controls and maps Play times to loop policy', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    expect(editor.textContent).toContain('Play times');
+    expect(editor.textContent).toContain('Infinite Loop');
+    expect(editor.textContent).toContain('Playback Rate');
+    expect(editor.textContent).not.toContain('Duration');
+
+    const playTimes = editor.querySelector<HTMLInputElement>('.stream-draggable-number input');
+    playTimes!.value = '4';
+    playTimes!.dispatchEvent(new Event('change'));
+
+    const loop = editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-loop');
+    loop!.click();
+
+    expect(patches).toEqual([
+      { loop: { enabled: true, iterations: { type: 'count', count: 4 } } },
+      { loop: { enabled: true, iterations: { type: 'infinite' } } },
+    ]);
+    expect(playTimes!.disabled).toBe(true);
+  });
+
+  it('switches image visuals to Duration and Infinite Render controls', () => {
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ visualId: 'img', durationOverrideMs: 3000 }),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+
+    expect(editor.textContent).toContain('Duration');
+    expect(editor.textContent).toContain('Infinite Render');
+    expect(editor.textContent).not.toContain('Freeze Frame');
+    expect(editor.textContent).not.toContain('Rate');
+  });
+
+  it('does not patch persisted state until a fade drag commits', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 4, clientY: 12 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 160, clientY: 12 }));
+
+    expect(patches).toEqual([]);
+
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 160, clientY: 12 }));
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0].fadeIn?.durationMs).toBe(2500);
+  });
+
+  it('drops a freeze marker from pin mode and commits one patch', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const pin = editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-freeze-pin')!;
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    pin.click();
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 320, clientY: 96 }));
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 320, clientY: 96 }));
+
+    expect(patches).toEqual([{ freezeFrameMs: 5000 }]);
+  });
+
+  it('sends transient preview commands and stops on cleanup', async () => {
+    vi.useFakeTimers();
+    const preview = vi.fn(async (command) => ({
+      previewId: command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId,
+      targetDisplayIds: ['display-a'],
+      deliveredDisplayIds: ['display-a'],
+      missingDisplayIds: [],
+    }));
+    window.xtream = {
+      visualRuntime: { preview, onSubCuePreviewPosition: vi.fn() },
+    } as unknown as typeof window.xtream;
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-transport')!.click();
+    editor.remove();
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ type: 'play-visual-subcue-preview' }));
+    expect(preview).toHaveBeenCalledWith({ type: 'stop-visual-subcue-preview', previewId: 'visual-subcue-preview:sub-v' });
+  });
+
+  it('surfaces missing display dispatch failures in the lane status', async () => {
+    const preview = vi.fn(async (command) => ({
+      previewId: command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId,
+      targetDisplayIds: ['display-a'],
+      deliveredDisplayIds: [],
+      missingDisplayIds: ['display-a'],
+    }));
+    window.xtream = {
+      visualRuntime: { preview, onSubCuePreviewPosition: vi.fn(), onSubCuePreviewSnapshot: vi.fn() },
+    } as unknown as typeof window.xtream;
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-transport')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-status')?.textContent).toContain('Assigned display window is not open');
+  });
+
+  it('uses the first assigned display as the preview playhead authority', () => {
+    let positionCallback: ((position: VisualSubCuePreviewPosition) => void) | undefined;
+    window.xtream = {
+      visualRuntime: {
+        preview: vi.fn(),
+        onSubCuePreviewPosition: vi.fn((callback) => {
+          positionCallback = callback;
+          return vi.fn();
+        }),
+        onSubCuePreviewSnapshot: vi.fn(),
+      },
+    } as unknown as typeof window.xtream;
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ targets: [{ displayId: 'display-a' }, { displayId: 'display-b' }] }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    positionCallback?.({ previewId: 'visual-subcue-preview:sub-v', displayId: 'display-b', localTimeMs: 8000, playing: false, paused: true });
+    positionCallback?.({ previewId: 'visual-subcue-preview:sub-v', displayId: 'display-a', localTimeMs: 2000, playing: false, paused: true });
+
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-playhead')?.style.left).toBe('128px');
+  });
+
+  it('hydrates live lane snapshots from display preview reports', async () => {
+    let snapshotCallback: ((report: { visualId: string; dataUrl: string; timeMs?: number }) => void) | undefined;
+    window.xtream = {
+      visualRuntime: {
+        preview: vi.fn(),
+        onSubCuePreviewPosition: vi.fn(),
+        onSubCuePreviewSnapshot: vi.fn((callback) => {
+          snapshotCallback = callback;
+          return vi.fn();
+        }),
+      },
+    } as unknown as typeof window.xtream;
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ visualId: 'live' }),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    snapshotCallback?.({ visualId: 'live', dataUrl: 'data:image/jpeg;base64,live', timeMs: 1200 });
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
+
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-tile')?.className).toContain('ready');
+  });
+});
+
+function visualSubCue(overrides: Partial<PersistedVisualSubCueConfig> = {}): PersistedVisualSubCueConfig {
+  return {
+    id: 'sub-v',
+    kind: 'visual',
+    visualId: 'vid',
+    targets: [{ displayId: 'display-a' }],
+    playbackRate: 1,
+    ...overrides,
+  };
+}
+
+function directorState(options: { noVideoUrl?: boolean } = {}): DirectorState {
+  return {
+    visuals: {
+      vid: {
+        id: 'vid',
+        kind: 'file',
+        type: 'video',
+        label: 'Clip',
+        url: options.noVideoUrl ? undefined : 'file://clip.mp4',
+        durationSeconds: 10,
+        ready: true,
+      } as VisualState,
+      img: {
+        id: 'img',
+        kind: 'file',
+        type: 'image',
+        label: 'Still',
+        url: 'file://still.png',
+        ready: true,
+      } as VisualState,
+      live: {
+        id: 'live',
+        kind: 'live',
+        type: 'video',
+        label: 'Live',
+        capture: { source: 'webcam', deviceId: 'camera-a', revision: 1 },
+        ready: true,
+      } as VisualState,
+    },
+    displays: {
+      'display-a': { id: 'display-a', fullscreen: false, layout: { type: 'single' }, health: 'ready' },
+      'display-b': { id: 'display-b', fullscreen: false, layout: { type: 'split', visualIds: [undefined, undefined] }, health: 'ready' },
+    },
+  } as unknown as DirectorState;
+}
