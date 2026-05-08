@@ -33,6 +33,8 @@ describe('stream surface signatures', () => {
     const edited = streamPublic(audioStream({
       startOffsetMs: 2000,
       loop: { enabled: true, iterations: { type: 'infinite' } },
+      pass: { iterations: { type: 'infinite' } },
+      innerLoop: { enabled: false, range: { startMs: 0, endMs: 5000 } },
       playbackRate: 0.75,
       pitchShiftSemitones: -3,
       durationOverrideMs: 5000,
@@ -59,6 +61,8 @@ describe('stream surface signatures', () => {
       sourceEndMs: 9000,
       durationOverrideMs: 8000,
       loop: { enabled: true, iterations: { type: 'count', count: 3 } },
+      pass: { iterations: { type: 'count', count: 2 } },
+      innerLoop: { enabled: true, range: { startMs: 1000, endMs: 4000 }, iterations: { type: 'count', count: 1 } },
       fadeIn: { durationMs: 1200, curve: 'equal-power' },
       fadeOut: { durationMs: 900, curve: 'log' },
       freezeFrameMs: 4000,

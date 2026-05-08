@@ -92,6 +92,19 @@ Relevant constraints:
 
    When the app quits, the server stops. When a display closes, its clients receive an end/error state. When settings change, old listeners are closed intentionally before new ones bind.
 
+## Settled product decisions
+
+- Remote display publication is app-local.
+- The remote display URL should be rendered in the corresponding local display window title when that display is published.
+- Display slugs are label-derived for readability.
+- Display slugs dynamically update when display labels change.
+- Remote display is visual-only. This includes any visual display output, not only video files. Audio remains intentionally separate.
+- Token-in-URL links are acceptable for MVP, using a 4-character token.
+- The first remote display capture source is the Xtream display window only. The remote page should exactly mirror the local virtual display window.
+- The server should bind to the local machine IP selected for LAN use. Development builds may also allow localhost.
+- The infrastructure must be platform agnostic and target both Windows and macOS.
+- The default remote viewer limit is 2 clients per display, exposed in Config.
+
 ## Proposed high-level architecture
 
 ```txt
@@ -251,16 +264,17 @@ Rationale:
 
 - The server is a machine/network capability.
 - The same show file may be opened on another machine with different interfaces, firewall rules, or security posture.
-- Display publication can reference show display IDs, but the server enabled state and port should be local.
+- Display publication is also app-local for the first implementation. It can reference current show display IDs, but opening a show should not automatically expose its display windows on a different machine.
 
 Recommended app-local config fields:
 
 ```ts
 export type LocalNetworkServerSettingsV1 = {
   enabled: boolean;
-  host: '127.0.0.1' | '0.0.0.0' | string;
+  host: '127.0.0.1' | 'local-ip' | string;
   port: number;
   authMode: 'token';
+  /** Hash of the 4-character LAN access token. */
   accessTokenHash?: string;
   allowDiscovery: boolean;
   remoteDisplay: {
@@ -276,19 +290,16 @@ export type RemoteDisplayPublicationSettings = {
   published: boolean;
   slug?: string;
   tokenScope?: 'server' | 'display';
-  preferredSource?: 'window-capture' | 'screen-capture' | 'offscreen-mirror';
+  preferredSource?: 'window-capture';
 };
 ```
 
-Open decision:
+Settled decision:
 
-- Store display publication settings app-locally, show-locally, or split them.
-
-Recommendation:
-
-- Start app-local for server enablement and network binding.
-- Store per-display published/slug state in the show file only if users expect remote display URLs to travel with the show.
-- If unsure, start app-local and expose copyable URLs in the UI. This avoids surprising network exposure when opening someone else's show.
+- Store remote display publication settings app-locally.
+- Do not persist remote display publication in the show file for the first implementation.
+- If a display ID from app-local publication settings does not exist in the current show/session, mark it unavailable or prune it through an explicit cleanup path.
+- Because slugs dynamically follow display labels, the app-local record should track whether the current slug is auto-generated. Manual slug editing can be deferred; if added later, manual slugs should stop automatic label syncing.
 
 ## Security model
 
@@ -298,8 +309,9 @@ Minimum security for MVP:
 
 - Server is disabled by default.
 - User must enable it from Config.
-- Bind to localhost by default for development; require explicit LAN binding for other devices.
-- Generate a random server access token.
+- Bind to a selected local machine IP for LAN use.
+- Allow localhost in development.
+- Generate a random 4-character server access token.
 - Remote display URLs include a token or lead to a token gate.
 - Tokens are capability-scoped.
 - No unauthenticated WebSocket upgrades.
@@ -320,6 +332,7 @@ The first is easiest. The second is cleaner if the viewer page prompts for a tok
 Recommended MVP:
 
 - Use token query params for copyable display URLs.
+- The token is exactly 4 characters for MVP. Treat this as a lightweight LAN access code, not a strong internet-facing credential.
 - Avoid cookies for now.
 - Add a later pairing flow if remote control surfaces need a better UX.
 
@@ -358,14 +371,14 @@ An operator enables the local network server, publishes one or more display wind
 http://<operator-machine-ip>:<port>/display/<display-slug>
 ```
 
-The remote page shows the current video output of the corresponding Xtream display window.
+The remote page shows the current visual output of the corresponding Xtream display window.
 
 ### Product expectations
 
 Remote display should:
 
 - Show the final composed output of one display window.
-- Use a stable slug per display publication.
+- Use a readable label-derived slug that dynamically follows the display label.
 - Work from phones, tablets, laptops, and other browser-capable devices on the same LAN.
 - Show a useful waiting/error state if the display is closed, unpublished, offline, or token-invalid.
 - Reconnect if the app restarts the stream host.
@@ -391,7 +404,7 @@ Recommended slug rules:
 - Replace whitespace with `-`.
 - Remove unsupported URL characters.
 - Deduplicate with `-2`, `-3`, etc.
-- Persist the slug while the display exists.
+- Dynamically update auto-generated slugs when display labels change.
 - Never use an empty slug.
 
 Examples:
@@ -403,6 +416,10 @@ Duplicate label: "Main Stage" -> /display/main-stage-2
 ```
 
 Slug lookup should resolve to a display ID through the remote display protocol module, not through the display label directly.
+
+Because slugs dynamically update with labels, old label-derived URLs are not guaranteed to remain valid after a label change. The Config and display detail surfaces should always show the current URL.
+
+The corresponding local display window title should include the current remote display URL while that display is published. This makes the URL visible on the local virtual display window and can also help identify the correct capture source during development and diagnostics.
 
 ### Remote display stream options
 
@@ -442,6 +459,11 @@ This should be the first prototype because it proves the end-to-end server, slug
 
 Capture the monitor assigned to the display instead of the display window.
 
+Status:
+
+- Rejected for the first implementation.
+- The remote display should exactly mirror Xtream's local virtual display window, not a physical monitor.
+
 Benefits:
 
 - Can be more reliable for fullscreen display windows.
@@ -453,7 +475,7 @@ Risks:
 - If the display is windowed, desktop background or other windows may appear.
 - Requires careful UI warning.
 
-This is a useful fallback, not the default.
+This can be reconsidered only if product requirements change. It should not be part of the MVP fallback path.
 
 #### Option C: Render an offscreen mirror display and stream that
 
@@ -481,8 +503,8 @@ Risks:
 Recommendation:
 
 - Start with Option A.
-- Add Option B as a fallback.
-- Keep Option C as the long-term reliability path if window/screen capture proves too fragile.
+- Do not add physical screen capture fallback in the first implementation.
+- Keep Option C as the long-term reliability path if window capture proves too fragile, because it still mirrors an Xtream virtual display rather than a physical monitor.
 
 ### Recommended remote display MVP architecture
 
@@ -662,11 +684,11 @@ Start conservative:
 
 - Default to `balanced`.
 - Default max clients per display: `2`.
-- Let users increase later.
+- Expose max clients per display in Config.
 
 ### Audio
 
-Remote display MVP should be video-only.
+Remote display MVP should be visual-only.
 
 Reason:
 
@@ -674,6 +696,7 @@ Reason:
 - Audio is rendered/mixed in the dedicated audio renderer and virtual output system.
 - Capturing "system audio" is platform-specific and may capture too much.
 - Sending a specific virtual output mix to remote viewers requires a dedicated audio graph/export path.
+- "Visual-only" here means the remote stream contains only the visual output track. The visual output may be a video, image, live capture, layered stream composition, blackout state, or any other visual display content.
 
 Future audio options:
 
@@ -683,7 +706,7 @@ Future audio options:
 
 Recommendation:
 
-- Document remote display as video-only in MVP.
+- Document remote display as visual-only in MVP.
 - Design message types so audio tracks can be added later without changing the URL shape.
 
 ## Future MIDI and OSC use cases
@@ -778,10 +801,11 @@ For each display:
 - Publish remote display toggle.
 - Slug field.
 - Copy URL button.
+- Current remote URL rendered in the local display window title while published.
 - QR code button later.
 - Client count.
 - Stream status.
-- Capture source mode: Auto, Window, Screen, Offscreen Mirror later.
+- Capture source mode: Display Window only for MVP. Offscreen Mirror can be considered later.
 - Quality preset.
 
 ### Readiness/diagnostics
@@ -813,7 +837,7 @@ Add diagnostics for:
 1. Display windows are closed/reopened by existing show restore flow.
 2. Remote display module reconciles publications:
    - Existing display IDs still present: keep slug/settings.
-   - Missing display IDs: mark unavailable or drop app-local stale entries depending on product decision.
+   - Missing display IDs: mark unavailable or prune stale app-local publication records through a clear cleanup path.
    - New display IDs: publish only if default says so.
 3. Active clients for removed displays receive `ended`.
 
@@ -927,7 +951,7 @@ Minimum manual QA:
 - Open viewer from phone/tablet on same Wi-Fi.
 - Publish/unpublish a display while viewer is open.
 - Close/reopen target display while viewer is open.
-- Change display label without breaking slug.
+- Change display label and confirm the URL/title update.
 - Regenerate token and confirm old URL fails.
 - Verify app shutdown closes viewer cleanly.
 - Verify no raw file paths appear in viewer HTML/messages.
@@ -945,8 +969,8 @@ Performance QA:
 
 Platform QA:
 
-- Windows first.
-- macOS later, especially screen capture permissions.
+- Windows and macOS are both first-target platforms.
+- Verify platform-specific display-window capture behavior on both.
 - Linux only if packaging/support targets it.
 
 ## Implementation phases
@@ -994,8 +1018,9 @@ Deliverables:
 Acceptance:
 
 - Slugs deduplicate.
-- Relabeling display does not unexpectedly break an existing slug.
-- Removing display closes or invalidates its publication according to the chosen policy.
+- Relabeling a display updates its auto-generated slug and current URL.
+- The local display window title includes the current URL while the display is published.
+- Removing display closes or invalidates its app-local publication.
 
 ### Phase 3: WebSocket signaling skeleton
 
@@ -1031,13 +1056,13 @@ Scope:
 
 Deliverables:
 
-- Remote browser sees the video output of a local display window.
-- Video-only.
+- Remote browser sees the visual output of a local display window.
+- Visual-only stream.
 - Manual URL/token.
 
 Acceptance:
 
-- Works on Windows in development.
+- Works on Windows and macOS in development.
 - Viewer handles display closed/unavailable.
 - Client disconnect cleans up peer connection.
 - No raw media files are served.
@@ -1046,21 +1071,21 @@ Acceptance:
 
 Scope:
 
-- Add screen/monitor capture fallback.
 - Add source reacquisition when display reopens or capture ends.
 - Add client limits.
 - Add quality presets.
 - Add better status in Config.
+- Investigate offscreen mirror as a future fallback if display-window capture is unreliable across platforms.
 
 Deliverables:
 
 - Remote display survives common lifecycle changes.
-- Operator can choose capture mode if Auto fails.
+- Operator can inspect capture status and client status.
 
 Acceptance:
 
 - Closing/reopening display recovers.
-- Fullscreen display has at least one working capture mode.
+- Fullscreen display-window capture works on supported Windows and macOS paths, or limitations are documented with an offscreen-mirror follow-up.
 - Client limit is enforced.
 
 ### Phase 6: Packaging and network polish
@@ -1101,39 +1126,39 @@ Acceptance:
 - Remote display is one module, not the server architecture.
 - New protocol modules can register HTTP/WebSocket routes or own sockets while reporting status through the same manager.
 
-## Open technical questions
+## Settled answers from product review
 
 1. Should remote display publication be stored app-locally, in the show file, or split between the two?
 
-   My recommendation: app-local for MVP. Revisit if users expect remote display URLs to travel with show projects.
+   App-local.
 
 2. Should display URLs use display labels by default or stable display IDs by default?
 
-   My recommendation: label-derived slugs for readability, persisted after creation so label changes do not break URLs.
+   Label-derived slugs for readability, dynamically updated according to display labels.
 
 3. Is video-only acceptable for the first remote display release?
 
-   My recommendation: yes. Audio should be designed separately around virtual output selection.
+   Yes. Remote display is for visuals only, which may include videos, images, live captures, and composed visual output. Audio remains separate by architecture.
 
 4. Is a token in the URL acceptable for MVP?
 
-   My recommendation: yes, with a regenerate-token button and visible warning. Pairing/PIN can come later.
+   Yes. Use a 4-character token.
 
 5. Should the first capture source be the display window or the physical screen?
 
-   My recommendation: display window first, screen fallback second.
+   Display window only. The remote display should exactly mirror local virtual display windows.
 
 6. What default bind address should the UI choose?
 
-   My recommendation: disabled by default; when enabled, bind to `0.0.0.0` only after explicit user confirmation. For development, allow localhost.
+   Use the local machine IP only. For development, allow localhost.
 
 7. What is the expected first target platform?
 
-   My recommendation: Windows first because the current workspace is Windows and the app packaging targets Windows.
+   Both Windows and macOS. Infrastructure must be platform agnostic.
 
 8. How many remote viewers per display should be allowed by default?
 
-   My recommendation: 2 per display until performance measurements say otherwise.
+   2 per display by default. Expose this setting in the Config surface.
 
 ## Risks and mitigations
 
@@ -1145,9 +1170,9 @@ Risk:
 
 Mitigation:
 
-- Add screen capture fallback.
 - Keep offscreen mirror as a planned reliability path.
 - Show clear capture status and source mode in Config.
+- Test both Windows and macOS early because platform-specific capture behavior is part of the core requirement.
 
 ### Performance
 
@@ -1209,13 +1234,14 @@ The first shippable version should include:
 - Server disabled by default.
 - Token-secured HTTP viewer route.
 - Token-secured WebSocket signaling route.
-- Display publication with stable slug.
+- Display publication with label-derived dynamic slug.
 - Copyable remote display URL.
+- Current remote display URL in the local display window title while published.
 - Hidden stream-host renderer.
-- WebRTC video-only stream from target display window.
+- WebRTC visual-only stream from target display window.
 - Basic status/errors in Config.
 - Client cleanup on display close and app shutdown.
-- Windows manual QA.
+- Windows and macOS manual QA.
 
 It should defer:
 
@@ -1226,6 +1252,7 @@ It should defer:
 - Raw media serving.
 - MIDI/OSC implementations.
 - Offscreen mirror compositor.
+- Physical screen capture fallback.
 
 ## Notes for future implementation
 
@@ -1235,4 +1262,3 @@ It should defer:
 - Keep all remote network message schemas in shared types with runtime validation helpers.
 - Avoid passing full `DirectorState` or show config to remote clients for display viewing. The viewer needs stream status and WebRTC negotiation only.
 - When adding future OSC/MIDI, keep command/action mapping explicit and auditable.
-

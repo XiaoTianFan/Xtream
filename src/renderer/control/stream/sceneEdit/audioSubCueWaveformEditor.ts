@@ -410,15 +410,14 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       }
       const baseDurationMs = selectedBaseDurationMs();
       const localMs = clampLocalLoopMs((mediaMs - range.startMs) / audioPlaybackRate(), baseDurationMs);
+      const iterations = loopIterationsForPatch(draftSub);
       stageWaveformPatch({
-        innerLoop: {
-          enabled: true,
-          range:
-            drag.target.type === 'loop-start'
-              ? clampRequiredLoopRange(localMs, loopRange.endMs, baseDurationMs)
-              : clampRequiredLoopRange(loopRange.startMs, localMs, baseDurationMs),
-          iterations: loopIterationsForPatch(draftSub),
-        },
+        innerLoop: innerLoopPatchForRange(
+          drag.target.type === 'loop-start'
+            ? clampRequiredLoopRange(localMs, loopRange.endMs, baseDurationMs)
+            : clampRequiredLoopRange(loopRange.startMs, localMs, baseDurationMs),
+          iterations,
+        ),
       });
       return;
     }
@@ -789,10 +788,10 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
 
   function audioLoopLocalRange(): { startMs: number; endMs: number } | undefined {
     const range = draftSub.innerLoop?.range;
-    if (!range) {
-      return undefined;
+    if (range) {
+      return clampInnerLoopRange(range, selectedBaseDurationMs()) ?? defaultInnerLoopRange(selectedBaseDurationMs());
     }
-    return clampInnerLoopRange(range, selectedBaseDurationMs());
+    return defaultInnerLoopRange(selectedBaseDurationMs());
   }
 
   function loopRangeForPatch(): { startMs: number; endMs: number } {
@@ -800,7 +799,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function audioLoopSourceRange(): { startMs: number; endMs: number } | undefined {
-    if (!sourceDurationMs || !hasLoopHandleRange(draftSub)) {
+    if (!sourceDurationMs) {
       return undefined;
     }
     const selectedRange = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
@@ -1166,19 +1165,11 @@ function loopIsInfinite(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loo
 }
 
 function hasLoopHandleRange(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): boolean {
-  const value = loopControlValue(sub);
-  return value.type === 'infinite' || value.count > 0;
+  return Boolean(sub);
 }
 
 function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
-  const base = Math.max(1, Math.round(baseDurationMs));
-  if (base <= 3) {
-    return { startMs: 0, endMs: base };
-  }
-  return {
-    startMs: Math.round(base / 3),
-    endMs: Math.round((base * 2) / 3),
-  };
+  return { startMs: 0, endMs: Math.max(1, Math.round(baseDurationMs)) };
 }
 
 function clampLocalLoopMs(value: number, baseDurationMs: number): number {
@@ -1216,6 +1207,12 @@ function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIteratio
 function loopIterationsForPatch(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
   const value = loopControlValue(sub);
   return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(0, Math.round(value.count)) };
+}
+
+function innerLoopPatchForRange(range: { startMs: number; endMs: number }, iterations: LoopIterations): SubCueInnerLoopPolicy {
+  return iterations.type === 'count' && iterations.count <= 0
+    ? { enabled: false, range }
+    : { enabled: true, range, iterations };
 }
 
 function getAutomationBucketMs(selectedDurationMs: number): number {

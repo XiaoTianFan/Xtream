@@ -56,12 +56,14 @@ describe('audioSubCueWaveformEditor', () => {
     const loopInfinity = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!;
     loopInfinity.click();
 
+    expect(loopInfinity.textContent).toBe('Loop time');
+    expect(editor.querySelector<HTMLInputElement>('[aria-label="Loop time"]')?.value).toBe('∞');
     expect(patches).toEqual([
       {
         pass: { iterations: { type: 'count', count: 1 } },
         innerLoop: {
           enabled: true,
-          range: { startMs: 2133, endMs: 4267 },
+          range: { startMs: 0, endMs: 6400 },
           iterations: { type: 'infinite' },
         },
         loop: undefined,
@@ -120,7 +122,7 @@ describe('audioSubCueWaveformEditor', () => {
         pass: { iterations: { type: 'count', count: 1 } },
         innerLoop: {
           enabled: true,
-          range: { startMs: 2133, endMs: 4267 },
+          range: { startMs: 0, endMs: 6400 },
           iterations: { type: 'infinite' },
         },
         loop: undefined,
@@ -147,7 +149,7 @@ describe('audioSubCueWaveformEditor', () => {
       {
         innerLoop: {
           enabled: true,
-          range: { startMs: 2133, endMs: 4267 },
+          range: { startMs: 0, endMs: 6400 },
           iterations: { type: 'count', count: 2 },
         },
         loop: undefined,
@@ -269,7 +271,7 @@ describe('audioSubCueWaveformEditor', () => {
     ]);
   });
 
-  it('keeps preserved disabled loop ranges inert until Loop time is enabled', () => {
+  it('commits preserved disabled loop range edits without enabling playback', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({
       sub: audioSubCue({
@@ -289,7 +291,14 @@ describe('audioSubCueWaveformEditor', () => {
     canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
 
-    expect(patches).toEqual([]);
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: false,
+          range: { startMs: 3000, endMs: 4000 },
+        },
+      },
+    ]);
   });
 
   it('clamps inner loop ranges when source range edges move', () => {

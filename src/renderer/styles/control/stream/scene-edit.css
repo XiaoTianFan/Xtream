@@ -864,7 +864,7 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 
 .stream-infinity-number {
   display: grid;
-  grid-template-columns: minmax(2.35rem, 0.58fr) minmax(2.8rem, 1fr);
+  grid-template-columns: minmax(3.8rem, 1fr) minmax(2.4rem, 0.68fr);
   align-items: center;
   min-width: 0;
   height: 2rem;
@@ -877,13 +877,15 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 .stream-infinity-number-toggle {
   min-width: 0;
   height: 2rem;
+  overflow: hidden;
   border: 0;
   border-right: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
   background: transparent;
   color: var(--text-secondary);
-  font-family: var(--font-data);
-  font-size: 0.9rem;
+  font-size: 0.62rem;
   line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
 

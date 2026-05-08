@@ -100,6 +100,8 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
             sourceEndMs: _sourceEndMs,
             durationOverrideMs: _durationOverrideMs,
             loop: _loop,
+            pass: _pass,
+            innerLoop: _innerLoop,
             fadeIn: _fadeIn,
             fadeOut: _fadeOut,
             freezeFrameMs: _freezeFrameMs,
@@ -121,6 +123,8 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
           startOffsetMs: _startOffsetMs,
           durationOverrideMs: _durationOverrideMs,
           loop: _loop,
+          pass: _pass,
+          innerLoop: _innerLoop,
           playbackRate: _playbackRate,
           pitchShiftSemitones: _pitchShiftSemitones,
           ...stableAudioSubCue

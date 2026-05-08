@@ -18,7 +18,7 @@ export function createInfinityNumberToggle(
   const infinity = document.createElement('button');
   infinity.type = 'button';
   infinity.className = 'stream-infinity-number-toggle';
-  infinity.textContent = '∞';
+  infinity.textContent = labelText;
   infinity.setAttribute('aria-label', `${labelText} infinity`);
 
   const input = document.createElement('input');

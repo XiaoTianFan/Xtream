@@ -113,7 +113,7 @@ describe('scene edit timing links', () => {
       pass: { iterations: { type: 'count', count: 1 } },
       innerLoop: {
         enabled: true,
-        range: { startMs: 3333, endMs: 6667 },
+        range: { startMs: 0, endMs: 10000 },
         iterations: { type: 'infinite' },
       },
     };

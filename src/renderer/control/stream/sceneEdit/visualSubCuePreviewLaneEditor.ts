@@ -407,15 +407,14 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       }
       const range = selectedSourceRange();
       const localMs = clampLocalLoopMs((laneXToMs(x, laneDurationMs(), laneRect()) - range.startMs) / playbackRate(), selectedBaseDurationMs());
+      const iterations = loopIterationsForPatch(draftSub);
       stageLanePatch({
-        innerLoop: {
-          enabled: true,
-          range:
-            drag.target.type === 'loop-start'
-              ? clampRequiredLoopRange(localMs, loopRange.endMs, selectedBaseDurationMs())
-              : clampRequiredLoopRange(loopRange.startMs, localMs, selectedBaseDurationMs()),
-          iterations: loopIterationsForPatch(draftSub),
-        },
+        innerLoop: innerLoopPatchForRange(
+          drag.target.type === 'loop-start'
+            ? clampRequiredLoopRange(localMs, loopRange.endMs, selectedBaseDurationMs())
+            : clampRequiredLoopRange(loopRange.startMs, localMs, selectedBaseDurationMs()),
+          iterations,
+        ),
       });
       return;
     }
@@ -912,16 +911,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
 
   function visualLoopLocalRange(): { startMs: number; endMs: number } | undefined {
     const range = draftSub.innerLoop?.range;
-    if (!range) {
-      return undefined;
+    if (range) {
+      return clampInnerLoopRange(range, selectedBaseDurationMs()) ?? defaultInnerLoopRange(selectedBaseDurationMs());
     }
-    return clampInnerLoopRange(range, selectedBaseDurationMs());
+    return defaultInnerLoopRange(selectedBaseDurationMs());
   }
 
   function visualLoopSourceRange(): { startMs: number; endMs: number } | undefined {
-    if (!hasLoopHandleRange(draftSub)) {
-      return undefined;
-    }
     const selectedRange = selectedSourceRange();
     const loopRange = visualLoopLocalRange();
     if (!loopRange) {
@@ -1192,19 +1188,11 @@ function loopIsInfinite(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'lo
 }
 
 function hasLoopHandleRange(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): boolean {
-  const value = loopControlValue(sub);
-  return value.type === 'infinite' || value.count > 0;
+  return Boolean(sub);
 }
 
 function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
-  const base = Math.max(1, Math.round(baseDurationMs));
-  if (base <= 3) {
-    return { startMs: 0, endMs: base };
-  }
-  return {
-    startMs: Math.round(base / 3),
-    endMs: Math.round((base * 2) / 3),
-  };
+  return { startMs: 0, endMs: Math.max(1, Math.round(baseDurationMs)) };
 }
 
 function clampLocalLoopMs(value: number, baseDurationMs: number): number {
@@ -1242,6 +1230,12 @@ function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIteratio
 function loopIterationsForPatch(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
   const value = loopControlValue(sub);
   return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(0, Math.round(value.count)) };
+}
+
+function innerLoopPatchForRange(range: { startMs: number; endMs: number }, iterations: LoopIterations): SubCueInnerLoopPolicy {
+  return iterations.type === 'count' && iterations.count <= 0
+    ? { enabled: false, range }
+    : { enabled: true, range, iterations };
 }
 
 function setDraggableDisabled(field: HTMLElement | undefined, disabled: boolean): void {

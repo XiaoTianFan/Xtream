@@ -65,13 +65,15 @@ describe('visualSubCuePreviewLaneEditor', () => {
     const loop = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]');
     loop!.click();
 
+    expect(loop!.textContent).toBe('Loop time');
+    expect(editor.querySelector<HTMLInputElement>('[aria-label="Loop time"]')?.value).toBe('∞');
     expect(patches).toEqual([
       { pass: { iterations: { type: 'count', count: 4 } }, innerLoop: undefined, loop: undefined },
       {
         pass: { iterations: { type: 'count', count: 1 } },
         innerLoop: {
           enabled: true,
-          range: { startMs: 3333, endMs: 6667 },
+          range: { startMs: 0, endMs: 10000 },
           iterations: { type: 'infinite' },
         },
         loop: undefined,
@@ -96,7 +98,7 @@ describe('visualSubCuePreviewLaneEditor', () => {
       {
         innerLoop: {
           enabled: true,
-          range: { startMs: 3333, endMs: 6667 },
+          range: { startMs: 0, endMs: 10000 },
           iterations: { type: 'count', count: 3 },
         },
         loop: undefined,
@@ -306,7 +308,7 @@ describe('visualSubCuePreviewLaneEditor', () => {
     ]);
   });
 
-  it('keeps preserved disabled video loop ranges inert until Loop time is enabled', () => {
+  it('commits preserved disabled video loop range edits without enabling playback', () => {
     const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
     const editor = createVisualSubCuePreviewLaneEditor({
       sub: visualSubCue({
@@ -321,12 +323,19 @@ describe('visualSubCuePreviewLaneEditor', () => {
     stage.releasePointerCapture = vi.fn();
     stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
 
-    expect(editor.querySelector('.stream-visual-preview-lane-loop-region')).toBeNull();
+    expect(editor.querySelector('.stream-visual-preview-lane-loop-region')).not.toBeNull();
     stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 128, clientY: 150 }));
     stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
     stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
 
-    expect(patches).toEqual([]);
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: false,
+          range: { startMs: 4000, endMs: 5000 },
+        },
+      },
+    ]);
   });
 
   it('clamps video inner loop ranges when source range edges move', () => {
