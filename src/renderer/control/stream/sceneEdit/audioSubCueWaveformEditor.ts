@@ -1,21 +1,20 @@
 import type {
   AudioSubCuePreviewPayload,
   AudioSubCuePreviewPosition,
-  AudioSourceId,
-  AudioSourceState,
   DirectorState,
   PersistedAudioSubCueConfig,
+  PersistedVisualSubCueConfig,
   SceneLoopPolicy,
-  VirtualOutputId,
 } from '../../../../shared/types';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
 import {
   clampPitchShiftSemitones,
   evaluateFadeGain,
-  getAudioSubCueBaseDurationMs,
 } from '../../../../shared/audioSubCueAutomation';
+import { audioTimingPatchToVisual, pickLinkedTimingFields } from '../../../../shared/subCueTimingLink';
 import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
+import { buildAudioSubCuePreviewPayload, chooseAudioSubCuePreviewOutput } from './audioSubCuePreviewPayload';
 import {
   getCachedAudioWaveformPeaks,
   loadAudioWaveformPeaks,
@@ -39,11 +38,15 @@ import {
   type AudioWaveformHitTarget,
   type AudioWaveformRect,
 } from './audioWaveformGeometry';
+import { buildVisualSubCuePreviewPayload } from './visualSubCuePreviewLaneEditor';
+
+export { buildAudioSubCuePreviewPayload, chooseAudioSubCuePreviewOutput } from './audioSubCuePreviewPayload';
 
 export type AudioSubCueWaveformEditorDeps = {
   sub: PersistedAudioSubCueConfig;
   currentState: DirectorState;
   patchSubCue: (update: Partial<PersistedAudioSubCueConfig>) => void;
+  linkedVisualSub?: PersistedVisualSubCueConfig;
 };
 
 type DragState = {
@@ -116,6 +119,7 @@ const LIGHT_WAVEFORM_THEME: WaveformTheme = {
 export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorDeps): HTMLElement {
   const { sub, currentState, patchSubCue } = deps;
   let draftSub: PersistedAudioSubCueConfig = { ...sub };
+  let draftLinkedVisualSub: PersistedVisualSubCueConfig | undefined = deps.linkedVisualSub ? { ...deps.linkedVisualSub, targets: [...deps.linkedVisualSub.targets] } : undefined;
   let pendingWaveformPatch: Partial<PersistedAudioSubCueConfig> | undefined;
   const source = currentState.audioSources[sub.audioSourceId];
   const sourceDurationMs = source?.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined;
@@ -132,9 +136,11 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   let previewFrame: number | undefined;
   let previewStopTimer: number | undefined;
   let themeRenderFrame: number | undefined;
+  let linkedVisualPreviewActive = false;
   let disposed = false;
 
   const previewId = `subcue-preview:${sub.id}`;
+  const linkedVisualPreviewId = draftLinkedVisualSub ? `visual-subcue-preview:${draftLinkedVisualSub.id}` : undefined;
   const root = document.createElement('div');
   root.className = 'stream-audio-waveform-editor';
 
@@ -746,6 +752,9 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
 
   function patchAndRefreshPreview(update: Partial<PersistedAudioSubCueConfig>): void {
     draftSub = { ...draftSub, ...update };
+    if (draftLinkedVisualSub && Object.keys(pickLinkedTimingFields(update)).length > 0) {
+      draftLinkedVisualSub = { ...draftLinkedVisualSub, ...audioTimingPatchToVisual(update) };
+    }
     syncTimingControls();
     patchSubCue(update);
     if (!previewPlaying) {
@@ -793,6 +802,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     previewSourceTimeMs = undefined;
     previewStartedAtMs = performance.now() - Math.max(0, resumeFromMs);
     schedulePreviewUiStop(payload, resumeFromMs);
+    startLinkedVisualPreview(resumeFromMs);
     startPreviewTicker();
     render();
   }
@@ -803,6 +813,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
     const pausedAtMs = getPreviewElapsedMs();
     void window.xtream.audioRuntime.preview({ type: 'pause-audio-subcue-preview', previewId });
+    pauseLinkedVisualPreview();
     previewPlaying = false;
     previewPausedAtMs = pausedAtMs;
     clearPreviewStopTimer();
@@ -813,6 +824,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (sendCommand && window.xtream.audioRuntime.preview && (previewPlaying || previewPausedAtMs > 0)) {
       void window.xtream.audioRuntime.preview({ type: 'stop-audio-subcue-preview', previewId });
     }
+    stopLinkedVisualPreview(sendCommand);
     previewPlaying = false;
     previewStartedAtMs = undefined;
     previewPausedAtMs = 0;
@@ -838,6 +850,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     if (window.xtream.audioRuntime.preview && (previewPlaying || previewPausedAtMs > 0)) {
       void window.xtream.audioRuntime.preview({ type: 'seek-audio-subcue-preview', previewId, sourceTimeMs, localTimeMs: previewPausedAtMs });
     }
+    seekLinkedVisualPreview(previewPausedAtMs);
     render();
   }
 
@@ -868,6 +881,39 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       window.clearTimeout(previewStopTimer);
       previewStopTimer = undefined;
     }
+  }
+
+  function startLinkedVisualPreview(localTimeMs: number): void {
+    if (!draftLinkedVisualSub || !linkedVisualPreviewId || !window.xtream.visualRuntime?.preview) {
+      return;
+    }
+    const payload = buildVisualSubCuePreviewPayload(draftLinkedVisualSub, currentState, linkedVisualPreviewId, localTimeMs);
+    if (!payload) {
+      return;
+    }
+    linkedVisualPreviewActive = true;
+    void window.xtream.visualRuntime.preview({ type: 'play-visual-subcue-preview', payload });
+  }
+
+  function pauseLinkedVisualPreview(): void {
+    if (!linkedVisualPreviewId || !linkedVisualPreviewActive || !window.xtream.visualRuntime?.preview) {
+      return;
+    }
+    void window.xtream.visualRuntime.preview({ type: 'pause-visual-subcue-preview', previewId: linkedVisualPreviewId });
+  }
+
+  function seekLinkedVisualPreview(localTimeMs: number): void {
+    if (!linkedVisualPreviewId || !linkedVisualPreviewActive || !window.xtream.visualRuntime?.preview) {
+      return;
+    }
+    void window.xtream.visualRuntime.preview({ type: 'seek-visual-subcue-preview', previewId: linkedVisualPreviewId, localTimeMs });
+  }
+
+  function stopLinkedVisualPreview(sendCommand: boolean): void {
+    if (sendCommand && linkedVisualPreviewId && linkedVisualPreviewActive && window.xtream.visualRuntime?.preview) {
+      void window.xtream.visualRuntime.preview({ type: 'stop-visual-subcue-preview', previewId: linkedVisualPreviewId });
+    }
+    linkedVisualPreviewActive = false;
   }
 
   function cleanup(): void {
@@ -1027,55 +1073,4 @@ function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | MouseEvent
 function fadeGainToY(gain: number, rect: AudioWaveformRect): number {
   const clamped = Math.max(0, Math.min(1, Number.isFinite(gain) ? gain : 0));
   return rect.top + (1 - clamped) * rect.height;
-}
-
-export function chooseAudioSubCuePreviewOutput(sub: PersistedAudioSubCueConfig, state: DirectorState): VirtualOutputId | undefined {
-  const selected = sub.outputIds.find((outputId) => state.outputs[outputId]);
-  return selected ?? (Object.keys(state.outputs).sort()[0] as VirtualOutputId | undefined);
-}
-
-export function buildAudioSubCuePreviewPayload(
-  sub: PersistedAudioSubCueConfig,
-  state: DirectorState,
-  previewId: string,
-): AudioSubCuePreviewPayload | undefined {
-  const source = state.audioSources[sub.audioSourceId] as AudioSourceState | undefined;
-  const url = resolveAudioWaveformUrl(source, state);
-  const outputId = chooseAudioSubCuePreviewOutput(sub, state);
-  const output = outputId ? state.outputs[outputId] : undefined;
-  if (!source || !url || !outputId || !output) {
-    return undefined;
-  }
-  return {
-    previewId,
-    audioSourceId: sub.audioSourceId as AudioSourceId,
-    url,
-    outputId,
-    outputSinkId: output.sinkId,
-    outputBusLevelDb: output.busLevelDb,
-    outputPan: output.pan,
-    sourceStartMs: sub.sourceStartMs,
-    sourceEndMs: sub.sourceEndMs,
-    fadeIn: sub.fadeIn,
-    fadeOut: sub.fadeOut,
-    levelDb: sub.levelDb,
-    sourceLevelDb: source.levelDb,
-    pan: sub.pan,
-    levelAutomation: sub.levelAutomation,
-    panAutomation: sub.panAutomation,
-    playbackRate: (source.playbackRate ?? 1) * (sub.playbackRate ?? 1),
-    pitchShiftSemitones: sub.pitchShiftSemitones,
-    loop: sub.loop,
-    playTimeMs: getAudioSubCuePreviewPlayTimeMs(sub, source.durationSeconds),
-    channelMode: source.channelMode,
-    channelCount: source.channelCount,
-  };
-}
-
-function getAudioSubCuePreviewPlayTimeMs(sub: PersistedAudioSubCueConfig, sourceDurationSeconds: number | undefined): number | undefined {
-  const baseDurationMs = getAudioSubCueBaseDurationMs(sub, sourceDurationSeconds);
-  if (baseDurationMs === undefined) {
-    return undefined;
-  }
-  return resolveLoopTiming(sub.loop, baseDurationMs).totalDurationMs;
 }

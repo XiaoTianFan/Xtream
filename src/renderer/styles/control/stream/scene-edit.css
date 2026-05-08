@@ -603,7 +603,8 @@ html[data-theme="light"] .stream-audio-waveform-clear-automation.stream-audio-wa
 }
 
 .stream-visual-preview-lane-transport.stream-visual-preview-lane-button,
-.stream-visual-preview-lane-freeze-pin.stream-visual-preview-lane-button {
+.stream-visual-preview-lane-freeze-pin.stream-visual-preview-lane-button,
+.stream-visual-preview-lane-timing-link.stream-visual-preview-lane-button {
   display: flex;
   align-items: center;
   justify-content: center;

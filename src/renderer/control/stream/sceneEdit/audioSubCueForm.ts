@@ -2,6 +2,7 @@ import type {
   AudioSourceId,
   DirectorState,
   PersistedAudioSubCueConfig,
+  PersistedVisualSubCueConfig,
   VirtualOutputId,
 } from '../../../../shared/types';
 import { createDbFader, createPanKnob, createSelect } from '../../shared/dom';
@@ -17,10 +18,11 @@ export type AudioSubCueFormDeps = {
   sub: PersistedAudioSubCueConfig;
   currentState: DirectorState;
   patchSubCue: (update: Partial<PersistedAudioSubCueConfig>) => void;
+  linkedVisualSub?: PersistedVisualSubCueConfig;
 };
 
 export function createAudioSubCueForm(deps: AudioSubCueFormDeps): HTMLElement {
-  const { sub, currentState, patchSubCue } = deps;
+  const { sub, currentState, patchSubCue, linkedVisualSub } = deps;
   const form = document.createElement('div');
   form.className = 'detail-card stream-subcue-form stream-audio-subcue-form';
 
@@ -80,7 +82,7 @@ export function createAudioSubCueForm(deps: AudioSubCueFormDeps): HTMLElement {
 
   form.append(createSubCueSection('Levels', createAudioLevelStrip(sub, patchSubCue)));
 
-  form.append(createAudioSubCueWaveformEditor({ sub, currentState, patchSubCue }));
+  form.append(createAudioSubCueWaveformEditor({ sub, currentState, patchSubCue, linkedVisualSub }));
 
   return form;
 }

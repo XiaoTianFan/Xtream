@@ -1,5 +1,6 @@
 import type {
   DirectorState,
+  PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
   SceneLoopPolicy,
   VisualState,
@@ -8,6 +9,7 @@ import type {
 } from '../../../../shared/types';
 import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
+import { pickLinkedTimingFields, visualTimingPatchToAudio } from '../../../../shared/subCueTimingLink';
 import {
   clampVisualSourceRange,
   getVisualSubCueBaseDurationMs,
@@ -36,11 +38,17 @@ import {
   type VisualPreviewLaneHitTarget,
   type VisualPreviewLaneRect,
 } from './visualPreviewLaneGeometry';
+import { buildAudioSubCuePreviewPayload } from './audioSubCuePreviewPayload';
 
 export type VisualSubCuePreviewLaneEditorDeps = {
   sub: PersistedVisualSubCueConfig;
   currentState: DirectorState;
   patchSubCue: (update: Partial<PersistedVisualSubCueConfig>) => void;
+  timingLink?: {
+    audioSubCue: PersistedAudioSubCueConfig;
+    linked: boolean;
+    onToggle: (linked: boolean) => void;
+  };
 };
 
 type VisualPreviewMediaMode = 'video-file' | 'image' | 'live' | 'missing';
@@ -57,6 +65,8 @@ const VISUAL_LANE_EDGE_STROKE_PX = 2;
 export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLaneEditorDeps): HTMLElement {
   const { currentState, patchSubCue } = deps;
   let draftSub: PersistedVisualSubCueConfig = { ...deps.sub, targets: [...deps.sub.targets] };
+  let draftLinkedAudioSub: PersistedAudioSubCueConfig | undefined = deps.timingLink?.audioSubCue ? { ...deps.timingLink.audioSubCue } : undefined;
+  let timingLinkActive = Boolean(deps.timingLink?.linked);
   let pendingLanePatch: Partial<PersistedVisualSubCueConfig> | undefined;
   const cachedSnapshots = getCachedVisualPreviewSnapshots(selectedVisual(), { sampleCount: SNAPSHOT_COUNT });
   let snapshots: VisualPreviewSnapshot[] =
@@ -73,11 +83,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   let previewSourceTimeMs: number | undefined;
   let previewFrame: number | undefined;
   let previewDispatchMessage: string | undefined;
+  let linkedAudioPreviewActive = false;
   const previewPositions = new Map<string, VisualSubCuePreviewPosition>();
   let activeFreezeMenu: HTMLElement | undefined;
   let disposed = false;
 
   const previewId = `visual-subcue-preview:${draftSub.id}`;
+  const linkedAudioPreviewId = draftLinkedAudioSub ? `subcue-preview:${draftLinkedAudioSub.id}` : undefined;
   const root = document.createElement('div');
   root.className = 'stream-visual-preview-lane-editor';
   for (const eventName of ['pointerdown', 'pointerup', 'click', 'dblclick', 'contextmenu']) {
@@ -104,13 +116,27 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     syncRailButtons();
     render();
   });
+  const timingLinkButton = deps.timingLink
+    ? createRailButton('Link audio timing', () => {
+        timingLinkActive = !timingLinkActive;
+        if (timingLinkActive && draftLinkedAudioSub) {
+          draftLinkedAudioSub = { ...draftLinkedAudioSub, ...visualTimingPatchToAudio(draftSub) };
+        }
+        deps.timingLink?.onToggle(timingLinkActive);
+        syncRailButtons();
+      })
+    : undefined;
   decorateRailButton(playButton, 'Play', 'Play preview', { iconSize: 17 });
   decorateRailButton(pauseButton, 'Pause', 'Pause preview', { iconSize: 17 });
   decorateRailButton(freezeButton, 'Plus', 'Drop freeze marker', { iconSize: 17 });
+  if (timingLinkButton) {
+    decorateRailButton(timingLinkButton, 'Link2', 'Link visual and embedded audio timing', { iconSize: 16 });
+  }
   playButton.classList.add('stream-visual-preview-lane-transport');
   pauseButton.classList.add('stream-visual-preview-lane-transport');
   freezeButton.classList.add('stream-visual-preview-lane-freeze-pin');
-  rail.append(playButton, pauseButton, freezeButton);
+  timingLinkButton?.classList.add('stream-visual-preview-lane-timing-link');
+  rail.append(playButton, pauseButton, freezeButton, ...(timingLinkButton ? [timingLinkButton] : []));
 
   const main = document.createElement('div');
   main.className = 'stream-visual-preview-lane-main stream-audio-waveform-main';
@@ -416,6 +442,9 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
 
   function patchAndRefreshPreview(update: Partial<PersistedVisualSubCueConfig>): void {
     draftSub = { ...draftSub, ...update };
+    if (timingLinkActive && draftLinkedAudioSub && Object.keys(pickLinkedTimingFields(update)).length > 0) {
+      draftLinkedAudioSub = { ...draftLinkedAudioSub, ...visualTimingPatchToAudio(update) };
+    }
     syncRailButtons();
     syncTimingControls();
     patchSubCue(update);
@@ -672,6 +701,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     freezeButton.disabled = !supportsFreeze();
     freezeButton.classList.toggle('active', freezePinMode && supportsFreeze());
     freezeButton.setAttribute('aria-pressed', String(freezePinMode && supportsFreeze()));
+    if (timingLinkButton) {
+      timingLinkButton.classList.toggle('active', timingLinkActive);
+      timingLinkButton.setAttribute('aria-pressed', String(timingLinkActive));
+      decorateRailButton(timingLinkButton, timingLinkActive ? 'Unlink2' : 'Link2', timingLinkActive ? 'Unlink visual and embedded audio timing' : 'Link visual and embedded audio timing', {
+        iconSize: 16,
+      });
+    }
   }
 
   function syncTimingControls(): void {
@@ -740,6 +776,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     previewSourceTimeMs = undefined;
     previewPositions.clear();
     previewStartedAtMs = performance.now() - previewPausedAtMs;
+    startLinkedAudioPreview(previewPausedAtMs);
     startPreviewTicker();
     render();
   }
@@ -750,6 +787,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     }
     const pausedAtMs = getPreviewElapsedMs();
     void window.xtream.visualRuntime.preview({ type: 'pause-visual-subcue-preview', previewId });
+    pauseLinkedAudioPreview();
     previewPlaying = false;
     previewPausedAtMs = pausedAtMs;
     previewStartedAtMs = undefined;
@@ -761,6 +799,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     if (sendCommand && window.xtream.visualRuntime?.preview && previewActive) {
       void window.xtream.visualRuntime.preview({ type: 'stop-visual-subcue-preview', previewId });
     }
+    stopLinkedAudioPreview(sendCommand);
     previewPlaying = false;
     previewActive = false;
     previewStartedAtMs = undefined;
@@ -786,6 +825,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         sourceTimeMs: previewSourceTimeMs,
       });
     }
+    seekLinkedAudioPreview(localTimeMs);
     render();
   }
 
@@ -827,6 +867,42 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       window.cancelAnimationFrame(previewFrame);
       previewFrame = undefined;
     }
+  }
+
+  function startLinkedAudioPreview(localTimeMs: number): void {
+    if (!timingLinkActive || !draftLinkedAudioSub || !linkedAudioPreviewId || !window.xtream.audioRuntime?.preview) {
+      return;
+    }
+    const payload = buildAudioSubCuePreviewPayload(draftLinkedAudioSub, currentState, linkedAudioPreviewId);
+    if (!payload) {
+      return;
+    }
+    linkedAudioPreviewActive = true;
+    void window.xtream.audioRuntime.preview({ type: 'play-audio-subcue-preview', payload });
+    if (localTimeMs > 0) {
+      void window.xtream.audioRuntime.preview({ type: 'seek-audio-subcue-preview', previewId: linkedAudioPreviewId, localTimeMs });
+    }
+  }
+
+  function pauseLinkedAudioPreview(): void {
+    if (!linkedAudioPreviewActive || !linkedAudioPreviewId || !window.xtream.audioRuntime?.preview) {
+      return;
+    }
+    void window.xtream.audioRuntime.preview({ type: 'pause-audio-subcue-preview', previewId: linkedAudioPreviewId });
+  }
+
+  function seekLinkedAudioPreview(localTimeMs: number): void {
+    if (!linkedAudioPreviewActive || !linkedAudioPreviewId || !window.xtream.audioRuntime?.preview) {
+      return;
+    }
+    void window.xtream.audioRuntime.preview({ type: 'seek-audio-subcue-preview', previewId: linkedAudioPreviewId, localTimeMs });
+  }
+
+  function stopLinkedAudioPreview(sendCommand: boolean): void {
+    if (sendCommand && linkedAudioPreviewActive && linkedAudioPreviewId && window.xtream.audioRuntime?.preview) {
+      void window.xtream.audioRuntime.preview({ type: 'stop-audio-subcue-preview', previewId: linkedAudioPreviewId });
+    }
+    linkedAudioPreviewActive = false;
   }
 
   function laneRect(): VisualPreviewLaneRect {

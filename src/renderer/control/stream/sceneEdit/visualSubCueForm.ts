@@ -1,5 +1,6 @@
 import type {
   DirectorState,
+  PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
   SceneId,
   SubCueId,
@@ -20,6 +21,11 @@ export type VisualSubCueFormDeps = {
   sub: PersistedVisualSubCueConfig;
   currentState: DirectorState;
   patchSubCue: (update: Partial<PersistedVisualSubCueConfig>) => void;
+  timingLink?: {
+    audioSubCue: PersistedAudioSubCueConfig;
+    linked: boolean;
+    onToggle: (linked: boolean) => void;
+  };
 };
 
 function targetSetsEqual(a: VisualDisplayTarget[], b: VisualDisplayTarget[]): boolean {
@@ -40,7 +46,7 @@ function targetKey(t: VisualDisplayTarget): string {
 }
 
 export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement {
-  const { sceneId, subCueId, sub, currentState, patchSubCue } = deps;
+  const { sceneId, subCueId, sub, currentState, patchSubCue, timingLink } = deps;
   const form = document.createElement('div');
   form.className = 'detail-card stream-subcue-form stream-visual-subcue-form';
 
@@ -125,6 +131,7 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
       sub,
       currentState,
       patchSubCue,
+      timingLink,
     }),
   );
 

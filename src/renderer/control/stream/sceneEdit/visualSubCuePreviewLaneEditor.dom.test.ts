@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DirectorState, PersistedVisualSubCueConfig, VisualState, VisualSubCuePreviewPosition } from '../../../../shared/types';
+import type { DirectorState, PersistedAudioSubCueConfig, PersistedVisualSubCueConfig, VisualState, VisualSubCuePreviewPosition } from '../../../../shared/types';
 import { buildVisualSubCuePreviewPayload, createVisualSubCuePreviewLaneEditor } from './visualSubCuePreviewLaneEditor';
 import { clearVisualPreviewSnapshotCache, loadVisualPreviewSnapshots } from './visualPreviewSnapshots';
 
@@ -128,6 +128,29 @@ describe('visualSubCuePreviewLaneEditor', () => {
     stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 320, clientY: 96 }));
 
     expect(patches).toEqual([{ freezeFrameMs: 5000 }]);
+  });
+
+  it('shows the timing link button when an eligible embedded audio sub-cue is provided', () => {
+    const toggle = vi.fn();
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ withEmbeddedAudio: true }),
+      patchSubCue: vi.fn(),
+      timingLink: {
+        audioSubCue: audioSubCue(),
+        linked: false,
+        onToggle: toggle,
+      },
+    });
+
+    const button = editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-timing-link');
+    expect(button).not.toBeNull();
+    expect(button?.getAttribute('aria-pressed')).toBe('false');
+
+    button?.click();
+
+    expect(toggle).toHaveBeenCalledWith(true);
+    expect(button?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('removes a freeze marker from the marker context menu', () => {
@@ -283,6 +306,41 @@ describe('visualSubCuePreviewLaneEditor', () => {
     expect(preview).toHaveBeenCalledWith({ type: 'stop-visual-subcue-preview', previewId: 'visual-subcue-preview:sub-v' });
   });
 
+  it('starts and stops the linked embedded audio preview with visual preview playback', async () => {
+    vi.useFakeTimers();
+    const visualPreview = vi.fn(async (command) => ({
+      previewId: command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId,
+      targetDisplayIds: ['display-a'],
+      deliveredDisplayIds: ['display-a'],
+      missingDisplayIds: [],
+    }));
+    const audioPreview = vi.fn();
+    window.xtream = {
+      visualRuntime: { preview: visualPreview, onSubCuePreviewPosition: vi.fn() },
+      audioRuntime: { preview: audioPreview, onSubCuePreviewPosition: vi.fn() },
+    } as unknown as typeof window.xtream;
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ withEmbeddedAudio: true }),
+      patchSubCue: vi.fn(),
+      timingLink: {
+        audioSubCue: audioSubCue(),
+        linked: true,
+        onToggle: vi.fn(),
+      },
+    });
+    document.body.append(editor);
+
+    editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-transport')!.click();
+    editor.remove();
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+
+    expect(visualPreview).toHaveBeenCalledWith(expect.objectContaining({ type: 'play-visual-subcue-preview' }));
+    expect(audioPreview).toHaveBeenCalledWith(expect.objectContaining({ type: 'play-audio-subcue-preview' }));
+    expect(audioPreview).toHaveBeenCalledWith({ type: 'stop-audio-subcue-preview', previewId: 'subcue-preview:sub-a' });
+  });
+
   it('surfaces missing display dispatch failures in the lane status', async () => {
     const preview = vi.fn(async (command) => ({
       previewId: command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId,
@@ -390,7 +448,18 @@ function visualSubCue(overrides: Partial<PersistedVisualSubCueConfig> = {}): Per
   };
 }
 
-function directorState(options: { noVideoUrl?: boolean } = {}): DirectorState {
+function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): PersistedAudioSubCueConfig {
+  return {
+    id: 'sub-a',
+    kind: 'audio',
+    audioSourceId: 'audio-source-embedded-vid',
+    outputIds: ['output-a'],
+    playbackRate: 1,
+    ...overrides,
+  };
+}
+
+function directorState(options: { noVideoUrl?: boolean; withEmbeddedAudio?: boolean } = {}): DirectorState {
   return {
     visuals: {
       vid: {
@@ -423,5 +492,23 @@ function directorState(options: { noVideoUrl?: boolean } = {}): DirectorState {
       'display-a': { id: 'display-a', fullscreen: false, layout: { type: 'single' }, health: 'ready' },
       'display-b': { id: 'display-b', fullscreen: false, layout: { type: 'split', visualIds: [undefined, undefined] }, health: 'ready' },
     },
+    outputs: options.withEmbeddedAudio
+      ? {
+          'output-a': { id: 'output-a', label: 'Main', sources: [], busLevelDb: 0, pan: 0 },
+        }
+      : {},
+    audioSources: options.withEmbeddedAudio
+      ? {
+          'audio-source-embedded-vid': {
+            id: 'audio-source-embedded-vid',
+            type: 'embedded-visual',
+            visualId: 'vid',
+            label: 'Clip audio',
+            extractionMode: 'representation',
+            ready: true,
+            playbackRate: 1,
+          },
+        }
+      : {},
   } as unknown as DirectorState;
 }

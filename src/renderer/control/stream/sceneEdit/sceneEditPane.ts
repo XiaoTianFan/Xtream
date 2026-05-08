@@ -1,11 +1,22 @@
 import type {
   DirectorState,
   PersistedStreamConfig,
+  PersistedAudioSubCueConfig,
+  PersistedSubCueConfig,
+  PersistedVisualSubCueConfig,
   SceneId,
   StreamEnginePublicState,
   SubCueId,
 } from '../../../../shared/types';
 import { deriveStreamThreadColorMaps } from '../../../../shared/streamThreadColors';
+import {
+  audioTimingPatchToVisual,
+  copyVisualTimingToAudio,
+  findEligibleEmbeddedAudioTimingSubCueId,
+  getActiveTimingLinkPair,
+  hasLinkedTimingFields,
+  visualTimingPatchToAudio,
+} from '../../../../shared/subCueTimingLink';
 import { createHint } from '../../shared/dom';
 import type { SceneEditSelection } from '../streamTypes';
 import { createAudioSubCueForm } from './audioSubCueForm';
@@ -41,6 +52,7 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     authoringSubCueIdsWithError,
   } = deps;
   void streamPublic;
+  let draftSubCues = scene.subCues;
 
   const wrap = document.createElement('section');
   wrap.className = 'stream-scene-edit';
@@ -84,9 +96,8 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
         createAudioSubCueForm({
           sub,
           currentState,
-          patchSubCue: (update) => {
-            void window.xtream.stream.edit({ type: 'update-subcue', sceneId: scene.id, subCueId: sid, update });
-          },
+          patchSubCue: (update) => patchSubCueWithTimingLink(sid, update),
+          linkedVisualSub: linkedVisualSubForAudio(sid),
         }),
       );
     } else if (sub.kind === 'visual') {
@@ -96,9 +107,8 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
           subCueId: sid,
           sub,
           currentState,
-          patchSubCue: (update) => {
-            void window.xtream.stream.edit({ type: 'update-subcue', sceneId: scene.id, subCueId: sid, update });
-          },
+          patchSubCue: (update) => patchSubCueWithTimingLink(sid, update),
+          timingLink: visualTimingLinkDeps(sid, sub),
         }),
       );
     } else {
@@ -123,6 +133,86 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
 
   wrap.append(rail, detail);
   return wrap;
+
+  function patchSubCueWithTimingLink(subCueId: SubCueId, update: Partial<PersistedSubCueConfig>): void {
+    const draftScene = { ...scene, subCues: draftSubCues };
+    const link = getActiveTimingLinkPair(draftScene, currentState, subCueId);
+    if (!link || !hasLinkedTimingFields(update)) {
+      const subCue = draftSubCues[subCueId];
+      if (subCue) {
+        draftSubCues = { ...draftSubCues, [subCueId]: { ...subCue, ...update } as PersistedSubCueConfig };
+      }
+      void window.xtream.stream.edit({ type: 'update-subcue', sceneId: scene.id, subCueId, update });
+      return;
+    }
+
+    const nextSubCues = { ...draftSubCues };
+    const subCue = nextSubCues[subCueId];
+    if (!subCue) {
+      return;
+    }
+    nextSubCues[subCueId] = { ...subCue, ...update } as PersistedSubCueConfig;
+    const counterpartId = subCueId === link.visualSubCueId ? link.audioSubCueId : link.visualSubCueId;
+    const counterpart = nextSubCues[counterpartId];
+    if (!counterpart) {
+      void window.xtream.stream.edit({ type: 'update-subcue', sceneId: scene.id, subCueId, update });
+      return;
+    }
+    const counterpartTimingUpdate =
+      subCue.kind === 'visual'
+        ? visualTimingPatchToAudio(update as Partial<PersistedVisualSubCueConfig>)
+        : audioTimingPatchToVisual(update as Partial<PersistedAudioSubCueConfig>);
+    nextSubCues[counterpartId] = { ...counterpart, ...counterpartTimingUpdate } as PersistedSubCueConfig;
+    draftSubCues = nextSubCues;
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { subCues: nextSubCues } });
+  }
+
+  function visualTimingLinkDeps(subCueId: SubCueId, visualSub: PersistedVisualSubCueConfig): Parameters<typeof createVisualSubCueForm>[0]['timingLink'] {
+    const draftScene = { ...scene, subCues: draftSubCues };
+    const eligibleAudioSubCueId = findEligibleEmbeddedAudioTimingSubCueId(draftScene, currentState, subCueId);
+    if (!eligibleAudioSubCueId) {
+      return undefined;
+    }
+    const audioSub = draftSubCues[eligibleAudioSubCueId];
+    if (!audioSub || audioSub.kind !== 'audio') {
+      return undefined;
+    }
+    const active = getActiveTimingLinkPair(draftScene, currentState, subCueId)?.audioSubCueId === eligibleAudioSubCueId;
+    return {
+      audioSubCue: audioSub,
+      linked: active,
+      onToggle: (linked) => toggleVisualAudioTimingLink(subCueId, visualSub, eligibleAudioSubCueId, audioSub, linked),
+    };
+  }
+
+  function linkedVisualSubForAudio(subCueId: SubCueId): PersistedVisualSubCueConfig | undefined {
+    const draftScene = { ...scene, subCues: draftSubCues };
+    const link = getActiveTimingLinkPair(draftScene, currentState, subCueId);
+    if (!link) {
+      return undefined;
+    }
+    const visualSub = draftSubCues[link.visualSubCueId];
+    return visualSub?.kind === 'visual' ? visualSub : undefined;
+  }
+
+  function toggleVisualAudioTimingLink(
+    visualSubCueId: SubCueId,
+    visualSub: PersistedVisualSubCueConfig,
+    audioSubCueId: SubCueId,
+    audioSub: PersistedAudioSubCueConfig,
+    linked: boolean,
+  ): void {
+    const nextSubCues = { ...draftSubCues };
+    if (linked) {
+      nextSubCues[visualSubCueId] = { ...visualSub, linkedTimingSubCueId: audioSubCueId };
+      nextSubCues[audioSubCueId] = { ...audioSub, ...copyVisualTimingToAudio(visualSub), linkedTimingSubCueId: visualSubCueId };
+    } else {
+      nextSubCues[visualSubCueId] = { ...visualSub, linkedTimingSubCueId: undefined };
+      nextSubCues[audioSubCueId] = { ...audioSub, linkedTimingSubCueId: undefined };
+    }
+    draftSubCues = nextSubCues;
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { subCues: nextSubCues } });
+  }
 }
 
 function disableEditControls(root: HTMLElement): void {

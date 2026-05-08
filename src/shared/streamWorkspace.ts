@@ -29,6 +29,7 @@ import {
   normalizeFadeSpec,
   normalizeAudioSourceRange,
 } from './audioSubCueAutomation';
+import { normalizeSceneTimingLinks } from './subCueTimingLink';
 import { normalizeVisualFadeSpec, normalizeVisualFreezeFrameMs } from './visualSubCueTiming';
 
 export const STREAM_MAIN_ID: StreamId = 'stream-main';
@@ -125,6 +126,7 @@ export function normalizeStreamPersistence(stream: PersistedStreamConfig): Persi
     const scene = next.scenes[id];
     if (scene) {
       scene.trigger = migrateSceneTriggerLoose(scene.trigger);
+      normalizeSceneTimingLinks(scene);
       for (const subCueId of Object.keys(scene.subCues)) {
         const subCue = scene.subCues[subCueId];
         if (subCue?.kind === 'visual') {

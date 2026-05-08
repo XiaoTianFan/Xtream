@@ -9,6 +9,7 @@ import type {
   StreamEnginePublicState,
   SubCueId,
 } from '../../../../shared/types';
+import { clearTimingLinksForRemovedSubCue } from '../../../../shared/subCueTimingLink';
 import { createButton } from '../../shared/dom';
 import { decorateIconButton } from '../../shared/icons';
 import { formatSubCueLabel } from '../formatting';
@@ -281,8 +282,7 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
 
   function removeSubCue(id: SubCueId): void {
     const order = scene.subCueOrder.filter((sid) => sid !== id);
-    const subCues = { ...scene.subCues };
-    delete subCues[id];
+    const subCues = clearTimingLinksForRemovedSubCue(scene, id);
     if (sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === id) {
       setSceneEditSelection({ kind: 'scene' });
     }

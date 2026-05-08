@@ -561,6 +561,7 @@ export type PersistedAudioSubCueConfig = {
   kind: 'audio';
   audioSourceId: AudioSourceId;
   outputIds: VirtualOutputId[];
+  linkedTimingSubCueId?: SubCueId;
   startOffsetMs?: number;
   /** Source-media in point in milliseconds. Scene delay remains `startOffsetMs`. */
   sourceStartMs?: number;
@@ -589,6 +590,7 @@ export type PersistedVisualSubCueConfig = {
   kind: 'visual';
   visualId: VisualId;
   targets: VisualDisplayTarget[];
+  linkedTimingSubCueId?: SubCueId;
   startOffsetMs?: number;
   /** Source-media in point in milliseconds for finite video visuals. */
   sourceStartMs?: number;
