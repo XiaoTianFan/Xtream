@@ -1,5 +1,15 @@
 # Xtream Runtime Changelog
 
+## v0.2.3
+
+- **Drag media directly from the pool:** Audio and visual pool items can now be dragged out of the shared media pool instead of being assigned only through pickers and edit forms.
+- **Drop visuals onto display zones:** Patch display previews now expose drop targets for single displays and split left/right zones, including empty zones, so operators can assign or replace display visuals from the preview itself.
+- **Drop audio onto output strips:** Audio sources can be dropped onto Patch output bus strips to route them quickly, with invalid media drops rejected and visible feedback while hovering over a target.
+- **Build Stream scenes by dropping media:** Dropping an audio or visual pool item onto a scene row in List mode or a scene card in Flow mode creates the matching sub-cue, selects it for editing, and expands the scene so the new cue is immediately visible.
+- **Cleaner drag feedback across Patch and Stream:** Media drags use Xtream-specific payloads so they do not collide with external file import or Stream scene reordering, and drop targets now show clearer copy/reject behavior during drag operations.
+- **Smoother cue editor previews:** Audio waveforms and visual preview thumbnails can reuse loaded cache data while editors are rebuilt, reducing unnecessary pending states when returning to recently viewed sub-cues.
+- **Drag assignment test coverage and planning:** The release adds focused coverage for media-pool drag payloads, Patch display/output drops, Stream List and Flow drops, and the scene sub-cue creation path, plus an implementation memo for the media-pool drag assignment work.
+
 ## v0.2.2
 
 - **Visual sub-cue preview lane:** Visual sub-cues now have a preview-centered editor for playing, pausing, seeking, and reviewing the selected visual range directly from the scene edit pane, replacing the older timing-only controls with a clearer media lane.

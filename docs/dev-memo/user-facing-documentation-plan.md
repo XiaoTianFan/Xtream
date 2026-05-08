@@ -11,7 +11,7 @@ This is an information architecture and writing roadmap, not the finished user m
 Existing public-facing docs are small:
 
 - `README.md` gives the product summary, workspace overview, show project format, developer setup commands, and license.
-- `docs/runtime-changelog.md` is the best product-history source. It documents v0.0.4 through v0.2.2 with operator-facing release notes.
+- `docs/runtime-changelog.md` is the best product-history source. It documents v0.0.4 through v0.2.3 with operator-facing release notes.
 - `docs/mac-setup-cn.md` is a Chinese beginner Terminal setup guide, but it references a missing `docs\project-setup-and-manual-testing.md` and still reads like a generic Electron setup guide in places.
 - `docs/stream-visual-subcue-preview-lane-editor-plan.md` is an implementation plan. It is useful source material, but it should not sit in the primary user manual without being rewritten around user outcomes.
 
