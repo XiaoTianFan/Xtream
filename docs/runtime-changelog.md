@@ -1,5 +1,15 @@
 # Xtream Runtime Changelog
 
+## v0.2.2
+
+- **Visual sub-cue preview lane:** Visual sub-cues now have a preview-centered editor for playing, pausing, seeking, and reviewing the selected visual range directly from the scene edit pane, replacing the older timing-only controls with a clearer media lane.
+- **Trim source ranges for visuals:** Operators can set and adjust visual source start/end ranges, with Stream playback, preview duration, validation, and schedule timing all respecting the trimmed portion of the media.
+- **Freeze frames and fade feedback:** Visual sub-cues can hold freeze frames and show fade-in/fade-out curves in the preview lane, with marker interactions that make freeze points easier to review and remove.
+- **More reliable visual preview delivery:** Display preview commands now report which display outputs received the preview and which were missing, giving the console better feedback while editing visuals across multiple displays.
+- **Clearer runtime session logging:** Manual seeks, drift correction seeks, scene state changes, readiness checkpoints, and transport activity now carry richer session log details so operators and support can understand what happened during playback.
+- **Friendlier imported audio labels:** Audio files added to the show now use the file basename as their source label, making imported sources easier to recognize in Patch and Stream without manual renaming.
+- **Project documentation and licensing refresh:** The release includes refreshed README and user-facing documentation planning, archived completed runtime planning notes, and updates the project license to PolyForm Noncommercial.
+
 ## v0.2.1
 
 - **Waveform editing for audio sub-cues:** Audio sub-cues now have a waveform-centered editor for trimming the playable source range, adjusting timing, auditioning the cue, changing pitch, and editing fades from the scene edit pane.
