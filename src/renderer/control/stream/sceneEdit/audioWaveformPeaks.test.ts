@@ -4,12 +4,14 @@ import {
   clearAudioWaveformPeakCache,
   createAudioWaveformCacheKey,
   downsampleAudioPeaks,
+  getCachedAudioWaveformPeaks,
   loadAudioWaveformPeaks,
   resolveAudioWaveformUrl,
 } from './audioWaveformPeaks';
 
 describe('audioWaveformPeaks', () => {
   afterEach(() => {
+    clearAudioWaveformPeakCache();
     vi.unstubAllGlobals();
   });
 
@@ -45,7 +47,6 @@ describe('audioWaveformPeaks', () => {
   });
 
   it('loads and caches decoded waveform peaks', async () => {
-    clearAudioWaveformPeakCache();
     const state = directorState();
     const fetchImpl = vi.fn(async () => ({
       arrayBuffer: async () => new ArrayBuffer(8),
@@ -55,18 +56,43 @@ describe('audioWaveformPeaks', () => {
       channelData: [Float32Array.from([-1, -0.5, 0.5, 1])],
     }));
 
+    expect(getCachedAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 2 })).toBeUndefined();
+
     const first = await loadAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 2, fetchImpl, decodeImpl });
     const second = await loadAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 2, fetchImpl, decodeImpl });
 
     expect(first).toBe(second);
+    expect(getCachedAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 2 })).toBe(first);
     expect(first).toMatchObject({ durationMs: 1000, channelCount: 1 });
     expect(first?.buckets).toHaveLength(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(decodeImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('reloads waveform peaks when source metadata changes the cache key', async () => {
+    const state = directorState();
+    const changedState = directorState();
+    changedState.audioSources.external = {
+      ...changedState.audioSources.external,
+      fileSizeBytes: 5678,
+    };
+    const fetchImpl = vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(8),
+    }));
+    const decodeImpl = vi.fn(async () => ({
+      sampleRate: 4,
+      channelData: [Float32Array.from([-1, -0.5, 0.5, 1])],
+    }));
+
+    const first = await loadAudioWaveformPeaks(state.audioSources.external, state, { bucketCount: 2, fetchImpl, decodeImpl });
+    const second = await loadAudioWaveformPeaks(changedState.audioSources.external, changedState, { bucketCount: 2, fetchImpl, decodeImpl });
+
+    expect(second).not.toBe(first);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(decodeImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('falls back to the preload file reader when fetch cannot read a file URL', async () => {
-    clearAudioWaveformPeakCache();
     const state = directorState();
     const readFileBuffer = vi.fn(async () => new ArrayBuffer(8));
     vi.stubGlobal('window', {

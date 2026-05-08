@@ -18,6 +18,23 @@
   border-color: var(--accent-ochre);
 }
 
+.mixer-strip.media-drop-target {
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mixer-strip.media-drop-over {
+  border-color: var(--accent-teal);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-teal) 68%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent-teal) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mixer-strip.media-drop-target {
+    transition: none;
+  }
+}
+
 .mixer-label-row {
   display: flex;
   flex-direction: row;
@@ -176,4 +193,3 @@
   min-width: min-content;
   box-sizing: border-box;
 }
-

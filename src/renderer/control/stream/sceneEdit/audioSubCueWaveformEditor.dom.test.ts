@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, PersistedAudioSubCueConfig } from '../../../../shared/types';
 import { buildAudioSubCuePreviewPayload, createAudioSubCueWaveformEditor } from './audioSubCueWaveformEditor';
+import { clearAudioWaveformPeakCache, loadAudioWaveformPeaks } from './audioWaveformPeaks';
 
 class FakeResizeObserver {
   observe = vi.fn();
@@ -21,6 +22,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearAudioWaveformPeakCache();
   vi.useRealTimers();
   vi.restoreAllMocks();
   document.documentElement.removeAttribute('data-theme');
@@ -234,6 +236,30 @@ describe('audioSubCueWaveformEditor', () => {
     expect(play.disabled).toBe(true);
   });
 
+  it('hydrates reopened waveform editors from cached peaks without drawing a loading label', async () => {
+    const state = directorState();
+    const fetchImpl = vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(8),
+    }));
+    const decodeImpl = vi.fn(async () => ({
+      sampleRate: 4,
+      channelData: [Float32Array.from([-1, -0.5, 0.5, 1])],
+    }));
+    await loadAudioWaveformPeaks(state.audioSources.aud, state, { fetchImpl, decodeImpl });
+    const canvas = installCanvasContextRecorder();
+
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue(),
+      currentState: state,
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    expect(canvas.fillTexts).not.toContain('Loading waveform');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(decodeImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('stops transient preview playback when the editor is removed', async () => {
     vi.useFakeTimers();
     const preview = vi.fn();
@@ -258,8 +284,9 @@ describe('audioSubCueWaveformEditor', () => {
   });
 });
 
-function installCanvasContextRecorder(): { fillStyles: string[] } {
+function installCanvasContextRecorder(): { fillStyles: string[]; fillTexts: string[] } {
   const fillStyles: string[] = [];
+  const fillTexts: string[] = [];
   const strokeStyles: string[] = [];
   const context = {
     setTransform: vi.fn(),
@@ -269,7 +296,9 @@ function installCanvasContextRecorder(): { fillStyles: string[] } {
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     stroke: vi.fn(),
-    fillText: vi.fn(),
+    fillText: vi.fn((text: string) => {
+      fillTexts.push(text);
+    }),
     save: vi.fn(),
     restore: vi.fn(),
     arc: vi.fn(),
@@ -296,7 +325,7 @@ function installCanvasContextRecorder(): { fillStyles: string[] } {
     globalAlpha: 1,
   } as unknown as CanvasRenderingContext2D;
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context);
-  return { fillStyles };
+  return { fillStyles, fillTexts };
 }
 
 function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): PersistedAudioSubCueConfig {

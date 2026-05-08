@@ -1,5 +1,5 @@
 import { getDirectorSeconds, getMediaEffectiveTime } from '../../../shared/timeline';
-import type { DirectorState, DisplayWindowState, LoopState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
+import type { DirectorState, DisplayWindowState, DisplayZoneId, LoopState, VisualId, VisualLayoutProfile, VisualState } from '../../../shared/types';
 import { DEFAULT_CONTROL_DISPLAY_PREVIEW_MAX_FPS } from '../../../shared/types';
 import { createPreviewLabel } from '../shared/dom';
 import { createPlaybackSyncKey, syncTimedMediaElement } from '../media/mediaSync';
@@ -15,6 +15,11 @@ const livePreviewCleanups = new Map<HTMLVideoElement, () => void>();
 type RuntimeVisualState = VisualState & {
   runtimeOffsetSeconds?: number;
   runtimeLoop?: LoopState;
+};
+
+export type DisplayPreviewZoneEntry = {
+  zoneId: DisplayZoneId;
+  visualId?: VisualId;
 };
 
 export function getDisplayPreviewMinFrameIntervalMs(state: DirectorState): number {
@@ -43,79 +48,113 @@ export function createDisplayPreview(display: DisplayWindowState, state: Directo
     preview.textContent = 'Preview unavailable';
     return preview;
   }
-  for (const visualId of getPreviewVisualIds(display.layout)) {
-    const visual = state.visuals[visualId];
-    const pane = document.createElement('section');
-    pane.className = 'display-preview-pane';
-    pane.dataset.visualId = visualId;
-    if (!visual?.url) {
-      if (visual?.kind === 'live') {
-        const video = document.createElement('video');
-        video.dataset.visualId = visualId;
-        video.dataset.livePreviewVideo = 'true';
-        applyVisualStyle(video, visual);
-        void attachLiveVisualStream(visual, video, {
-          reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
-        })
-          .then((attachment) => {
-            livePreviewCleanups.set(video, attachment.cleanup);
-            reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id);
-          })
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : 'Live preview failed.';
-            reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, message);
-            reportPreviewStatus(
-              `display:${display.id}:${visualId}`,
-              visualId,
-              false,
-              message,
-              display.id,
-            );
-          });
-        pane.append(video);
-      } else {
-      pane.append(createPreviewLabel(visual?.label ?? visualId, 'No visual selected'));
-      }
-    } else if (visual.type === 'image') {
-      const image = document.createElement('img');
-      image.src = visual.url;
-      image.alt = visual.label;
-      applyVisualStyle(image, visual);
-      image.addEventListener('load', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
-      image.addEventListener('error', () =>
-        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} image preview failed to load.`, display.id),
-      );
-      pane.append(image);
-    } else {
-      if (state.performanceMode) {
-        pane.append(createPreviewLabel(visual.label, 'video preview disabled in performance mode'));
-        preview.append(pane);
-        continue;
-      }
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.src = visual.url;
-      video.dataset.visualId = visualId;
-      video.dataset.previewVideo = 'true';
-      video.style.display = 'none';
-      applyVisualStyle(video, visual);
-      video.playbackRate = state.rate * (visual.playbackRate ?? 1);
-      video.addEventListener('loadedmetadata', () => reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, true, undefined, display.id));
-      video.addEventListener('error', () =>
-        reportPreviewStatus(`display:${display.id}:${visualId}`, visualId, false, `${display.id} video preview failed to load.`, display.id),
-      );
-      const canvas = createDisplayPreviewCanvas(video);
-      pane.append(video, canvas);
-    }
-    preview.append(pane);
+  for (const entry of getDisplayPreviewZoneEntries(display.layout)) {
+    preview.append(createDisplayPreviewPane(display, state, entry));
   }
   const progressEdge = getDisplayPreviewProgressEdge(display, state);
   if (progressEdge) {
     preview.append(createDisplayPreviewProgressEdge(progressEdge));
   }
   return preview;
+}
+
+export function getDisplayPreviewZoneEntries(layout: VisualLayoutProfile): DisplayPreviewZoneEntry[] {
+  if (layout.type === 'single') {
+    return [{ zoneId: 'single', visualId: layout.visualId }];
+  }
+  return [
+    { zoneId: 'L', visualId: layout.visualIds[0] },
+    { zoneId: 'R', visualId: layout.visualIds[1] },
+  ];
+}
+
+function createDisplayPreviewPane(display: DisplayWindowState, state: DirectorState, entry: DisplayPreviewZoneEntry): HTMLElement {
+  const pane = document.createElement('section');
+  pane.className = 'display-preview-pane';
+  pane.dataset.displayZone = entry.zoneId;
+  if (!entry.visualId) {
+    pane.append(createPreviewLabel('No visual selected', getDisplayZoneEmptyLabel(entry.zoneId)));
+    return pane;
+  }
+
+  pane.dataset.visualId = entry.visualId;
+  const visual = state.visuals[entry.visualId];
+  if (!visual?.url) {
+    if (visual?.kind === 'live') {
+      const video = document.createElement('video');
+      video.dataset.visualId = entry.visualId;
+      video.dataset.livePreviewVideo = 'true';
+      applyVisualStyle(video, visual);
+      void attachLiveVisualStream(visual, video, {
+        reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report),
+      })
+        .then((attachment) => {
+          livePreviewCleanups.set(video, attachment.cleanup);
+          reportPreviewStatus(`display:${display.id}:${entry.visualId}`, entry.visualId, true, undefined, display.id);
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Live preview failed.';
+          reportLiveVisualError(visual, { reportMetadata: (report) => void window.xtream.visuals.reportMetadata(report) }, message);
+          reportPreviewStatus(
+            `display:${display.id}:${entry.visualId}`,
+            entry.visualId,
+            false,
+            message,
+            display.id,
+          );
+        });
+      pane.append(video);
+    } else {
+      pane.append(createPreviewLabel(visual?.label ?? entry.visualId, visual ? 'No preview available' : 'Missing visual'));
+    }
+    return pane;
+  }
+
+  if (visual.type === 'image') {
+    const image = document.createElement('img');
+    image.src = visual.url;
+    image.alt = visual.label;
+    applyVisualStyle(image, visual);
+    image.addEventListener('load', () => reportPreviewStatus(`display:${display.id}:${entry.visualId}`, entry.visualId, true, undefined, display.id));
+    image.addEventListener('error', () =>
+      reportPreviewStatus(`display:${display.id}:${entry.visualId}`, entry.visualId, false, `${display.id} image preview failed to load.`, display.id),
+    );
+    pane.append(image);
+    return pane;
+  }
+
+  if (state.performanceMode) {
+    pane.append(createPreviewLabel(visual.label, 'video preview disabled in performance mode'));
+    return pane;
+  }
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.src = visual.url;
+  video.dataset.visualId = entry.visualId;
+  video.dataset.previewVideo = 'true';
+  video.style.display = 'none';
+  applyVisualStyle(video, visual);
+  video.playbackRate = state.rate * (visual.playbackRate ?? 1);
+  video.addEventListener('loadedmetadata', () => reportPreviewStatus(`display:${display.id}:${entry.visualId}`, entry.visualId, true, undefined, display.id));
+  video.addEventListener('error', () =>
+    reportPreviewStatus(`display:${display.id}:${entry.visualId}`, entry.visualId, false, `${display.id} video preview failed to load.`, display.id),
+  );
+  const canvas = createDisplayPreviewCanvas(video);
+  pane.append(video, canvas);
+  return pane;
+}
+
+function getDisplayZoneEmptyLabel(zoneId: DisplayZoneId): string {
+  if (zoneId === 'L') {
+    return 'Left zone';
+  }
+  if (zoneId === 'R') {
+    return 'Right zone';
+  }
+  return 'Drop visual here';
 }
 
 function getDisplayPreviewProgressEdge(display: DisplayWindowState, state: DirectorState): DisplayPreviewProgressEdge | undefined {

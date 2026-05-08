@@ -1,4 +1,5 @@
 import type {
+  AudioSourceId,
   DirectorState,
   MeterLaneState,
   OutputMeterReport,
@@ -57,6 +58,7 @@ type MixerPanelControllerOptions = {
   renderState: (state: DirectorState) => void;
   syncTransportInputs: (state: DirectorState) => void;
   refreshDetails: (state: DirectorState) => void;
+  setShowStatus?: (message: string) => void;
 };
 
 export function createMixerPanelController(elements: MixerPanelElements, options: MixerPanelControllerOptions): MixerPanelController {
@@ -248,6 +250,32 @@ export function createMixerPanelController(elements: MixerPanelElements, options
     syncOutputMeters(state);
   }
 
+  async function assignAudioSourceToOutput(outputId: VirtualOutputId, audioSourceId: AudioSourceId): Promise<void> {
+    const state = await window.xtream.director.getState();
+    const output = state.outputs[outputId];
+    if (!output) {
+      options.setShowStatus?.('Output no longer exists.');
+      return;
+    }
+    const source = state.audioSources[audioSourceId];
+    if (!source) {
+      options.setShowStatus?.('Audio source no longer exists.');
+      return;
+    }
+    if (output.sources.some((selection) => selection.audioSourceId === audioSourceId)) {
+      options.setShowStatus?.(`${source.label} is already routed to ${output.label}.`);
+      return;
+    }
+
+    await window.xtream.outputs.addSource(outputId, audioSourceId);
+    const nextState = await window.xtream.director.getState();
+    options.setShowStatus?.(`Added ${source.label} to ${output.label}.`);
+    options.renderState(nextState);
+    renderOutputs(nextState);
+    options.refreshDetails(nextState);
+    syncOutputMeters(nextState);
+  }
+
   function getSoloOutputCount(): number {
     return soloOutputIds.size;
   }
@@ -264,6 +292,8 @@ export function createMixerPanelController(elements: MixerPanelElements, options
       renderOutputs,
       syncOutputMeters,
       createOutputMeter,
+      assignAudioSourceToOutput,
+      rejectMediaPoolDrop: () => options.setShowStatus?.('Drop an audio source here.'),
     };
   }
 

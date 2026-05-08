@@ -17,14 +17,21 @@ export type DecodedAudioWaveform = {
   channelData: Float32Array[];
 };
 
-type WaveformLoadOptions = {
+export type AudioWaveformLoadOptions = {
   bucketCount?: number;
   fetchImpl?: (url: string) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>;
   decodeImpl?: (buffer: ArrayBuffer) => Promise<DecodedAudioWaveform>;
 };
 
 const DEFAULT_BUCKET_COUNT = 4096;
-const waveformCache = new Map<string, Promise<AudioWaveformPeaks>>();
+const MAX_CACHE_ENTRIES = 80;
+
+type AudioWaveformCacheEntry = {
+  promise: Promise<AudioWaveformPeaks>;
+  value?: AudioWaveformPeaks;
+};
+
+const waveformCache = new Map<string, AudioWaveformCacheEntry>();
 
 export function clearAudioWaveformPeakCache(): void {
   waveformCache.clear();
@@ -61,6 +68,23 @@ export function createAudioWaveformCacheKey(source: AudioSourceState, state: Dir
     source.channelMode ?? '',
     extraction,
   ].join('|');
+}
+
+export function getCachedAudioWaveformPeaks(
+  source: AudioSourceState | undefined,
+  state: DirectorState,
+  options: Pick<AudioWaveformLoadOptions, 'bucketCount'> = {},
+): AudioWaveformPeaks | undefined {
+  if (!source || !resolveAudioWaveformUrl(source, state)) {
+    return undefined;
+  }
+  const cacheKey = createAudioWaveformLoadCacheKey(source, state, options);
+  const entry = waveformCache.get(cacheKey);
+  if (!entry?.value) {
+    return undefined;
+  }
+  touchAudioWaveformCacheEntry(cacheKey, entry);
+  return entry.value;
 }
 
 export function downsampleAudioPeaks(channelData: readonly ArrayLike<number>[], bucketCount = DEFAULT_BUCKET_COUNT): AudioWaveformBucket[] {
@@ -118,7 +142,7 @@ export async function decodeAudioWaveform(buffer: ArrayBuffer): Promise<DecodedA
 export async function loadAudioWaveformPeaks(
   source: AudioSourceState | undefined,
   state: DirectorState,
-  options: WaveformLoadOptions = {},
+  options: AudioWaveformLoadOptions = {},
 ): Promise<AudioWaveformPeaks | undefined> {
   if (!source) {
     return undefined;
@@ -127,10 +151,11 @@ export async function loadAudioWaveformPeaks(
   if (!url) {
     return undefined;
   }
-  const cacheKey = `${createAudioWaveformCacheKey(source, state)}|buckets:${options.bucketCount ?? DEFAULT_BUCKET_COUNT}`;
+  const cacheKey = createAudioWaveformLoadCacheKey(source, state, options);
   const existing = waveformCache.get(cacheKey);
   if (existing) {
-    return existing;
+    touchAudioWaveformCacheEntry(cacheKey, existing);
+    return existing.promise;
   }
   const load = async (): Promise<AudioWaveformPeaks> => {
     const buffer = await loadAudioWaveformBuffer(url, options.fetchImpl);
@@ -143,12 +168,40 @@ export async function loadAudioWaveformPeaks(
       buckets: downsampleAudioPeaks(decoded.channelData, options.bucketCount ?? DEFAULT_BUCKET_COUNT),
     };
   };
-  const promise = load().catch((error) => {
-    waveformCache.delete(cacheKey);
-    throw error;
-  });
-  waveformCache.set(cacheKey, promise);
-  return promise;
+  const entry: AudioWaveformCacheEntry = {
+    promise: Promise.resolve().then(load).then((value) => {
+      entry.value = value;
+      return value;
+    }).catch((error) => {
+      waveformCache.delete(cacheKey);
+      throw error;
+    }),
+  };
+  rememberAudioWaveformCacheEntry(cacheKey, entry);
+  return entry.promise;
+}
+
+function createAudioWaveformLoadCacheKey(
+  source: AudioSourceState,
+  state: DirectorState,
+  options: Pick<AudioWaveformLoadOptions, 'bucketCount'>,
+): string {
+  return `${createAudioWaveformCacheKey(source, state)}|buckets:${options.bucketCount ?? DEFAULT_BUCKET_COUNT}`;
+}
+
+function touchAudioWaveformCacheEntry(cacheKey: string, entry: AudioWaveformCacheEntry): void {
+  waveformCache.delete(cacheKey);
+  waveformCache.set(cacheKey, entry);
+}
+
+function rememberAudioWaveformCacheEntry(cacheKey: string, entry: AudioWaveformCacheEntry): void {
+  if (waveformCache.size >= MAX_CACHE_ENTRIES && !waveformCache.has(cacheKey)) {
+    const oldest = waveformCache.keys().next().value as string | undefined;
+    if (oldest) {
+      waveformCache.delete(oldest);
+    }
+  }
+  waveformCache.set(cacheKey, entry);
 }
 
 async function loadAudioWaveformBuffer(

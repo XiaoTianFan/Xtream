@@ -1,5 +1,5 @@
 import { describeLayout } from '../../../shared/layouts';
-import type { DirectorState, DisplayWindowState, VisualId, VisualLayoutProfile } from '../../../shared/types';
+import type { DirectorState, DisplayWindowId, DisplayWindowState, DisplayZoneId, VisualId, VisualLayoutProfile } from '../../../shared/types';
 import {
   applyDisplayBlackoutFadeStyle,
   applyVisualStyle,
@@ -10,6 +10,7 @@ import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
 import { formatMilliseconds } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
+import { isMediaPoolDragEvent, readMediaPoolDragPayload } from './mediaPool/dragDrop';
 
 export type DisplayWorkspaceController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -32,6 +33,7 @@ type DisplayWorkspaceControllerOptions = {
   selectEntity: (entity: SelectedEntity) => void;
   clearSelectionIf: (entity: SelectedEntity) => void;
   renderState: (state: DirectorState) => void;
+  setShowStatus?: (message: string) => void;
 };
 
 export function createDisplayWorkspaceController(elements: DisplayWorkspaceElements, options: DisplayWorkspaceControllerOptions): DisplayWorkspaceController {
@@ -51,6 +53,7 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
         });
         const preview = createDisplayPreview(display, options.getState());
         preview.dataset.displayPreview = display.id;
+        attachDisplayMediaDropHandlers(card, preview, display);
         const overlay = document.createElement('div');
         overlay.className = 'display-overlay';
         const title = document.createElement('strong');
@@ -82,6 +85,132 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
         return card;
       }),
     );
+  }
+
+  function attachDisplayMediaDropHandlers(card: HTMLElement, preview: HTMLElement, display: DisplayWindowState): void {
+    preview.querySelectorAll<HTMLElement>('[data-display-zone]').forEach((pane) => pane.classList.add('media-drop-target'));
+
+    card.addEventListener('dragenter', (event) => {
+      if (!isMediaPoolDragEvent(event)) {
+        return;
+      }
+      event.preventDefault();
+      syncDisplayDropOver(card, display, event);
+    });
+    card.addEventListener('dragover', (event) => {
+      if (!isMediaPoolDragEvent(event)) {
+        return;
+      }
+      event.preventDefault();
+      const payload = readMediaPoolDragPayload(event.dataTransfer);
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = payload?.type === 'visual' ? 'copy' : 'none';
+      }
+      syncDisplayDropOver(card, display, event);
+    });
+    card.addEventListener('dragleave', (event) => {
+      if (!card.contains(event.relatedTarget as Node | null)) {
+        clearDisplayDropOver(card);
+      }
+    });
+    card.addEventListener('drop', (event) => {
+      if (!isMediaPoolDragEvent(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const payload = readMediaPoolDragPayload(event.dataTransfer);
+      const pane = resolveDisplayDropPane(card, display, event);
+      clearDisplayDropOver(card);
+      if (payload?.type !== 'visual') {
+        options.setShowStatus?.('Drop a visual source here.');
+        return;
+      }
+      const zoneId = getPaneDisplayZone(pane) ?? getDefaultDisplayDropZone(display, card);
+      void assignVisualToDisplayZone(display.id, zoneId, payload.id);
+    });
+  }
+
+  function syncDisplayDropOver(card: HTMLElement, display: DisplayWindowState, event: DragEvent): void {
+    clearDisplayDropOver(card);
+    const payload = readMediaPoolDragPayload(event.dataTransfer);
+    if (payload?.type !== 'visual') {
+      return;
+    }
+    const pane = resolveDisplayDropPane(card, display, event);
+    pane?.classList.add('media-drop-over');
+  }
+
+  function clearDisplayDropOver(card: HTMLElement): void {
+    card.querySelectorAll<HTMLElement>('.display-preview-pane.media-drop-over').forEach((pane) => pane.classList.remove('media-drop-over'));
+  }
+
+  function resolveDisplayDropPane(card: HTMLElement, display: DisplayWindowState, event: DragEvent): HTMLElement | undefined {
+    const targetPane = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-display-zone]') : undefined;
+    if (targetPane && card.contains(targetPane)) {
+      return targetPane;
+    }
+    const hitElement = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+      ? document.elementFromPoint(event.clientX, event.clientY)
+      : undefined;
+    const hitPane = hitElement?.closest<HTMLElement>('[data-display-zone]');
+    if (hitPane && card.contains(hitPane)) {
+      return hitPane;
+    }
+    const zoneId = getDefaultDisplayDropZone(display, card);
+    return card.querySelector<HTMLElement>(`[data-display-zone="${zoneId}"]`) ?? undefined;
+  }
+
+  function getPaneDisplayZone(pane: HTMLElement | undefined): DisplayZoneId | undefined {
+    const zone = pane?.dataset.displayZone;
+    return zone === 'single' || zone === 'L' || zone === 'R' ? zone : undefined;
+  }
+
+  function getDefaultDisplayDropZone(display: DisplayWindowState, card: HTMLElement): DisplayZoneId {
+    if (display.layout.type === 'single') {
+      return 'single';
+    }
+    const firstEmptyPane = [...card.querySelectorAll<HTMLElement>('[data-display-zone]')].find((pane) => !pane.dataset.visualId);
+    const firstEmptyZone = getPaneDisplayZone(firstEmptyPane);
+    return firstEmptyZone && firstEmptyZone !== 'single' ? firstEmptyZone : 'L';
+  }
+
+  async function assignVisualToDisplayZone(displayId: DisplayWindowId, zoneId: DisplayZoneId, visualId: VisualId): Promise<void> {
+    const rawState = await window.xtream.director.getState();
+    const display = rawState.displays[displayId];
+    if (!display) {
+      options.setShowStatus?.('Display no longer exists.');
+      return;
+    }
+    const visual = rawState.visuals[visualId];
+    if (!visual) {
+      options.setShowStatus?.('Visual source no longer exists.');
+      return;
+    }
+
+    const layout = createDisplayLayoutForZone(display.layout, zoneId, visualId);
+    await window.xtream.displays.update(displayId, { layout });
+    const nextState = await window.xtream.director.getState();
+    options.setShowStatus?.(`Assigned ${visual.label} to ${getDisplayAssignmentLabel(display, zoneId)}.`);
+    options.renderState(nextState);
+  }
+
+  function createDisplayLayoutForZone(layout: VisualLayoutProfile, zoneId: DisplayZoneId, visualId: VisualId): VisualLayoutProfile {
+    if (layout.type === 'single') {
+      return { type: 'single', visualId };
+    }
+    const [left, right] = layout.visualIds;
+    return zoneId === 'R'
+      ? { type: 'split', visualIds: [left, visualId] }
+      : { type: 'split', visualIds: [visualId, right] };
+  }
+
+  function getDisplayAssignmentLabel(display: DisplayWindowState, zoneId: DisplayZoneId): string {
+    const label = display.label ?? display.id;
+    if (display.layout.type === 'split') {
+      return `${label} ${zoneId === 'R' ? 'right' : 'left'} zone`;
+    }
+    return label;
   }
 
   function createRenderSignature(state: DirectorState): string {

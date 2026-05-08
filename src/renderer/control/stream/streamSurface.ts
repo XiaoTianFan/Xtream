@@ -377,6 +377,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       renderState: options.renderState,
       syncTransportInputs: () => undefined,
       refreshDetails: () => renderCurrent(),
+      setShowStatus: options.setShowStatus,
     });
     displayWorkspace = createDisplayWorkspaceController({ displayList: shell.displayList }, {
       getState: () => options.getPresentationState() ?? currentState,
@@ -384,6 +385,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       selectEntity,
       clearSelectionIf,
       renderState: options.renderState,
+      setShowStatus: options.setShowStatus,
     });
     installInteractionLock(shell.outputPanel);
     shell.outputPanel.addEventListener('pointerup', () => {

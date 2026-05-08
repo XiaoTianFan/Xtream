@@ -21,6 +21,13 @@
   outline-offset: -1px;
 }
 
+.visual-pool-card.media-pool-drag-source,
+.media-list-region .asset-row.media-pool-drag-source {
+  border-color: var(--accent-teal);
+  opacity: 0.72;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-teal) 62%, transparent);
+}
+
 .visual-pool-card__preview {
   position: relative;
   display: grid;
@@ -199,4 +206,3 @@
   gap: var(--compact);
   margin-bottom: var(--compact);
 }
-

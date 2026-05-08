@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, PersistedVisualSubCueConfig, VisualState, VisualSubCuePreviewPosition } from '../../../../shared/types';
 import { buildVisualSubCuePreviewPayload, createVisualSubCuePreviewLaneEditor } from './visualSubCuePreviewLaneEditor';
-import { clearVisualPreviewSnapshotCache } from './visualPreviewSnapshots';
+import { clearVisualPreviewSnapshotCache, loadVisualPreviewSnapshots } from './visualPreviewSnapshots';
 
 class FakeResizeObserver {
   observe = vi.fn();
@@ -357,6 +357,25 @@ describe('visualSubCuePreviewLaneEditor', () => {
     }
 
     expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-tile')?.className).toContain('ready');
+  });
+
+  it('hydrates reopened preview lanes from cached snapshots without showing loading status', async () => {
+    const state = directorState();
+    const captureVideoSnapshots = vi.fn(async (_visual: VisualState, sampleTimes: readonly number[]) =>
+      sampleTimes.map((timeMs) => ({ timeMs, dataUrl: `data:image/jpeg;base64,${timeMs}`, state: 'ready' as const })),
+    );
+    await loadVisualPreviewSnapshots(state.visuals.vid, { sampleCount: 12, captureVideoSnapshots });
+
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: state,
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-tile')?.className).toContain('ready');
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-status')?.hidden).toBe(true);
+    expect(captureVideoSnapshots).toHaveBeenCalledTimes(1);
   });
 });
 

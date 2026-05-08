@@ -61,6 +61,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     selectEntity,
     clearSelectionIf,
     renderState: options.renderState,
+    setShowStatus: options.setShowStatus,
   });
 
   let refreshDetailsPane: (state: DirectorState) => void = () => undefined;
@@ -74,6 +75,7 @@ export function createPatchSurfaceController(options: PatchSurfaceOptions) {
     renderState: options.renderState,
     syncTransportInputs: (state) => header.sync(state),
     refreshDetails: (state) => refreshDetailsPane(state),
+    setShowStatus: options.setShowStatus,
   });
 
   const detailsPane = createDetailsPaneController({

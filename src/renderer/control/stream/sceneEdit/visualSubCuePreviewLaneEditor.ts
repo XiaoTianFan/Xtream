@@ -19,6 +19,7 @@ import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
 import {
   createPlaceholderVisualPreviewSnapshots,
+  getCachedVisualPreviewSnapshots,
   loadVisualPreviewSnapshots,
   setLiveVisualPreviewSnapshot,
   type VisualPreviewSnapshot,
@@ -57,8 +58,10 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   const { currentState, patchSubCue } = deps;
   let draftSub: PersistedVisualSubCueConfig = { ...deps.sub, targets: [...deps.sub.targets] };
   let pendingLanePatch: Partial<PersistedVisualSubCueConfig> | undefined;
-  let snapshots: VisualPreviewSnapshot[] = createPlaceholderVisualPreviewSnapshots(laneSnapshotDurationMs(), SNAPSHOT_COUNT, 'pending');
-  let snapshotState: 'pending' | 'ready' | 'missing' | 'error' = selectedVisual() ? 'pending' : 'missing';
+  const cachedSnapshots = getCachedVisualPreviewSnapshots(selectedVisual(), { sampleCount: SNAPSHOT_COUNT });
+  let snapshots: VisualPreviewSnapshot[] =
+    cachedSnapshots ?? createPlaceholderVisualPreviewSnapshots(laneSnapshotDurationMs(), SNAPSHOT_COUNT, selectedVisual() ? 'pending' : 'placeholder');
+  let snapshotState: 'pending' | 'ready' | 'missing' | 'error' = visualSnapshotState(selectedVisual(), cachedSnapshots);
   let snapshotLoadVersion = 0;
   let hover: VisualPreviewLaneHitTarget = { type: 'disabled' };
   let drag: DragState | undefined;
@@ -569,6 +572,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   async function loadSnapshots(): Promise<void> {
     const loadVersion = ++snapshotLoadVersion;
     const visual = selectedVisual();
+    const cached = getCachedVisualPreviewSnapshots(visual, { sampleCount: SNAPSHOT_COUNT });
+    if (cached) {
+      snapshots = cached;
+      snapshotState = visualSnapshotState(visual, cached);
+      render();
+      return;
+    }
     snapshots = createPlaceholderVisualPreviewSnapshots(laneSnapshotDurationMs(), SNAPSHOT_COUNT, visual ? 'pending' : 'placeholder');
     snapshotState = visual ? 'pending' : 'missing';
     render();
@@ -579,6 +589,19 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     snapshots = loaded;
     snapshotState = !visual ? 'missing' : loaded.some((snapshot) => snapshot.state === 'error') ? 'error' : 'ready';
     render();
+  }
+
+  function visualSnapshotState(
+    visual: VisualState | undefined,
+    loaded: VisualPreviewSnapshot[] | undefined,
+  ): 'pending' | 'ready' | 'missing' | 'error' {
+    if (!visual) {
+      return 'missing';
+    }
+    if (!loaded) {
+      return 'pending';
+    }
+    return loaded.some((snapshot) => snapshot.state === 'error') ? 'error' : 'ready';
   }
 
   function createTimingControls(): HTMLElement[] {

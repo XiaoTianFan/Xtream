@@ -10,6 +10,7 @@ import { formatAudioChannelLabel, formatDuration } from '../../shared/formatters
 import { decorateIconButton } from '../../shared/icons';
 import type { SelectedEntity } from '../../shared/types';
 import { mountVisualPoolGridPreview } from '../visualPoolGridPreview';
+import { writeMediaPoolDragPayload, type MediaPoolDragPayload } from './dragDrop';
 
 type MediaPoolRowDeps = {
   isSelected: (type: SelectedEntity['type'], id: string) => boolean;
@@ -48,11 +49,34 @@ function createPoolPlacementBadge(placement: PoolPlacementKind | undefined): HTM
   return el;
 }
 
+function attachMediaPoolItemDragSource(element: HTMLElement, payload: MediaPoolDragPayload): void {
+  element.draggable = true;
+  element.addEventListener('dragstart', (event) => {
+    if (isDragBlockedByInteractiveElement(event.target)) {
+      event.preventDefault();
+      return;
+    }
+    writeMediaPoolDragPayload(event.dataTransfer, payload);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'copy';
+    }
+    element.classList.add('media-pool-drag-source');
+  });
+  element.addEventListener('dragend', () => {
+    element.classList.remove('media-pool-drag-source');
+  });
+}
+
+function isDragBlockedByInteractiveElement(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest('button, input, select, textarea, a, [data-no-pool-drag]'));
+}
+
 export function createVisualRow(visual: VisualState, deps: MediaPoolRowDeps): HTMLElement {
   const row = document.createElement('article');
   row.className = `asset-row${deps.isSelected('visual', visual.id) ? ' selected' : ''}`;
   row.tabIndex = 0;
   row.dataset.assetId = visual.id;
+  attachMediaPoolItemDragSource(row, { type: 'visual', id: visual.id });
   row.addEventListener('click', () => deps.selectPoolEntity({ type: 'visual', id: visual.id }));
   row.addEventListener('contextmenu', (event) => deps.showVisualContextMenu(event, visual));
   row.addEventListener('keydown', (event) => {
@@ -103,6 +127,7 @@ export function createVisualGridCard(visual: VisualState, deps: MediaPoolRowDeps
   card.className = `visual-pool-card${deps.isSelected('visual', visual.id) ? ' selected' : ''}`;
   card.tabIndex = 0;
   card.dataset.assetId = visual.id;
+  attachMediaPoolItemDragSource(card, { type: 'visual', id: visual.id });
   card.addEventListener('click', () => deps.selectPoolEntity({ type: 'visual', id: visual.id }));
   card.addEventListener('contextmenu', (event) => deps.showVisualContextMenu(event, visual));
   card.addEventListener('keydown', (event) => {
@@ -172,6 +197,7 @@ export function createAudioSourceRow(source: AudioSourceState, state: DirectorSt
   row.className = `asset-row${deps.isSelected('audio-source', source.id) ? ' selected' : ''}`;
   row.dataset.assetId = source.id;
   row.tabIndex = 0;
+  attachMediaPoolItemDragSource(row, { type: 'audio-source', id: source.id });
   row.addEventListener('click', () => deps.selectPoolEntity({ type: 'audio-source', id: source.id }));
   row.addEventListener('contextmenu', (event) => deps.showAudioSourceContextMenu(event, source));
   row.addEventListener('keydown', (event) => {

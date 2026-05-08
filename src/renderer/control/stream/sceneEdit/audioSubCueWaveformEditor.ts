@@ -16,7 +16,12 @@ import {
 } from '../../../../shared/audioSubCueAutomation';
 import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
-import { loadAudioWaveformPeaks, resolveAudioWaveformUrl, type AudioWaveformPeaks } from './audioWaveformPeaks';
+import {
+  getCachedAudioWaveformPeaks,
+  loadAudioWaveformPeaks,
+  resolveAudioWaveformUrl,
+  type AudioWaveformPeaks,
+} from './audioWaveformPeaks';
 import { decorateRailButton } from '../../shared/icons';
 import {
   automationValueToY,
@@ -115,8 +120,9 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   const source = currentState.audioSources[sub.audioSourceId];
   const sourceDurationMs = source?.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined;
   let automationMode: AudioWaveformAutomationMode | undefined = 'level';
-  let peaks: AudioWaveformPeaks | undefined;
-  let loadState: 'missing' | 'pending' | 'ready' | 'error' = source ? (source.ready ? 'pending' : 'pending') : 'missing';
+  const cachedPeaks = getCachedAudioWaveformPeaks(source, currentState);
+  let peaks: AudioWaveformPeaks | undefined = cachedPeaks;
+  let loadState: 'missing' | 'pending' | 'ready' | 'error' = source ? (cachedPeaks ? 'ready' : 'pending') : 'missing';
   let hover: AudioWaveformHitTarget = { type: 'disabled' };
   let drag: DragState | undefined;
   let previewPlaying = false;
@@ -281,19 +287,25 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     }
   });
 
-  if (source && resolveAudioWaveformUrl(source, currentState)) {
+  if (source && resolveAudioWaveformUrl(source, currentState) && !cachedPeaks) {
     void loadAudioWaveformPeaks(source, currentState)
       .then((next) => {
+        if (disposed) {
+          return;
+        }
         peaks = next;
         loadState = next ? 'ready' : 'missing';
         render();
       })
       .catch(() => {
+        if (disposed) {
+          return;
+        }
         loadState = 'error';
         render();
       });
   } else {
-    loadState = source ? 'pending' : 'missing';
+    loadState = source ? loadState : 'missing';
   }
 
   render();

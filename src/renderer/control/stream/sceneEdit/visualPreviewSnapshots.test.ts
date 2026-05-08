@@ -5,6 +5,7 @@ import {
   clearVisualPreviewSnapshotCache,
   createPlaceholderVisualPreviewSnapshots,
   createVisualPreviewSnapshotCacheKey,
+  getCachedVisualPreviewSnapshots,
   loadVisualPreviewSnapshots,
   setLiveVisualPreviewSnapshot,
 } from './visualPreviewSnapshots';
@@ -36,10 +37,13 @@ describe('visualPreviewSnapshots', () => {
     );
     const visual = videoVisual({ durationSeconds: 4 });
 
+    expect(getCachedVisualPreviewSnapshots(visual, { sampleCount: 4 })).toBeUndefined();
+
     const first = await loadVisualPreviewSnapshots(visual, { sampleCount: 4, captureVideoSnapshots });
     const second = await loadVisualPreviewSnapshots(visual, { sampleCount: 4, captureVideoSnapshots });
 
     expect(first).toBe(second);
+    expect(getCachedVisualPreviewSnapshots(visual, { sampleCount: 4 })).toBe(first);
     expect(first.map((snapshot) => snapshot.timeMs)).toEqual([500, 1500, 2500, 3500]);
     expect(captureVideoSnapshots).toHaveBeenCalledTimes(1);
   });
@@ -61,6 +65,11 @@ describe('visualPreviewSnapshots', () => {
     await expect(loadVisualPreviewSnapshots(live, { sampleCount: 2 })).resolves.toEqual(createPlaceholderVisualPreviewSnapshots(undefined, 2));
 
     setLiveVisualPreviewSnapshot(live, 'data:image/jpeg;base64,live');
+
+    expect(getCachedVisualPreviewSnapshots(live, { sampleCount: 2 })).toEqual([
+      { timeMs: 0, dataUrl: 'data:image/jpeg;base64,live', state: 'ready' },
+      { timeMs: 0, dataUrl: 'data:image/jpeg;base64,live', state: 'ready' },
+    ]);
 
     await expect(loadVisualPreviewSnapshots(live, { sampleCount: 2 })).resolves.toEqual([
       { timeMs: 0, dataUrl: 'data:image/jpeg;base64,live', state: 'ready' },

@@ -1,7 +1,8 @@
-import type { DirectorState, VirtualOutputId, VirtualOutputState } from '../../../../shared/types';
+import type { AudioSourceId, DirectorState, VirtualOutputId, VirtualOutputState } from '../../../../shared/types';
 import { quantizeBusFaderDb } from '../../meters/busFaderLaw';
 import { createButton, createPanKnob } from '../../shared/dom';
 import type { SelectedEntity } from '../../shared/types';
+import { isMediaPoolDragEvent, readMediaPoolDragPayload } from '../mediaPool/dragDrop';
 import { createAudioFader } from './audioFader';
 import { showMixerOutputContextMenu } from './contextMenu';
 
@@ -16,6 +17,8 @@ export type MixerStripDeps = {
   renderOutputs: (state: DirectorState) => void;
   syncOutputMeters: (state: DirectorState) => void;
   createOutputMeter: (output: VirtualOutputState) => HTMLElement;
+  assignAudioSourceToOutput?: (outputId: VirtualOutputId, audioSourceId: AudioSourceId) => Promise<void> | void;
+  rejectMediaPoolDrop?: (outputId: VirtualOutputId) => void;
 };
 
 function mountMixerStripContents(container: HTMLElement, output: VirtualOutputState, deps: MixerStripDeps): void {
@@ -104,12 +107,59 @@ function attachMixerStripContextMenu(strip: HTMLElement, output: VirtualOutputSt
   );
 }
 
+function attachMixerStripMediaDropHandlers(strip: HTMLElement, outputId: VirtualOutputId, deps: MixerStripDeps): void {
+  if (!deps.assignAudioSourceToOutput) {
+    return;
+  }
+  strip.classList.add('media-drop-target');
+  strip.addEventListener('dragenter', (event) => {
+    if (!isMediaPoolDragEvent(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (readMediaPoolDragPayload(event.dataTransfer)?.type === 'audio-source') {
+      strip.classList.add('media-drop-over');
+    }
+  });
+  strip.addEventListener('dragover', (event) => {
+    if (!isMediaPoolDragEvent(event)) {
+      return;
+    }
+    event.preventDefault();
+    const payload = readMediaPoolDragPayload(event.dataTransfer);
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = payload?.type === 'audio-source' ? 'copy' : 'none';
+    }
+    strip.classList.toggle('media-drop-over', payload?.type === 'audio-source');
+  });
+  strip.addEventListener('dragleave', (event) => {
+    if (!strip.contains(event.relatedTarget as Node | null)) {
+      strip.classList.remove('media-drop-over');
+    }
+  });
+  strip.addEventListener('drop', (event) => {
+    if (!isMediaPoolDragEvent(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    strip.classList.remove('media-drop-over');
+    const payload = readMediaPoolDragPayload(event.dataTransfer);
+    if (payload?.type === 'audio-source') {
+      void deps.assignAudioSourceToOutput?.(outputId, payload.id);
+    } else {
+      deps.rejectMediaPoolDrop?.(outputId);
+    }
+  });
+}
+
 export function createMixerStrip(output: VirtualOutputState, deps: MixerStripDeps): HTMLElement {
   const strip = document.createElement('article');
   strip.className = `mixer-strip${deps.isSelected('output', output.id) ? ' selected' : ''}${deps.soloOutputIds.has(output.id) ? ' solo' : ''}`;
   strip.dataset.outputStrip = output.id;
   attachMixerStripSelectionHandlers(strip, output.id, deps);
   attachMixerStripContextMenu(strip, output, deps);
+  attachMixerStripMediaDropHandlers(strip, output.id, deps);
   mountMixerStripContents(strip, output, deps);
   return strip;
 }
@@ -120,6 +170,7 @@ export function createOutputDetailMixerStrip(output: VirtualOutputState, deps: M
   strip.dataset.outputStrip = output.id;
   attachMixerStripSelectionHandlers(strip, output.id, deps);
   attachMixerStripContextMenu(strip, output, deps);
+  attachMixerStripMediaDropHandlers(strip, output.id, deps);
   mountMixerStripContents(strip, output, deps);
   return strip;
 }

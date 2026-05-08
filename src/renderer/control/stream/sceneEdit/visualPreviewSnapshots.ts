@@ -31,7 +31,12 @@ const DEFAULT_SNAPSHOT_HEIGHT = 90;
 const DEFAULT_SEEK_TIMEOUT_MS = 2500;
 const MAX_CACHE_ENTRIES = 80;
 
-const snapshotCache = new Map<string, Promise<VisualPreviewSnapshot[]>>();
+type VisualPreviewSnapshotCacheEntry = {
+  promise: Promise<VisualPreviewSnapshot[]>;
+  value?: VisualPreviewSnapshot[];
+};
+
+const snapshotCache = new Map<string, VisualPreviewSnapshotCacheEntry>();
 const liveSnapshotCache = new Map<string, VisualPreviewSnapshot>();
 
 export function clearVisualPreviewSnapshotCache(): void {
@@ -81,6 +86,28 @@ export function createPlaceholderVisualPreviewSnapshots(
   return calculateVisualPreviewSampleTimes(durationMs, sampleCount).map((timeMs) => ({ timeMs, state }));
 }
 
+export function getCachedVisualPreviewSnapshots(
+  visual: VisualState | undefined,
+  options: Pick<VisualPreviewSnapshotLoadOptions, 'sampleCount' | 'width' | 'height'> = {},
+): VisualPreviewSnapshot[] | undefined {
+  if (!visual) {
+    return undefined;
+  }
+  if (visual.kind === 'live') {
+    const cached = liveSnapshotCache.get(createLiveSnapshotKey(visual));
+    if (cached) {
+      return calculateVisualPreviewSampleTimes(undefined, options.sampleCount).map((timeMs) => ({ ...cached, timeMs }));
+    }
+  }
+  const cacheKey = createVisualPreviewSnapshotCacheKey(visual, options);
+  const entry = snapshotCache.get(cacheKey);
+  if (!entry?.value) {
+    return undefined;
+  }
+  touchSnapshotCacheEntry(cacheKey, entry);
+  return entry.value;
+}
+
 export function setLiveVisualPreviewSnapshot(visual: LiveVisualState, dataUrl: string, timeMs = 0): void {
   liveSnapshotCache.set(createLiveSnapshotKey(visual), { timeMs, dataUrl, state: 'ready' });
   for (const key of [...snapshotCache.keys()]) {
@@ -100,14 +127,22 @@ export async function loadVisualPreviewSnapshots(
   const cacheKey = createVisualPreviewSnapshotCacheKey(visual, options);
   const cached = snapshotCache.get(cacheKey);
   if (cached) {
-    return cached;
+    touchSnapshotCacheEntry(cacheKey, cached);
+    return cached.promise;
   }
-  const load = loadVisualPreviewSnapshotsUncached(visual, options).catch((error: unknown) => {
-    snapshotCache.delete(cacheKey);
-    return errorSnapshots(visual, options, error);
-  });
-  rememberSnapshotPromise(cacheKey, load);
-  return load;
+  const entry: VisualPreviewSnapshotCacheEntry = {
+    promise: loadVisualPreviewSnapshotsUncached(visual, options)
+      .catch((error: unknown) => {
+        snapshotCache.delete(cacheKey);
+        return errorSnapshots(visual, options, error);
+      })
+      .then((snapshots) => {
+        entry.value = snapshots;
+        return snapshots;
+      }),
+  };
+  rememberSnapshotCacheEntry(cacheKey, entry);
+  return entry.promise;
 }
 
 async function loadVisualPreviewSnapshotsUncached(
@@ -289,14 +324,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function rememberSnapshotPromise(key: string, promise: Promise<VisualPreviewSnapshot[]>): void {
+function touchSnapshotCacheEntry(key: string, entry: VisualPreviewSnapshotCacheEntry): void {
+  snapshotCache.delete(key);
+  snapshotCache.set(key, entry);
+}
+
+function rememberSnapshotCacheEntry(key: string, entry: VisualPreviewSnapshotCacheEntry): void {
   if (snapshotCache.size >= MAX_CACHE_ENTRIES && !snapshotCache.has(key)) {
     const oldest = snapshotCache.keys().next().value as string | undefined;
     if (oldest) {
       snapshotCache.delete(oldest);
     }
   }
-  snapshotCache.set(key, promise);
+  snapshotCache.set(key, entry);
 }
 
 function normalizeSampleCount(sampleCount: number | undefined): number {

@@ -1,5 +1,53 @@
+import type { AudioSourceId, VisualId } from '../../../../shared/types';
+
+export const XTREAM_MEDIA_POOL_ITEM_MIME = 'application/x-xtream-media-pool-item';
+
+export type MediaPoolDragPayload =
+  | { type: 'visual'; id: VisualId }
+  | { type: 'audio-source'; id: AudioSourceId };
+
 export function isFileDragEvent(event: DragEvent): boolean {
   return Boolean(event.dataTransfer?.types?.includes('Files'));
+}
+
+export function writeMediaPoolDragPayload(dataTransfer: DataTransfer | null, payload: MediaPoolDragPayload): void {
+  if (!dataTransfer) {
+    return;
+  }
+  dataTransfer.setData(XTREAM_MEDIA_POOL_ITEM_MIME, JSON.stringify(payload));
+  dataTransfer.setData('text/plain', `${payload.type}:${payload.id}`);
+}
+
+export function readMediaPoolDragPayload(dataTransfer: DataTransfer | null): MediaPoolDragPayload | undefined {
+  if (!dataTransfer || !dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME)) {
+    return undefined;
+  }
+  try {
+    const value = dataTransfer.getData(XTREAM_MEDIA_POOL_ITEM_MIME);
+    if (!value) {
+      return undefined;
+    }
+    const payload = JSON.parse(value) as unknown;
+    return isMediaPoolDragPayload(payload) ? payload : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isMediaPoolDragEvent(event: DragEvent): boolean {
+  return Boolean(event.dataTransfer && dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME));
+}
+
+function isMediaPoolDragPayload(payload: unknown): payload is MediaPoolDragPayload {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+  const candidate = payload as { type?: unknown; id?: unknown };
+  return (candidate.type === 'visual' || candidate.type === 'audio-source') && typeof candidate.id === 'string' && candidate.id.length > 0;
+}
+
+function dataTransferHasType(dataTransfer: DataTransfer, type: string): boolean {
+  return Array.from(dataTransfer.types ?? []).includes(type);
 }
 
 export function getDroppedFilePaths(
