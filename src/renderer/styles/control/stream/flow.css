@@ -156,6 +156,13 @@
   background: color-mix(in srgb, var(--stream-thread-bright, var(--accent-teal)) 16%, var(--surface));
 }
 
+.stream-flow-card.media-drop-over {
+  border-color: color-mix(in srgb, var(--accent-teal) 78%, var(--border-subtle));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent-teal) 30%, transparent),
+    0 0 16px color-mix(in srgb, var(--accent-teal) 22%, transparent);
+}
+
 .stream-flow-card.status-complete {
   opacity: 0.78;
 }

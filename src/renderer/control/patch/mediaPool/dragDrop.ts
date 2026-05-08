@@ -1,10 +1,15 @@
 import type { AudioSourceId, VisualId } from '../../../../shared/types';
 
 export const XTREAM_MEDIA_POOL_ITEM_MIME = 'application/x-xtream-media-pool-item';
+export const XTREAM_MEDIA_POOL_VISUAL_MIME = 'application/x-xtream-media-pool-visual';
+export const XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME = 'application/x-xtream-media-pool-audio-source';
+const XTREAM_MEDIA_POOL_TEXT_PREFIX = 'xtream-media-pool-item:';
 
 export type MediaPoolDragPayload =
   | { type: 'visual'; id: VisualId }
   | { type: 'audio-source'; id: AudioSourceId };
+
+export type MediaPoolDragPayloadType = MediaPoolDragPayload['type'];
 
 export function isFileDragEvent(event: DragEvent): boolean {
   return Boolean(event.dataTransfer?.types?.includes('Files'));
@@ -14,16 +19,52 @@ export function writeMediaPoolDragPayload(dataTransfer: DataTransfer | null, pay
   if (!dataTransfer) {
     return;
   }
-  dataTransfer.setData(XTREAM_MEDIA_POOL_ITEM_MIME, JSON.stringify(payload));
-  dataTransfer.setData('text/plain', `${payload.type}:${payload.id}`);
+  const serialized = JSON.stringify(payload);
+  dataTransfer.setData(XTREAM_MEDIA_POOL_ITEM_MIME, serialized);
+  dataTransfer.setData(payload.type === 'visual' ? XTREAM_MEDIA_POOL_VISUAL_MIME : XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME, payload.id);
+  dataTransfer.setData('text/plain', `${XTREAM_MEDIA_POOL_TEXT_PREFIX}${serialized}`);
 }
 
 export function readMediaPoolDragPayload(dataTransfer: DataTransfer | null): MediaPoolDragPayload | undefined {
-  if (!dataTransfer || !dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME)) {
+  if (!dataTransfer) {
     return undefined;
   }
+  if (dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME)) {
+    const payload = readSerializedMediaPoolDragPayload(dataTransfer.getData(XTREAM_MEDIA_POOL_ITEM_MIME));
+    if (payload) {
+      return payload;
+    }
+  }
+  return readTextMediaPoolDragPayload(dataTransfer.getData('text/plain'));
+}
+
+export function getMediaPoolDragPayloadType(dataTransfer: DataTransfer | null): MediaPoolDragPayloadType | undefined {
+  if (!dataTransfer) {
+    return undefined;
+  }
+  if (dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_VISUAL_MIME)) {
+    return 'visual';
+  }
+  if (dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME)) {
+    return 'audio-source';
+  }
+  return readMediaPoolDragPayload(dataTransfer)?.type;
+}
+
+export function isMediaPoolDragEvent(event: DragEvent): boolean {
+  if (!event.dataTransfer) {
+    return false;
+  }
+  return (
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME) ||
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_VISUAL_MIME) ||
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME) ||
+    dataTransferHasType(event.dataTransfer, 'text/plain')
+  );
+}
+
+function readSerializedMediaPoolDragPayload(value: string): MediaPoolDragPayload | undefined {
   try {
-    const value = dataTransfer.getData(XTREAM_MEDIA_POOL_ITEM_MIME);
     if (!value) {
       return undefined;
     }
@@ -34,8 +75,19 @@ export function readMediaPoolDragPayload(dataTransfer: DataTransfer | null): Med
   }
 }
 
-export function isMediaPoolDragEvent(event: DragEvent): boolean {
-  return Boolean(event.dataTransfer && dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME));
+function readTextMediaPoolDragPayload(value: string): MediaPoolDragPayload | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value.startsWith(XTREAM_MEDIA_POOL_TEXT_PREFIX)) {
+    return readSerializedMediaPoolDragPayload(value.slice(XTREAM_MEDIA_POOL_TEXT_PREFIX.length));
+  }
+  const legacy = value.match(/^(visual|audio-source):(.+)$/);
+  if (!legacy) {
+    return undefined;
+  }
+  const [, type, id] = legacy;
+  return isMediaPoolDragPayload({ type, id }) ? ({ type, id } as MediaPoolDragPayload) : undefined;
 }
 
 function isMediaPoolDragPayload(payload: unknown): payload is MediaPoolDragPayload {
@@ -47,7 +99,19 @@ function isMediaPoolDragPayload(payload: unknown): payload is MediaPoolDragPaylo
 }
 
 function dataTransferHasType(dataTransfer: DataTransfer, type: string): boolean {
-  return Array.from(dataTransfer.types ?? []).includes(type);
+  const types = dataTransfer.types;
+  if (!types) {
+    return false;
+  }
+  const expected = type.toLowerCase();
+  if (typeof types.includes === 'function' && types.includes(type)) {
+    return true;
+  }
+  const maybeContains = types as unknown as DOMStringList & { contains?: (value: string) => boolean };
+  if (typeof maybeContains.contains === 'function' && (maybeContains.contains(type) || maybeContains.contains(expected))) {
+    return true;
+  }
+  return Array.from(types).some((actual) => actual.toLowerCase() === expected);
 }
 
 export function getDroppedFilePaths(

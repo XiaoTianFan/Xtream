@@ -1,5 +1,6 @@
 import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneId } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
+import { readMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
 import type { BottomTab } from './streamTypes';
@@ -123,6 +124,7 @@ export type StreamListModeContext = {
   setListDragSceneId: (id: SceneId | undefined) => void;
   toggleExpandedScene: (id: SceneId) => void;
   applySceneReorder: (draggedId: SceneId, insertBeforeId: SceneId | undefined) => void | Promise<void>;
+  addMediaPoolItemToScene: (sceneId: SceneId, payload: MediaPoolDragPayload) => void | Promise<void>;
   requestRender: () => void;
   /** Updates header, bottom pane, and list/flow selection chrome without rebuilding the scene list. */
   refreshSceneSelectionUi: () => void;
@@ -375,10 +377,35 @@ function createSceneRowWrap(
   });
 
   wrap.addEventListener('dragover', (event) => {
+    const mediaPayload = readMediaPoolDragPayload(event.dataTransfer);
+    if (mediaPayload) {
+      event.preventDefault();
+      event.dataTransfer!.dropEffect = 'copy';
+      wrap.classList.add('media-drop-over');
+      dragUi.hideDropIndicator();
+      return;
+    }
     dragUi.syncIndicatorForRowDrag(event, row, scene.id);
   });
+  wrap.addEventListener('dragleave', (event) => {
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !wrap.contains(nextTarget)) {
+      wrap.classList.remove('media-drop-over');
+    }
+  });
   wrap.addEventListener('drop', (event) => {
+    const mediaPayload = readMediaPoolDragPayload(event.dataTransfer);
+    if (mediaPayload) {
+      event.preventDefault();
+      wrap.classList.remove('media-drop-over');
+      dragUi.hideDropIndicator();
+      void Promise.resolve(ctx.addMediaPoolItemToScene(scene.id, mediaPayload)).catch((err) => {
+        console.error('addMediaPoolItemToScene failed.', err);
+      });
+      return;
+    }
     event.preventDefault();
+    wrap.classList.remove('media-drop-over');
     const dragged = event.dataTransfer?.getData('text/plain') as SceneId | undefined;
     const intent = dragUi.finalizeDropIntent();
     if (!dragged || !intent) {

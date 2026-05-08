@@ -3,8 +3,31 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PersistedSceneConfig, PersistedStreamConfig } from '../../../shared/types';
+import { writeMediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import type { FlowSceneNode } from './flowProjection';
 import { createFlowSceneCard } from './flowCards';
+
+function createDataTransferStub(): DataTransfer {
+  const store = new Map<string, string>();
+  return {
+    effectAllowed: 'all',
+    dropEffect: 'none',
+    get types() {
+      return [...store.keys()];
+    },
+    setData: (type: string, value: string) => {
+      store.set(type, value);
+    },
+    getData: (type: string) => store.get(type) ?? '',
+  } as unknown as DataTransfer;
+}
+
+function createDragEvent(type: string, dataTransfer: DataTransfer): DragEvent {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  Object.defineProperty(event, 'relatedTarget', { value: null });
+  return event;
+}
 
 function scene(): PersistedSceneConfig {
   return {
@@ -238,5 +261,42 @@ describe('createFlowSceneCard interactions', () => {
     expect(addFollower).toHaveBeenCalledWith('scene-a', { x: 266, y: 20 });
     expect(beginDrag).not.toHaveBeenCalled();
     expect(parentPointerDown).not.toHaveBeenCalled();
+  });
+
+  it('routes media-pool drops without starting pointer card drag', () => {
+    const dropMedia = vi.fn();
+    const beginDrag = vi.fn();
+    const sceneConfig = scene();
+    const wrapper = createFlowSceneCard({
+      stream: stream(sceneConfig),
+      scene: sceneConfig,
+      node: node(),
+      directorState: undefined,
+      playbackFocusSceneId: undefined,
+      sceneEditSceneId: undefined,
+      handlers: {
+        selectScene: vi.fn(),
+        editScene: vi.fn(),
+        runScene: vi.fn(),
+        addFollower: vi.fn(),
+        showContextMenu: vi.fn(),
+        beginDrag,
+        beginResize: vi.fn(),
+        canAcceptMediaDrop: () => true,
+        dropMedia,
+      },
+    });
+    const card = wrapper.querySelector<HTMLElement>('.stream-flow-card')!;
+    const dataTransfer = createDataTransferStub();
+    writeMediaPoolDragPayload(dataTransfer, { type: 'visual', id: 'visual-a' });
+
+    card.dispatchEvent(createDragEvent('dragover', dataTransfer));
+    expect(card.classList.contains('media-drop-over')).toBe(true);
+
+    card.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(dropMedia).toHaveBeenCalledWith(expect.any(Event), 'scene-a');
+    expect(beginDrag).not.toHaveBeenCalled();
+    expect(card.classList.contains('media-drop-over')).toBe(false);
   });
 });

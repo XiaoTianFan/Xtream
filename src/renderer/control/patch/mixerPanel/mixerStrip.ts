@@ -2,7 +2,7 @@ import type { AudioSourceId, DirectorState, VirtualOutputId, VirtualOutputState 
 import { quantizeBusFaderDb } from '../../meters/busFaderLaw';
 import { createButton, createPanKnob } from '../../shared/dom';
 import type { SelectedEntity } from '../../shared/types';
-import { isMediaPoolDragEvent, readMediaPoolDragPayload } from '../mediaPool/dragDrop';
+import { getMediaPoolDragPayloadType, isMediaPoolDragEvent, readMediaPoolDragPayload } from '../mediaPool/dragDrop';
 import { createAudioFader } from './audioFader';
 import { showMixerOutputContextMenu } from './contextMenu';
 
@@ -117,7 +117,8 @@ function attachMixerStripMediaDropHandlers(strip: HTMLElement, outputId: Virtual
       return;
     }
     event.preventDefault();
-    if (readMediaPoolDragPayload(event.dataTransfer)?.type === 'audio-source') {
+    const payloadType = getMediaPoolDragPayloadType(event.dataTransfer);
+    if (payloadType === undefined || payloadType === 'audio-source') {
       strip.classList.add('media-drop-over');
     }
   });
@@ -126,11 +127,11 @@ function attachMixerStripMediaDropHandlers(strip: HTMLElement, outputId: Virtual
       return;
     }
     event.preventDefault();
-    const payload = readMediaPoolDragPayload(event.dataTransfer);
+    const payloadType = getMediaPoolDragPayloadType(event.dataTransfer);
     if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = payload?.type === 'audio-source' ? 'copy' : 'none';
+      event.dataTransfer.dropEffect = payloadType === undefined || payloadType === 'audio-source' ? 'copy' : 'none';
     }
-    strip.classList.toggle('media-drop-over', payload?.type === 'audio-source');
+    strip.classList.toggle('media-drop-over', payloadType === undefined || payloadType === 'audio-source');
   });
   strip.addEventListener('dragleave', (event) => {
     if (!strip.contains(event.relatedTarget as Node | null)) {

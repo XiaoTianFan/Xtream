@@ -1,4 +1,5 @@
 import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicState } from '../../../shared/types';
+import { readMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { createButton } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -22,6 +23,7 @@ export type StreamFlowModeContext = {
   clearDetailPane: () => void;
   requestRender: () => void;
   refreshSceneSelectionUi: () => void;
+  addMediaPoolItemToScene: (sceneId: SceneId, payload: MediaPoolDragPayload) => void | Promise<void>;
 };
 
 let activeFlowContextMenu: HTMLElement | undefined;
@@ -540,6 +542,16 @@ function renderCards(args: {
           showContextMenu: (event, id) => showSceneContextMenu(event, stream, id, ctx),
           beginDrag,
           beginResize,
+          canAcceptMediaDrop: (event) => Boolean(readMediaPoolDragPayload(event.dataTransfer)),
+          dropMedia: (event, id) => {
+            const payload = readMediaPoolDragPayload(event.dataTransfer);
+            if (!payload) {
+              return;
+            }
+            void Promise.resolve(ctx.addMediaPoolItemToScene(id, payload)).catch((err) => {
+              console.error('addMediaPoolItemToScene failed.', err);
+            });
+          },
         },
       }),
     );

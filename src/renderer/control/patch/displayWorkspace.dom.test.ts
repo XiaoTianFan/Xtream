@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorState, DisplayWindowState, VisualLayoutProfile } from '../../../shared/types';
-import { writeMediaPoolDragPayload } from './mediaPool/dragDrop';
+import { writeMediaPoolDragPayload, XTREAM_MEDIA_POOL_VISUAL_MIME } from './mediaPool/dragDrop';
 
 vi.mock('../shell/shellModalPresenter', () => ({
   shellShowConfirm: vi.fn(),
@@ -244,5 +244,21 @@ describe('display workspace media drops', () => {
 
     expect(update).toHaveBeenCalledWith('d1', { layout: { type: 'split', visualIds: ['visual-1', 'visual-2'] } });
     Reflect.deleteProperty(document, 'elementsFromPoint');
+  });
+
+  it('allows visual marker drags during protected dragover reads', () => {
+    const rawState = stateWithDisplay({ type: 'single' });
+    installXtream(rawState);
+    const { displayList } = renderWorkspace(rawState);
+    const card = displayList.querySelector<HTMLElement>('[data-display-card="d1"]')!;
+    const dataTransfer = createDataTransferStub();
+    dataTransfer.setData(XTREAM_MEDIA_POOL_VISUAL_MIME, 'visual-1');
+
+    const event = createDragEvent('dragover', dataTransfer);
+    card.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe('copy');
+    expect(displayList.querySelector<HTMLElement>('[data-display-zone="single"]')?.classList.contains('media-drop-over')).toBe(true);
   });
 });

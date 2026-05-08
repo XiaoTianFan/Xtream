@@ -77,6 +77,7 @@ describe('Stream thread color UI', () => {
       setListDragSceneId: vi.fn(),
       toggleExpandedScene: vi.fn(),
       applySceneReorder: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
     });

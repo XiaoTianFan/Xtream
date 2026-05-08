@@ -10,7 +10,7 @@ import { createButton, createSelect, setSelectEnabled } from '../shared/dom';
 import { formatMilliseconds } from '../shared/formatters';
 import type { SelectedEntity } from '../shared/types';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
-import { isMediaPoolDragEvent, readMediaPoolDragPayload } from './mediaPool/dragDrop';
+import { getMediaPoolDragPayloadType, isMediaPoolDragEvent, readMediaPoolDragPayload } from './mediaPool/dragDrop';
 
 export type DisplayWorkspaceController = {
   createRenderSignature: (state: DirectorState) => string;
@@ -102,9 +102,9 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
         return;
       }
       event.preventDefault();
-      const payload = readMediaPoolDragPayload(event.dataTransfer);
+      const payloadType = getMediaPoolDragPayloadType(event.dataTransfer);
       if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = payload?.type === 'visual' ? 'copy' : 'none';
+        event.dataTransfer.dropEffect = payloadType === undefined || payloadType === 'visual' ? 'copy' : 'none';
       }
       syncDisplayDropOver(card, display, event);
     });
@@ -133,8 +133,8 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
 
   function syncDisplayDropOver(card: HTMLElement, display: DisplayWindowState, event: DragEvent): void {
     clearDisplayDropOver(card);
-    const payload = readMediaPoolDragPayload(event.dataTransfer);
-    if (payload?.type !== 'visual') {
+    const payloadType = getMediaPoolDragPayloadType(event.dataTransfer);
+    if (payloadType !== undefined && payloadType !== 'visual') {
       return;
     }
     const pane = resolveDisplayDropPane(card, display, event);

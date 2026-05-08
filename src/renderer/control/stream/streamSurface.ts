@@ -21,6 +21,7 @@ import { installInteractionLock, isPanelInteractionActive } from '../app/interac
 import { elements } from '../shell/elements';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import { renderStreamBottomPane, syncStreamSceneEditPaneContent, type StreamBottomPaneContext } from './bottomPane';
+import type { MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { shouldDeferStreamMixerBottomPaneRedraw } from './streamMixerBottomRedrawDefer';
 import {
   applyStreamLayoutPrefs,
@@ -54,6 +55,7 @@ import {
   syncWorkspaceSceneSelection,
 } from './streamSurface/runtimeChrome';
 import { sendLoggedStreamTransport } from '../shared/sessionTransportLog';
+import { addMediaSubCueFromPool } from './sceneEdit/addMediaSubCueFromPool';
 
 export type { StreamSurfaceController } from './streamTypes';
 
@@ -536,6 +538,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
         }
       },
       applySceneReorder,
+      addMediaPoolItemToScene,
       requestRender: renderCurrent,
       refreshSceneSelectionUi,
       mode,
@@ -584,6 +587,69 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       order.splice(to, 0, draggedId);
     }
     void window.xtream.stream.edit({ type: 'reorder-scenes', sceneOrder: order });
+  }
+
+  async function addMediaPoolItemToScene(sceneId: SceneId, payload: MediaPoolDragPayload): Promise<void> {
+    const directorState = currentState;
+    const publicState = streamState;
+    if (!directorState || !publicState) {
+      options.setShowStatus('Stream is not ready for media drops.');
+      return;
+    }
+
+    const scene = publicState.stream.scenes[sceneId];
+    if (!scene) {
+      options.setShowStatus('Drop media onto a stream scene.');
+      return;
+    }
+
+    const runtimeStatus = publicState.runtime?.sceneStates[sceneId]?.status;
+    if (runtimeStatus === 'running' || runtimeStatus === 'preloading') {
+      options.setShowStatus(`${sceneLabel(scene)} is running. Stop it before editing sub-cues.`);
+      return;
+    }
+
+    const mediaLabel = mediaPoolPayloadLabel(directorState, payload);
+    if (!mediaLabel) {
+      options.setShowStatus(payload.type === 'audio-source' ? 'Drop an audio source from the media pool.' : 'Drop a visual source from the media pool.');
+      return;
+    }
+
+    try {
+      const result = await addMediaSubCueFromPool({
+        stream: publicState.stream,
+        sceneId,
+        directorState,
+        payload,
+      });
+      streamState = result.streamState;
+      sceneEditSceneId = sceneId;
+      bottomTab = 'scene';
+      detailPane = undefined;
+      sceneEditSelection = { kind: 'subcue', sceneId, subCueId: result.subCueId };
+      expandedListSceneIds.add(sceneId);
+      bottomRenderSignature = '';
+      lastWorkspacePaneSignature = '';
+      const kind = payload.type === 'audio-source' ? 'audio' : 'visual';
+      options.setShowStatus(`Added ${kind} sub-cue from ${mediaLabel} to ${sceneLabel(scene)}.`);
+      renderCurrent();
+    } catch (error) {
+      console.error('addMediaPoolItemToScene failed.', error);
+      options.setShowStatus('Could not add media to that scene.');
+    }
+  }
+
+  function sceneLabel(scene: PersistedSceneConfig): string {
+    return scene.title?.trim() || scene.id;
+  }
+
+  function mediaPoolPayloadLabel(state: DirectorState, payload: MediaPoolDragPayload): string | undefined {
+    if (payload.type === 'audio-source') {
+      const source = state.audioSources[payload.id];
+      return source?.label?.trim() || source?.id;
+    }
+    const visual = state.visuals[payload.id];
+    return visual?.label?.trim() || visual?.id;
   }
 
   function createBottomPaneContext(): StreamBottomPaneContext {

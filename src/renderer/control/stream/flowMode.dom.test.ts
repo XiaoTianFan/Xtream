@@ -4,11 +4,34 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildStreamSchedule } from '../../../shared/streamSchedule';
 import type { CalculatedStreamTimeline, DirectorState, PersistedStreamConfig, StreamEnginePublicState } from '../../../shared/types';
+import { writeMediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { createStreamFlowMode, syncStreamFlowModeRuntimeChrome } from './flowMode';
 
 vi.mock('../shell/shellModalPresenter', () => ({
   shellShowConfirm: vi.fn(() => Promise.resolve(true)),
 }));
+
+function createDataTransferStub(): DataTransfer {
+  const store = new Map<string, string>();
+  return {
+    effectAllowed: 'all',
+    dropEffect: 'none',
+    get types() {
+      return [...store.keys()];
+    },
+    setData: (type: string, value: string) => {
+      store.set(type, value);
+    },
+    getData: (type: string) => store.get(type) ?? '',
+  } as unknown as DataTransfer;
+}
+
+function createDragEvent(type: string, dataTransfer: DataTransfer): DragEvent {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  Object.defineProperty(event, 'relatedTarget', { value: null });
+  return event;
+}
 
 function director(): DirectorState {
   return {
@@ -269,6 +292,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -277,6 +301,41 @@ describe('createStreamFlowMode', () => {
     expect(root.querySelectorAll('.stream-flow-card')).toHaveLength(1);
     expect(root.querySelector('.stream-flow-card.status-running')).not.toBeNull();
     expect(root.querySelector('.stream-flow-main-curve-glow.is-running')).not.toBeNull();
+  });
+
+  it('routes media-pool drops from Flow cards to the Stream context callback', async () => {
+    const streamState = runningStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+    const addMediaPoolItemToScene = vi.fn();
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene,
+    });
+    document.body.append(root);
+    await Promise.resolve();
+    const card = root.querySelector<HTMLElement>('.stream-flow-card')!;
+    const dataTransfer = createDataTransferStub();
+    writeMediaPoolDragPayload(dataTransfer, { type: 'visual', id: 'visual-a' });
+
+    card.dispatchEvent(createDragEvent('dragover', dataTransfer));
+    card.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(dataTransfer.dropEffect).toBe('copy');
+    expect(addMediaPoolItemToScene).toHaveBeenCalledWith('scene-a', { type: 'visual', id: 'visual-a' });
   });
 
   it('keeps the main curve cursor fixed when runtime only has a parallel timeline', async () => {
@@ -299,6 +358,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -360,6 +420,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -390,6 +451,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -423,6 +485,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -472,6 +535,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -513,6 +577,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();
@@ -550,6 +615,7 @@ describe('createStreamFlowMode', () => {
       clearDetailPane: vi.fn(),
       requestRender: vi.fn(),
       refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
     });
     document.body.append(root);
     await Promise.resolve();

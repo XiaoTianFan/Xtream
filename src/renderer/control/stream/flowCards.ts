@@ -11,6 +11,8 @@ export type FlowCardHandlers = {
   showContextMenu: (event: MouseEvent, sceneId: SceneId) => void;
   beginDrag: (event: PointerEvent, sceneId: SceneId) => void;
   beginResize: (event: PointerEvent, sceneId: SceneId) => void;
+  canAcceptMediaDrop?: (event: DragEvent, sceneId: SceneId) => boolean;
+  dropMedia?: (event: DragEvent, sceneId: SceneId) => void;
 };
 
 function createPreviewGrid(node: FlowSceneNode, directorState: DirectorState | undefined): HTMLElement {
@@ -155,6 +157,36 @@ export function createFlowSceneCard(args: {
     handlers.editScene(node.sceneId);
   });
   card.addEventListener('contextmenu', (event) => handlers.showContextMenu(event, node.sceneId));
+  card.addEventListener('dragenter', (event) => {
+    if (!handlers.canAcceptMediaDrop?.(event, node.sceneId)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = 'copy';
+    card.classList.add('media-drop-over');
+  });
+  card.addEventListener('dragover', (event) => {
+    if (!handlers.canAcceptMediaDrop?.(event, node.sceneId)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = 'copy';
+    card.classList.add('media-drop-over');
+  });
+  card.addEventListener('dragleave', (event) => {
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !card.contains(nextTarget)) {
+      card.classList.remove('media-drop-over');
+    }
+  });
+  card.addEventListener('drop', (event) => {
+    if (!handlers.canAcceptMediaDrop?.(event, node.sceneId)) {
+      return;
+    }
+    event.preventDefault();
+    card.classList.remove('media-drop-over');
+    handlers.dropMedia?.(event, node.sceneId);
+  });
   card.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
     if (event.button !== 0 || (event.target as HTMLElement).closest('button, .stream-flow-resize-handle')) {

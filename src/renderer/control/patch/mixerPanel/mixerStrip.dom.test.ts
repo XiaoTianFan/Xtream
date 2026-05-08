@@ -3,7 +3,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { VirtualOutputState } from '../../../../shared/types';
-import { writeMediaPoolDragPayload, XTREAM_MEDIA_POOL_ITEM_MIME } from '../mediaPool/dragDrop';
+import { writeMediaPoolDragPayload, XTREAM_MEDIA_POOL_ITEM_MIME, XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME } from '../mediaPool/dragDrop';
 import { createMixerStrip, createOutputDetailMixerStrip, type MixerStripDeps } from './mixerStrip';
 
 vi.mock('./contextMenu', () => ({
@@ -71,6 +71,19 @@ describe('mixer strip media drops', () => {
 
     expect(dataTransfer.types).toContain(XTREAM_MEDIA_POOL_ITEM_MIME);
     expect(assign).toHaveBeenCalledWith('out-1', 'audio-1');
+  });
+
+  it('allows audio marker drags during protected dragover reads', () => {
+    const strip = createMixerStrip(output(), deps());
+    const dataTransfer = createDataTransferStub();
+    dataTransfer.setData(XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME, 'audio-1');
+
+    const event = createDragEvent('dragover', dataTransfer);
+    strip.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe('copy');
+    expect(strip.classList.contains('media-drop-over')).toBe(true);
   });
 
   it('assigns audio-source payloads dropped on detail strips', () => {

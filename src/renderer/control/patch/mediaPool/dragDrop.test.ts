@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileUriToPath,
+  getMediaPoolDragPayloadType,
   getDroppedFilePaths,
+  isMediaPoolDragEvent,
   parseDroppedFileUriList,
   readMediaPoolDragPayload,
   writeMediaPoolDragPayload,
+  XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME,
   XTREAM_MEDIA_POOL_ITEM_MIME,
+  XTREAM_MEDIA_POOL_VISUAL_MIME,
 } from './dragDrop';
 
 function createDataTransferStub(initial: Record<string, string> = {}): DataTransfer {
@@ -27,6 +31,12 @@ function createDataTransferStub(initial: Record<string, string> = {}): DataTrans
   } as unknown as DataTransfer;
 }
 
+function createDragEvent(dataTransfer: DataTransfer): DragEvent {
+  const event = new Event('dragover', { bubbles: true, cancelable: true }) as DragEvent;
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  return event;
+}
+
 describe('mediaPool dragDrop', () => {
   it('round-trips visual media-pool payloads', () => {
     const dataTransfer = createDataTransferStub();
@@ -34,6 +44,7 @@ describe('mediaPool dragDrop', () => {
     writeMediaPoolDragPayload(dataTransfer, { type: 'visual', id: 'visual-1' });
 
     expect(dataTransfer.types).toContain(XTREAM_MEDIA_POOL_ITEM_MIME);
+    expect(dataTransfer.types).toContain(XTREAM_MEDIA_POOL_VISUAL_MIME);
     expect(readMediaPoolDragPayload(dataTransfer)).toEqual({ type: 'visual', id: 'visual-1' });
   });
 
@@ -42,7 +53,27 @@ describe('mediaPool dragDrop', () => {
 
     writeMediaPoolDragPayload(dataTransfer, { type: 'audio-source', id: 'audio-1' });
 
+    expect(dataTransfer.types).toContain(XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME);
     expect(readMediaPoolDragPayload(dataTransfer)).toEqual({ type: 'audio-source', id: 'audio-1' });
+  });
+
+  it('detects media-pool drag kinds from marker MIME types without reading payload data', () => {
+    const visualTransfer = createDataTransferStub({ [XTREAM_MEDIA_POOL_VISUAL_MIME]: '' });
+    const audioTransfer = createDataTransferStub({ [XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME]: '' });
+
+    expect(getMediaPoolDragPayloadType(visualTransfer)).toBe('visual');
+    expect(getMediaPoolDragPayloadType(audioTransfer)).toBe('audio-source');
+    expect(readMediaPoolDragPayload(visualTransfer)).toBeUndefined();
+    expect(isMediaPoolDragEvent(createDragEvent(visualTransfer))).toBe(true);
+  });
+
+  it('reads prefixed text/plain fallbacks for environments that strip custom drag types', () => {
+    const dataTransfer = createDataTransferStub();
+    writeMediaPoolDragPayload(dataTransfer, { type: 'visual', id: 'visual-1' });
+    const textOnly = createDataTransferStub({ 'text/plain': dataTransfer.getData('text/plain') });
+
+    expect(isMediaPoolDragEvent(createDragEvent(textOnly))).toBe(true);
+    expect(readMediaPoolDragPayload(textOnly)).toEqual({ type: 'visual', id: 'visual-1' });
   });
 
   it('ignores malformed media-pool payload JSON', () => {
