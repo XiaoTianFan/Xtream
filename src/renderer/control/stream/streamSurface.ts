@@ -231,7 +231,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       expandedListSceneIds,
       directorState: mediaState,
       validationMessages: streamState.validationMessages,
-      playbackTimelineStatus: streamState.playbackTimeline.status,
+      timeline: streamState.editTimeline,
     });
     if (lastWorkspacePaneSignature !== nextWorkspaceSig) {
       renderWorkspacePane();

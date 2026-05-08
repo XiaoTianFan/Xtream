@@ -553,6 +553,57 @@ describe('StreamEngine', () => {
     expect(updated.editTimeline.entries['scene-1']?.durationMs).toBe(15_000);
   });
 
+  it('preserves authored pass and inner-loop edits that also clear the legacy loop key', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+
+    const finite = engine.applyEdit({
+      type: 'update-subcue',
+      sceneId: 'scene-1',
+      subCueId: 'vis',
+      update: {
+        pass: { iterations: { type: 'count', count: 2 } },
+        innerLoop: { enabled: true, range: { startMs: 1000, endMs: 3000 }, iterations: { type: 'count', count: 1 } },
+        loop: undefined,
+      },
+    });
+
+    expect(finite.stream.scenes['scene-1'].subCues.vis).toMatchObject({
+      pass: { iterations: { type: 'count', count: 2 } },
+      innerLoop: { enabled: true, range: { startMs: 1000, endMs: 3000 }, iterations: { type: 'count', count: 1 } },
+    });
+    expect(finite.editTimeline.entries['scene-1']?.durationMs).toBe(14_000);
+    expect(finite.playbackTimeline.entries['scene-1']?.durationMs).toBe(14_000);
+    expect('loop' in finite.stream.scenes['scene-1'].subCues.vis).toBe(false);
+
+    const infinite = engine.applyEdit({
+      type: 'update-subcue',
+      sceneId: 'scene-1',
+      subCueId: 'vis',
+      update: {
+        pass: { iterations: { type: 'infinite' } },
+        innerLoop: { enabled: false, range: { startMs: 1000, endMs: 3000 } },
+        loop: undefined,
+      },
+    });
+
+    expect(infinite.stream.scenes['scene-1'].subCues.vis).toMatchObject({
+      pass: { iterations: { type: 'infinite' } },
+      innerLoop: { enabled: false, range: { startMs: 1000, endMs: 3000 } },
+    });
+    expect(infinite.editTimeline.entries['scene-1']?.durationMs).toBeUndefined();
+    expect(infinite.playbackTimeline.entries['scene-1']?.durationMs).toBeUndefined();
+    expect(infinite.playbackTimeline.threadPlan?.threads.find((thread) => thread.rootSceneId === 'scene-1')?.detachedReason).toBe('infinite-loop');
+  });
+
   it('promotes a valid edit timeline and recomputes runtime from the existing cursor', () => {
     const director = createDirector({
       visuals: { v1: { id: 'v1', durationSeconds: 5 }, v2: { id: 'v2', durationSeconds: 8 } } as DirectorState['visuals'],

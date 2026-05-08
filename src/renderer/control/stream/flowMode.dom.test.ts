@@ -104,6 +104,28 @@ function timeline(): CalculatedStreamTimeline {
   };
 }
 
+function infiniteAuthoringTimeline(): CalculatedStreamTimeline {
+  const base = timeline();
+  return {
+    ...base,
+    entries: {
+      'scene-a': { sceneId: 'scene-a', startMs: undefined, durationMs: undefined, endMs: undefined, triggerKnown: false },
+    },
+    expectedDurationMs: 0,
+    mainSegments: [],
+    threadPlan: {
+      ...base.threadPlan!,
+      threads: base.threadPlan!.threads.map((thread) => ({
+        ...thread,
+        detachedReason: 'infinite-loop' as const,
+        durationMs: undefined,
+        branches: thread.branches.map((branch) => ({ ...branch, durationMs: undefined })),
+        sceneTimings: { 'scene-a': { sceneId: 'scene-a', threadLocalStartMs: 0, threadLocalEndMs: undefined } },
+      })),
+    },
+  };
+}
+
 function runningStreamPublic(): StreamEnginePublicState {
   const s = stream();
   const t = timeline();
@@ -305,6 +327,51 @@ describe('createStreamFlowMode', () => {
     expect(root.querySelectorAll('.stream-flow-card')).toHaveLength(1);
     expect(root.querySelector('.stream-flow-card.status-running')).not.toBeNull();
     expect(root.querySelector('.stream-flow-main-curve-glow.is-running')).not.toBeNull();
+  });
+
+  it('renders authoring edit-timeline duration labels while playback timeline still has the previous finite duration', async () => {
+    const base = runningStreamPublic();
+    const s: PersistedStreamConfig = {
+      ...base.stream,
+      scenes: {
+        ...base.stream.scenes,
+        'scene-a': {
+          ...base.stream.scenes['scene-a']!,
+          subCueOrder: ['vis'],
+          subCues: {
+            vis: { id: 'vis', kind: 'visual', visualId: 'vid', targets: [{ displayId: 'd1' }] },
+          },
+        },
+      },
+    };
+    const streamState = {
+      ...base,
+      stream: s,
+      editTimeline: infiniteAuthoringTimeline(),
+      playbackTimeline: timeline(),
+    };
+
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: {
+        ...director(),
+        visuals: { vid: { id: 'vid', kind: 'file', type: 'video', durationSeconds: 1, ready: true } },
+      } as never,
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene: vi.fn(),
+    });
+    document.body.append(root);
+    await Promise.resolve();
+
+    expect(root.textContent).toContain('-- / live');
+    expect(root.textContent).not.toContain('00:01.000');
   });
 
   it('routes media-pool drops from Flow cards to the Stream context callback', async () => {

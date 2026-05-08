@@ -426,7 +426,7 @@ function createSceneRowWrap(
   const cueCell = createStreamCell(String(number).padStart(2, '0'), 'stream-list-col-num');
   const titleCell = createStreamCell(scene.title ?? `Scene ${number}`, 'stream-list-col-title');
   const triggerCell = createStreamCell(formatTriggerSummary(stream, scene), 'stream-list-col-trigger');
-  const durationCell = createStreamCell(formatSceneDuration(ctx.currentState, scene), 'stream-list-col-duration');
+  const durationCell = createStreamCell(formatSceneDuration(ctx.currentState, scene, ctx.streamState?.editTimeline), 'stream-list-col-duration');
   const stateCell = createStreamCell(formatSceneStateLabelForSceneList(runtimeState, scene, sceneAuthoringError), 'stream-list-col-state');
 
   const actions = document.createElement('div');

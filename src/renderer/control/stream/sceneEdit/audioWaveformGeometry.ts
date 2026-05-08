@@ -182,10 +182,12 @@ export function cursorForAudioWaveformHit(hit: AudioWaveformHitTarget): string {
       return 'nwse-resize';
     case 'fade-out':
       return 'nesw-resize';
+    case 'loop-start':
+      return 'nesw-resize';
+    case 'loop-end':
+      return 'nwse-resize';
     case 'range-start':
     case 'range-end':
-    case 'loop-start':
-    case 'loop-end':
       return 'ew-resize';
     case 'automation-point':
       return 'move';

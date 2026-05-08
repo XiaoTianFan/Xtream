@@ -63,6 +63,7 @@ export function createStructuralStreamRenderModel(state: StreamEnginePublicState
   return {
     stream: createStreamContentRenderModel(state.stream),
     playbackStream: createStreamContentRenderModel(state.playbackStream),
+    editTimeline: createStableTimelineRenderModel(state.editTimeline),
     playbackTimeline: createStableTimelineRenderModel(state.playbackTimeline),
     validationMessages: state.validationMessages,
   };
@@ -138,6 +139,8 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
                 startOffsetMs: _startOffsetMs,
                 durationOverrideMs: _durationOverrideMs,
                 loop: _loop,
+                pass: _pass,
+                innerLoop: _innerLoop,
                 playbackRate: _playbackRate,
                 pitchShiftSemitones: _pitchShiftSemitones,
               },
@@ -150,6 +153,23 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
 function createStableTimelineRenderModel(timeline: StreamEnginePublicState['playbackTimeline']): unknown {
   return {
     status: timeline.status,
+    expectedDurationMs: timeline.expectedDurationMs,
+    entries: Object.entries(timeline.entries)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([sceneId, entry]) => ({
+        sceneId,
+        durationMs: entry.durationMs,
+        startMs: entry.startMs,
+        endMs: entry.endMs,
+        triggerKnown: entry.triggerKnown,
+      })),
+    mainSegments: timeline.mainSegments?.map((segment) => ({
+      threadId: segment.threadId,
+      rootSceneId: segment.rootSceneId,
+      startMs: segment.startMs,
+      durationMs: segment.durationMs,
+      endMs: segment.endMs,
+    })),
     threadPlan: timeline.threadPlan,
     issues: timeline.issues,
     notice: timeline.notice,

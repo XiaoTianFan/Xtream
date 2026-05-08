@@ -157,6 +157,27 @@ describe('audioSubCueWaveformEditor', () => {
     ]);
   });
 
+  it('uses native number stepping for Pass time', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ loop: { enabled: false } }),
+      currentState: directorState({ noUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    const pass = editor.querySelector<HTMLInputElement>('[aria-label="Pass time"]')!;
+    expect(pass.type).toBe('number');
+    pass.stepUp();
+    pass.dispatchEvent(new Event('change'));
+    pass.stepDown();
+    pass.dispatchEvent(new Event('change'));
+
+    expect(patches).toEqual([
+      { pass: { iterations: { type: 'count', count: 2 } }, innerLoop: undefined, loop: undefined },
+      { pass: { iterations: { type: 'count', count: 1 } }, innerLoop: undefined, loop: undefined },
+    ]);
+  });
+
   it('disables loop infinity while pass infinity is active', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({

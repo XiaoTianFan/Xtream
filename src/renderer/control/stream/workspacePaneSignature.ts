@@ -1,5 +1,6 @@
 import type {
   AudioSourceId,
+  CalculatedStreamTimeline,
   DirectorState,
   PersistedSceneConfig,
   PersistedStreamConfig,
@@ -44,6 +45,7 @@ function mediaDigestForWorkspace(director: DirectorState, stream: PersistedStrea
             id: v.id,
             label: v.label,
             durationSeconds: v.durationSeconds,
+            playbackRate: v.playbackRate,
             type: v.type,
             kind: v.kind,
             ready: v.ready,
@@ -57,6 +59,7 @@ function mediaDigestForWorkspace(director: DirectorState, stream: PersistedStrea
             id: a.id,
             label: a.label,
             durationSeconds: a.durationSeconds,
+            playbackRate: a.playbackRate,
             type: a.type,
             ready: a.ready,
           }
@@ -78,6 +81,40 @@ function streamDigestForWorkspace(stream: PersistedStreamConfig): PersistedStrea
   };
 }
 
+function timelineDigestForWorkspace(timeline: CalculatedStreamTimeline | undefined): unknown {
+  if (!timeline) {
+    return undefined;
+  }
+  return {
+    status: timeline.status,
+    entries: Object.entries(timeline.entries)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([sceneId, entry]) => ({
+        sceneId,
+        durationMs: entry.durationMs,
+        startMs: entry.startMs,
+        endMs: entry.endMs,
+        triggerKnown: entry.triggerKnown,
+      })),
+    mainSegments: timeline.mainSegments?.map((segment) => ({
+      threadId: segment.threadId,
+      rootSceneId: segment.rootSceneId,
+      startMs: segment.startMs,
+      durationMs: segment.durationMs,
+      endMs: segment.endMs,
+    })),
+    threads: timeline.threadPlan?.threads.map((thread) => ({
+      threadId: thread.threadId,
+      rootSceneId: thread.rootSceneId,
+      rootTriggerType: thread.rootTriggerType,
+      detachedReason: thread.detachedReason,
+      durationMs: thread.durationMs,
+      sceneIds: thread.sceneIds,
+    })),
+    temporarilyDisabledSceneIds: timeline.threadPlan?.temporarilyDisabledSceneIds,
+  };
+}
+
 export type StreamWorkspacePaneSignatureInput = {
   mode: StreamMode;
   stream: PersistedStreamConfig;
@@ -85,6 +122,7 @@ export type StreamWorkspacePaneSignatureInput = {
   directorState: DirectorState;
   validationMessages?: unknown;
   playbackTimelineStatus?: string;
+  timeline?: CalculatedStreamTimeline;
 };
 
 /** Stable when playback/runtime or unrelated director assets change; changes when stream structure, list expansion, stream-referenced media labels/durations, or validation messages change. */
@@ -95,7 +133,7 @@ export function createStreamWorkspacePaneSignature(input: StreamWorkspacePaneSig
     stream: streamDigestForWorkspace(input.stream),
     expandedListSceneIds: expanded,
     media: mediaDigestForWorkspace(input.directorState, input.stream),
+    timeline: timelineDigestForWorkspace(input.timeline) ?? input.playbackTimelineStatus,
     validationMessages: input.validationMessages,
-    playbackTimelineStatus: input.playbackTimelineStatus,
   });
 }

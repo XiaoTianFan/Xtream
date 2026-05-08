@@ -3,6 +3,33 @@ import type { DirectorState, PersistedStreamConfig, StreamEnginePublicState } fr
 import { createSceneEditRenderModel, createStructuralStreamRenderModel } from './signatures';
 
 describe('stream surface signatures', () => {
+  it('includes pass and inner-loop timing in structural render signatures for duration updates', () => {
+    const base = streamPublic(audioStream());
+    const passInfinite = streamPublic(audioStream({
+      pass: { iterations: { type: 'infinite' } },
+    }));
+    const loopInfinite = streamPublic(audioStream({
+      innerLoop: { enabled: true, range: { startMs: 0, endMs: 5000 }, iterations: { type: 'infinite' } },
+    }));
+
+    expect(JSON.stringify(createStructuralStreamRenderModel(base))).not.toBe(JSON.stringify(createStructuralStreamRenderModel(passInfinite)));
+    expect(JSON.stringify(createStructuralStreamRenderModel(base))).not.toBe(JSON.stringify(createStructuralStreamRenderModel(loopInfinite)));
+  });
+
+  it('includes edit timeline duration changes in structural render signatures', () => {
+    const base = streamPublic(audioStream());
+    const edited = streamPublic(audioStream());
+    edited.editTimeline = {
+      ...edited.editTimeline,
+      expectedDurationMs: 10_000,
+      entries: {
+        'scene-a': { sceneId: 'scene-a', durationMs: 10_000, startMs: 0, endMs: 10_000, triggerKnown: true },
+      },
+    } as never;
+
+    expect(JSON.stringify(createStructuralStreamRenderModel(base))).not.toBe(JSON.stringify(createStructuralStreamRenderModel(edited)));
+  });
+
   it('ignores waveform-only audio sub-cue edits in structural render signatures', () => {
     const base = streamPublic(audioStream());
     const edited = streamPublic(audioStream({

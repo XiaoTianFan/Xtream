@@ -22,7 +22,7 @@ export function createInfinityNumberToggle(
   infinity.setAttribute('aria-label', `${labelText} infinity`);
 
   const input = document.createElement('input');
-  input.type = 'text';
+  input.type = 'number';
   input.inputMode = 'numeric';
   input.className = 'label-input stream-infinity-number-input';
   input.setAttribute('aria-label', labelText);
@@ -38,11 +38,14 @@ export function createInfinityNumberToggle(
     infinity.classList.toggle('active', isInfinite);
     infinity.setAttribute('aria-pressed', String(isInfinite));
     infinity.disabled = disabled || infinityDisabled;
+    input.type = isInfinite ? 'text' : 'number';
     input.disabled = disabled || isInfinite;
     input.value = isInfinite ? '∞' : String(normalizeCount(next.count));
   };
 
-  infinity.addEventListener('click', () => {
+  infinity.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     const pressed = infinity.getAttribute('aria-pressed') === 'true';
     commit(pressed ? { type: 'count', count: normalizeCount(undefined) } : { type: 'infinite' });
   });

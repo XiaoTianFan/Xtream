@@ -273,8 +273,14 @@ export class StreamEngine extends EventEmitter {
         }
         const update = { ...command.update };
         if (sub.kind !== 'control' && 'loop' in update) {
-          const migrated = migrateLegacySubCueLoopPolicy(update.loop);
-          Object.assign(update, migrated);
+          const hasAuthoredPassLoop = 'pass' in update || 'innerLoop' in update;
+          const shouldMigrateLegacyLoop = update.loop !== undefined && !hasAuthoredPassLoop;
+          if (shouldMigrateLegacyLoop) {
+            const migrated = migrateLegacySubCueLoopPolicy(update.loop);
+            Object.assign(update, migrated);
+          }
+          // `loop: undefined` is emitted by the new editor controls only to clear the
+          // legacy field; it must not be interpreted as an authored legacy loop edit.
           delete update.loop;
         }
         Object.assign(sub, update);

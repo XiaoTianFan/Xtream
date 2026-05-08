@@ -2,6 +2,7 @@ import { formatTimecode } from '../../../shared/timeline';
 import { estimateSceneDurationMs, resolveFollowsSceneId } from '../../../shared/streamSchedule';
 import type {
   AudioSourceId,
+  CalculatedStreamTimeline,
   DirectorState,
   PersistedSceneConfig,
   PersistedStreamConfig,
@@ -31,8 +32,17 @@ export function formatTriggerSummary(stream: PersistedStreamConfig, scene: Persi
   return 'Trigger';
 }
 
-export function formatSceneDuration(state: DirectorState | undefined, scene: PersistedSceneConfig): string {
-  if (!state || scene.subCueOrder.length === 0) {
+type SceneDurationTimeline = Pick<CalculatedStreamTimeline, 'entries'> | undefined;
+
+export function formatSceneDuration(state: DirectorState | undefined, scene: PersistedSceneConfig, timeline?: SceneDurationTimeline): string {
+  if (scene.subCueOrder.length === 0) {
+    return '--';
+  }
+  const timelineEntry = timeline?.entries[scene.id];
+  if (timelineEntry) {
+    return timelineEntry.durationMs === undefined ? '-- / live' : formatTimecode(timelineEntry.durationMs / 1000);
+  }
+  if (!state) {
     return '--';
   }
   const durationMs = estimateSceneDurationMs(scene, getVisualDurationMap(state), getAudioDurationMap(state));

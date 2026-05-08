@@ -132,13 +132,15 @@ export function hitTestVisualPreviewLane(
 export function cursorForVisualPreviewLaneHit(hit: VisualPreviewLaneHitTarget): string {
   switch (hit.type) {
     case 'fade-in':
-      return 'ew-resize';
+      return 'nwse-resize';
     case 'fade-out':
-      return 'ew-resize';
+      return 'nesw-resize';
+    case 'loop-start':
+      return 'nesw-resize';
+    case 'loop-end':
+      return 'nwse-resize';
     case 'range-start':
     case 'range-end':
-    case 'loop-start':
-    case 'loop-end':
       return 'ew-resize';
     case 'freeze-marker':
       return 'grab';

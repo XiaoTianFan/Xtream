@@ -56,3 +56,6 @@ test-show/
 
 # Archived Docs
 docs/archived/
+
+# Local coding-agent guidance
+AGENT.md

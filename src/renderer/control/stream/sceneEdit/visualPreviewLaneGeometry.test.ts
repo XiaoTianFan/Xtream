@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampFreezeFrameMs,
   clampVisualFadeDurationMs,
+  cursorForVisualPreviewLaneHit,
   hitTestVisualPreviewLane,
   laneXToMs,
   msToLaneX,
@@ -68,6 +69,10 @@ describe('visualPreviewLaneGeometry', () => {
         132,
       ),
     ).toEqual({ type: 'loop-start' });
+    expect(cursorForVisualPreviewLaneHit({ type: 'fade-in' })).toBe('nwse-resize');
+    expect(cursorForVisualPreviewLaneHit({ type: 'fade-out' })).toBe('nesw-resize');
+    expect(cursorForVisualPreviewLaneHit({ type: 'loop-start' })).toBe('nesw-resize');
+    expect(cursorForVisualPreviewLaneHit({ type: 'loop-end' })).toBe('nwse-resize');
   });
 
   it('disables fade-out hit testing for infinite renders', () => {

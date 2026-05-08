@@ -590,7 +590,7 @@ export function deriveStreamFlowProjection(args: {
       usesDefaultRect: scene.flow === undefined || useDefaultRect,
       status: sceneRuntimeStatus(scene, args.runtimeSceneStates?.[sceneId], temporarilyDisabled.has(sceneId)),
       progress: args.runtimeSceneStates?.[sceneId]?.progress,
-      durationLabel: formatSceneDuration(directorState, scene),
+      durationLabel: formatSceneDuration(directorState, scene, timeline),
       threadId,
       rootSceneId: thread?.rootSceneId,
       rootTriggerType: thread?.rootTriggerType,

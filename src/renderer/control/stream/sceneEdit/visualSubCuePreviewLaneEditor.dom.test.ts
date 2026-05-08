@@ -106,6 +106,40 @@ describe('visualSubCuePreviewLaneEditor', () => {
     ]);
   });
 
+  it('uses native number stepping for video Loop time', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    const loop = editor.querySelector<HTMLInputElement>('[aria-label="Loop time"]')!;
+    expect(loop.type).toBe('number');
+    loop.stepUp();
+    loop.dispatchEvent(new Event('change'));
+    loop.stepDown();
+    loop.dispatchEvent(new Event('change'));
+
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 0, endMs: 10000 },
+          iterations: { type: 'count', count: 1 },
+        },
+        loop: undefined,
+      },
+      {
+        innerLoop: {
+          enabled: false,
+          range: { startMs: 0, endMs: 10000 },
+        },
+        loop: undefined,
+      },
+    ]);
+  });
+
   it('disables video loop infinity while pass infinity is active', () => {
     const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
     const editor = createVisualSubCuePreviewLaneEditor({

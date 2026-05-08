@@ -76,7 +76,8 @@ describe('audioWaveformGeometry', () => {
         148,
       ),
     ).toEqual({ type: 'loop-start' });
-    expect(cursorForAudioWaveformHit({ type: 'loop-end' })).toBe('ew-resize');
+    expect(cursorForAudioWaveformHit({ type: 'loop-start' })).toBe('nesw-resize');
+    expect(cursorForAudioWaveformHit({ type: 'loop-end' })).toBe('nwse-resize');
   });
 
   it('cycles fade curves in the authored order', () => {

@@ -73,14 +73,15 @@ function isRuntimeMainTimelineRunning(streamState: StreamEnginePublicState | und
 }
 
 function createProjection(stream: PersistedStreamConfig, ctx: StreamFlowModeContext): FlowProjection {
+  const authoringTimeline = ctx.streamState?.editTimeline ?? ctx.streamState?.playbackTimeline;
   const highlights = getStreamAuthoringErrorHighlights(
     stream,
     validateStreamContextFromDirector(ctx.currentState),
-    ctx.streamState?.playbackTimeline,
+    authoringTimeline,
   );
   return deriveStreamFlowProjection({
     stream,
-    timeline: ctx.streamState?.playbackTimeline,
+    timeline: authoringTimeline,
     directorState: ctx.currentState,
     runtimeSceneStates: ctx.streamState?.runtime?.sceneStates,
     runtimeMainCursorMs: getRuntimeMainCursorMs(ctx.streamState),
@@ -627,16 +628,17 @@ export function syncStreamFlowModeRuntimeChrome(
   syncFocusClasses(flowRoot, playbackFocusSceneId, sceneEditSceneId);
   liveFlowStreams.set(flowRoot, streamState.stream);
   const stream = streamWithFlowLayoutOverrides(streamState.stream, reconcileFlowLayoutOverrides(flowRoot, streamState.stream));
+  const authoringTimeline = streamState.editTimeline ?? streamState.playbackTimeline;
   const projection = deriveStreamFlowProjection({
     stream,
-    timeline: streamState.playbackTimeline,
+    timeline: authoringTimeline,
     directorState,
     runtimeSceneStates: streamState.runtime?.sceneStates,
     runtimeMainCursorMs: getRuntimeMainCursorMs(streamState),
     authoringErrorSceneIds: getStreamAuthoringErrorHighlights(
       streamState.stream,
       validateStreamContextFromDirector(directorState),
-      streamState.playbackTimeline,
+      authoringTimeline,
     ).scenesWithErrors,
   });
   const projectionRef = liveFlowProjectionRefs.get(flowRoot);

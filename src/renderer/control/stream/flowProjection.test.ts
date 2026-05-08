@@ -61,6 +61,28 @@ describe('deriveStreamFlowProjection', () => {
     expect(projection.nodesBySceneId.c.threadColor?.token).toBe('thread-teal');
   });
 
+  it('uses supplied timeline durations for scene node labels', () => {
+    const stream: PersistedStreamConfig = {
+      id: 'stream',
+      label: 'Stream',
+      sceneOrder: ['a'],
+      scenes: {
+        a: visualScene('a', { type: 'manual' }, 'vid'),
+      },
+    };
+
+    const projection = deriveStreamFlowProjection({
+      stream,
+      timeline: timeline(stream, { vid: 42 }),
+      directorState: {
+        visuals: { vid: { id: 'vid', kind: 'file', type: 'video', durationSeconds: 10, ready: true } },
+        audioSources: {},
+      } as never,
+    });
+
+    expect(projection.nodesBySceneId.a.durationLabel).toBe('00:42.000');
+  });
+
   it('places at-timecode roots outside the main flow lane', () => {
     const stream: PersistedStreamConfig = {
       id: 'stream',
