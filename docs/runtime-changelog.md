@@ -1,5 +1,16 @@
 # Xtream Runtime Changelog
 
+## v0.2.4
+
+- **Link audio and visual timing while editing:** Audio and visual sub-cues can now keep their timing connected from the cue editors, making it easier to keep paired sound and picture changes synchronized without re-entering the same values twice.
+- **Separate play passes from inner loops:** Stream sub-cues now distinguish how long a cue participates in the scene from how its media loops inside that window, giving operators clearer control over repeated content without confusing scene duration.
+- **Safer upgrades for existing looped cues:** Older loop policies migrate into the new pass and inner-loop controls automatically when a show opens, preserving existing playback intent while exposing the newer editing model.
+- **More accurate audio duration and seeking:** Audio sub-cues now account for playback rate when calculating cue duration, playback windows, and seeks, so pitched or rate-adjusted audio lines up more reliably with the Stream timeline.
+- **Clearer loop controls in audio and visual editors:** Loop range handles, infinite-loop controls, disabled loop states, and timeline duration labels now behave more consistently while editing and during playback review.
+- **Better default targets for new sub-cues:** Newly created audio and visual sub-cues prefer the main output and display targets when available, reducing setup friction for common cue creation.
+- **Smoother automation editing:** The audio waveform editor no longer drops operators into level or pan automation mode by default, making normal trim and timing edits feel less surprising.
+- **Documentation refresh for onboarding:** Setup guidance was consolidated into the user guide with clearer install, project folder, media handling, permission, and troubleshooting notes.
+
 ## v0.2.3
 
 - **Drag media directly from the pool:** Audio and visual pool items can now be dragged out of the shared media pool instead of being assigned only through pickers and edit forms.

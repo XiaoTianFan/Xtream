@@ -18,6 +18,16 @@ This nightly documentation version completes the first user-facing guide set:
 
 ## Runtime Highlights
 
+### v0.2.4
+
+- Link audio and visual sub-cue timing while editing.
+- Separate cue play passes from inner media loops.
+- Migrate older loop policies into the new loop controls.
+- Account for audio playback rate in duration and seek behavior.
+- Improve loop range controls and timeline duration labels.
+- Use better default targets for new audio and visual sub-cues.
+- Keep automation editing opt-in in the audio waveform editor.
+
 ### v0.2.3
 
 - Drag media directly from the pool.
@@ -62,4 +72,3 @@ Use this page for orientation. Use the runtime changelog when you need full chro
 - [Stream workspace](../workspaces/stream.md)
 - [Edit visual sub-cues](../tasks/edit-visual-sub-cues.md)
 - [Runtime changelog](../../runtime-changelog.md)
-
