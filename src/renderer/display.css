@@ -99,6 +99,42 @@ body {
   inset: 0;
 }
 
+.display-preview-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+.display-preview-zone {
+  overflow: hidden;
+  border-color: rgb(92 158 173 / 0.55);
+  background: transparent;
+}
+
+.display-preview-layer {
+  background: #000;
+}
+
+.display-preview-badge {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 2;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgb(92 158 173 / 0.72);
+  background: rgb(0 0 0 / 0.68);
+  color: #e9fbff;
+  font-size: clamp(0.72rem, 1.3vw, 1rem);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-shadow: 0 1px 4px #000;
+}
+
 .display-layer--additive {
   mix-blend-mode: plus-lighter;
 }

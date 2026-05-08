@@ -677,6 +677,12 @@ describe('deriveDirectorStateForStream', () => {
       ['v1', true, 0.25],
       ['v2', true, 0.5],
     ]);
+    const derived = deriveDirectorStateForStream(state, streamState);
+    const derivedVisuals = Object.values(derived.visuals).filter((visual) => visual.id.startsWith('stream-visual:'));
+    expect(derivedVisuals.map((visual) => [visual.label, Number((visual.opacity ?? 0).toFixed(2))])).toEqual([
+      ['One', 0.25],
+      ['Two', 0.5],
+    ]);
   });
 });
 

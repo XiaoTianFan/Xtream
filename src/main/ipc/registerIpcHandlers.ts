@@ -72,6 +72,8 @@ import type {
   TransportCommand,
   VisualImportItem,
   VisualMetadataReport,
+  VisualSubCuePreviewCommand,
+  VisualSubCuePreviewPosition,
   VisualUpdate,
   VirtualOutputId,
   VirtualOutputSourceSelectionUpdate,
@@ -522,6 +524,17 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions): void {
     const controlWindow = getControlWindow();
     if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
       controlWindow.webContents.send('audio:subcue-preview-position', position);
+    }
+  });
+
+  ipcMain.handle('visual:subcue-preview', (_event, command: VisualSubCuePreviewCommand) => {
+    displayRegistry?.sendVisualPreviewCommand(command);
+  });
+
+  ipcMain.handle('visual:subcue-preview-position', (_event, position: VisualSubCuePreviewPosition) => {
+    const controlWindow = getControlWindow();
+    if (controlWindow && !controlWindow.isDestroyed() && !controlWindow.webContents.isDestroyed()) {
+      controlWindow.webContents.send('visual:subcue-preview-position', position);
     }
   });
 

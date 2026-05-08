@@ -1392,6 +1392,23 @@ describe('StreamEngine', () => {
     ]);
   });
 
+  it('keeps legacy visual duration override as a cap during runtime collection', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', kind: 'file', type: 'video', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }], durationOverrideMs: 20_000 },
+    };
+    engine.loadFromShow({ stream });
+
+    const state = engine.applyTransport({ type: 'play' });
+
+    expect(state.runtime?.activeVisualSubCues?.[0]?.localEndMs).toBe(5_000);
+  });
+
   it('follow-end tracks a manual predecessor’s actual end when that predecessor is started before its stacked schedule', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);

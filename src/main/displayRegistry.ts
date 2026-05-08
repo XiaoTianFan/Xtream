@@ -2,7 +2,7 @@ import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
 import { getAppIconPath } from './appIcon';
 import { formatDisplayWindowTitle } from '../shared/displayWindowTitle';
-import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWindowState } from '../shared/types';
+import type { DisplayCreateOptions, DisplayMonitorInfo, DisplayUpdate, DisplayWindowState, VisualSubCuePreviewCommand } from '../shared/types';
 
 type RegistryEntry = {
   window: BrowserWindow;
@@ -23,6 +23,7 @@ function displayFriendlyName(state: Pick<DisplayWindowState, 'id' | 'label'>): s
 
 export class DisplayRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
+  private readonly previewDisplayIds = new Map<string, Set<string>>();
   private nextDisplayNumber = 0;
 
   constructor(
@@ -248,6 +249,29 @@ export class DisplayRegistry {
     }
   }
 
+  sendVisualPreviewCommand(command: VisualSubCuePreviewCommand): void {
+    const previewId = visualPreviewCommandId(command);
+    let targetIds: Set<string> | undefined;
+    if (command.type === 'play-visual-subcue-preview') {
+      targetIds = new Set(command.payload.targets.map((target) => target.displayId));
+      const previousTargetIds = this.previewDisplayIds.get(previewId);
+      if (previousTargetIds) {
+        const nextTargetIds = targetIds;
+        const staleTargetIds = [...previousTargetIds].filter((id) => !nextTargetIds.has(id));
+        this.sendVisualPreviewCommandToDisplays({ type: 'stop-visual-subcue-preview', previewId }, staleTargetIds);
+      }
+      this.previewDisplayIds.set(previewId, targetIds);
+    } else {
+      targetIds = this.previewDisplayIds.get(previewId);
+    }
+
+    this.sendVisualPreviewCommandToDisplays(command, targetIds ? [...targetIds] : undefined);
+
+    if (command.type === 'stop-visual-subcue-preview') {
+      this.previewDisplayIds.delete(previewId);
+    }
+  }
+
   listMonitors(): DisplayMonitorInfo[] {
     return screen.getAllDisplays().map((display, index) => ({
       id: String(display.id),
@@ -266,6 +290,19 @@ export class DisplayRegistry {
     }
 
     return entry;
+  }
+
+  private sendVisualPreviewCommandToDisplays(command: VisualSubCuePreviewCommand, targetIds: string[] | undefined): void {
+    const entries = targetIds
+      ? targetIds.map((id) => this.entries.get(id)).filter((entry): entry is RegistryEntry => entry !== undefined)
+      : [...this.entries.values()];
+
+    for (const entry of entries) {
+      if (entry.isClosing || entry.window.isDestroyed() || entry.window.webContents.isDestroyed()) {
+        continue;
+      }
+      entry.window.webContents.send('visual:subcue-preview-command', command);
+    }
   }
 
   private refreshWindowState(id: string): void {
@@ -355,4 +392,8 @@ export class DisplayRegistry {
       query: { id },
     });
   }
+}
+
+function visualPreviewCommandId(command: VisualSubCuePreviewCommand): string {
+  return command.type === 'play-visual-subcue-preview' ? command.payload.previewId : command.previewId;
 }

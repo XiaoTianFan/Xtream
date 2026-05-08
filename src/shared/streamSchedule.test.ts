@@ -673,13 +673,16 @@ describe('streamSchedule', () => {
   it('validates visual duration, fade, and freeze timing fields', () => {
     const scene = {
       ...createEmptyUserScene('scene-user', 'User'),
-      subCueOrder: ['v1', 'v2'],
+      subCueOrder: ['v1', 'v2', 'v3'],
       subCues: {
         v1: {
           id: 'v1',
           kind: 'visual' as const,
           visualId: 'vid',
           targets: [{ displayId: 'd0' }],
+          startOffsetMs: Number.NaN,
+          durationOverrideMs: Number.POSITIVE_INFINITY,
+          playbackRate: Number.NaN,
           freezeFrameMs: 6000,
           fadeIn: { durationMs: -1 },
           fadeOut: { durationMs: Number.NaN },
@@ -689,6 +692,14 @@ describe('streamSchedule', () => {
           kind: 'visual' as const,
           visualId: 'image',
           targets: [{ displayId: 'd0' }],
+        },
+        v3: {
+          id: 'v3',
+          kind: 'visual' as const,
+          visualId: 'image',
+          targets: [{ displayId: 'd0' }],
+          durationOverrideMs: 1000,
+          freezeFrameMs: 0,
         },
       },
     };
@@ -703,9 +714,13 @@ describe('streamSchedule', () => {
     expect(msgs).toEqual(
       expect.arrayContaining([
         expect.stringContaining('freeze frame exceeds visual duration'),
+        expect.stringContaining('invalid start offset'),
+        expect.stringContaining('invalid duration override'),
+        expect.stringContaining('non-positive playback rate'),
         expect.stringContaining('invalid fade in duration'),
         expect.stringContaining('invalid fade out duration'),
         expect.stringContaining('requires duration or infinite render'),
+        expect.stringContaining('freeze frame is ignored for image visual media'),
       ]),
     );
   });

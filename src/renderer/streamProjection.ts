@@ -424,7 +424,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
     const slots: { single?: string; left?: string; right?: string } = {};
     for (const zone of frame.zones) {
       for (const layer of zone.layers) {
-        derived.visuals[layer.layerId] = layer.visual;
+        derived.visuals[layer.layerId] = { ...layer.visual, opacity: layer.opacity };
         derived.activeTimeline.assignedVideoIds.push(layer.layerId);
         if (!layer.selected) {
           continue;

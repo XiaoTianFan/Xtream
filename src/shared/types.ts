@@ -250,6 +250,36 @@ export type AudioSubCuePreviewCommand =
   | { type: 'seek-audio-subcue-preview'; previewId: string; sourceTimeMs?: number; localTimeMs?: number }
   | { type: 'stop-audio-subcue-preview'; previewId: string };
 
+export type VisualSubCuePreviewPayload = {
+  previewId: string;
+  visualId: VisualId;
+  targets: VisualDisplayTarget[];
+  visual: VisualState;
+  playTimeMs?: number;
+  durationMs?: number;
+  playbackRate?: number;
+  fadeIn?: FadeSpec;
+  fadeOut?: FadeSpec;
+  freezeFrameMs?: number;
+  loop?: SceneLoopPolicy;
+  startedAtLocalMs?: number;
+};
+
+export type VisualSubCuePreviewPosition = {
+  previewId: string;
+  displayId: DisplayWindowId;
+  localTimeMs: number;
+  sourceTimeMs?: number;
+  playing: boolean;
+  paused: boolean;
+};
+
+export type VisualSubCuePreviewCommand =
+  | { type: 'play-visual-subcue-preview'; payload: VisualSubCuePreviewPayload }
+  | { type: 'pause-visual-subcue-preview'; previewId: string }
+  | { type: 'seek-visual-subcue-preview'; previewId: string; localTimeMs: number; sourceTimeMs?: number }
+  | { type: 'stop-visual-subcue-preview'; previewId: string };
+
 export type MeterLaneState = {
   id: string;
   label: string;
@@ -1259,6 +1289,10 @@ export type IpcChannels = {
   'output:meter': (report: OutputMeterReport) => VirtualOutputState;
   'audio:meter-report': (report: OutputMeterReport) => void;
   'audio:set-solo-output-ids': (outputIds: VirtualOutputId[]) => void;
+  'audio:subcue-preview': (command: AudioSubCuePreviewCommand) => void;
+  'audio:subcue-preview-position': (position: AudioSubCuePreviewPosition) => void;
+  'visual:subcue-preview': (command: VisualSubCuePreviewCommand) => void;
+  'visual:subcue-preview-position': (position: VisualSubCuePreviewPosition) => void;
   'output:remove': (outputId: VirtualOutputId) => boolean;
   'show:prompt-unsaved-if-needed': (kind: ShowUnsavedPromptKind) => Promise<boolean>;
   'show:save': (opts?: ShowDiskActionIpcOpts) => ShowConfigOperationResult;

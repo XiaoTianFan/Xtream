@@ -2,14 +2,19 @@
 import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
+import { mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
 import type {
   DirectorState,
   DisplayWindowState,
+  DisplayZoneId,
   LoopState,
+  SceneLoopPolicy,
   StreamEnginePublicState,
   VisualId,
   VisualLayoutProfile,
   VisualMetadataReport,
+  VisualSubCuePreviewCommand,
+  VisualSubCuePreviewPayload,
   VisualState,
 } from '../shared/types';
 import { createPlaybackSyncKey, getMediaSyncState, syncTimedMediaElement } from './control/media/mediaSync';
@@ -17,6 +22,7 @@ import { hasEmbeddedAudioTrack } from './control/media/mediaMetadata';
 import { attachLiveVisualStream, reportLiveVisualError } from './control/media/liveCaptureRuntime';
 import { buildStreamDisplayFrames, deriveDirectorStateForStream, type StreamDisplayFrame, type StreamDisplayLayer } from './streamProjection';
 import { formatDisplayWindowTitle } from '../shared/displayWindowTitle';
+import { evaluateVisualSubCueOpacity } from '../shared/visualSubCueTiming';
 
 const root = document.querySelector<HTMLDivElement>('#displayRoot');
 const params = new URLSearchParams(window.location.search);
@@ -87,6 +93,23 @@ let currentStreamZoneSignature = '';
 let lastBlackoutState: boolean | undefined;
 let lastStreamDebugSignature = '';
 let lastDriftDebugSignature = '';
+
+type VisualPreviewRuntime = {
+  payload: VisualSubCuePreviewPayload;
+  targetZones: Set<DisplayZoneId>;
+  playing: boolean;
+  paused: boolean;
+  anchorLocalTimeMs: number;
+  anchorWallTimeMs?: number;
+  localTimeMs: number;
+  sourceTimeMs?: number;
+  lastReportWallTimeMs?: number;
+  completed?: boolean;
+};
+
+const visualPreviewRuntimes = new Map<string, VisualPreviewRuntime>();
+let visualPreviewRoot: HTMLElement | undefined;
+let visualPreviewFrame: number | undefined;
 
 function readDisplayDebugFlag(): boolean {
   try {
@@ -338,6 +361,479 @@ function renderStreamFrame(frame: StreamDisplayFrame): void {
   }
 }
 
+function localPreviewTargetZones(payload: VisualSubCuePreviewPayload): Set<DisplayZoneId> {
+  const zones = new Set<DisplayZoneId>();
+  for (const target of payload.targets) {
+    if (target.displayId === displayId) {
+      zones.add(target.zoneId ?? 'single');
+    }
+  }
+  return zones;
+}
+
+function handleVisualPreviewCommand(command: VisualSubCuePreviewCommand): void {
+  if (command.type === 'play-visual-subcue-preview') {
+    const targetZones = localPreviewTargetZones(command.payload);
+    if (targetZones.size === 0) {
+      return;
+    }
+    stopVisualPreview(command.payload.previewId, false);
+    const localTimeMs = Math.max(0, command.payload.startedAtLocalMs ?? 0);
+    visualPreviewRuntimes.set(command.payload.previewId, {
+      payload: command.payload,
+      targetZones,
+      playing: true,
+      paused: false,
+      anchorLocalTimeMs: localTimeMs,
+      anchorWallTimeMs: performance.now(),
+      localTimeMs,
+    });
+    renderVisualPreviewOverlays();
+    scheduleVisualPreviewFrame();
+    return;
+  }
+
+  const runtime = visualPreviewRuntimes.get(command.previewId);
+  if (!runtime) {
+    return;
+  }
+
+  if (command.type === 'pause-visual-subcue-preview') {
+    updateVisualPreviewTime(runtime);
+    runtime.playing = false;
+    runtime.paused = true;
+    runtime.anchorWallTimeMs = undefined;
+    syncVisualPreviewRuntime(runtime, true);
+    renderVisualPreviewOverlays();
+    return;
+  }
+
+  if (command.type === 'seek-visual-subcue-preview') {
+    const nextLocalTimeMs = Math.max(0, command.localTimeMs);
+    runtime.localTimeMs = nextLocalTimeMs;
+    runtime.sourceTimeMs = command.sourceTimeMs;
+    runtime.completed = false;
+    runtime.anchorLocalTimeMs = nextLocalTimeMs;
+    runtime.anchorWallTimeMs = runtime.playing ? performance.now() : undefined;
+    syncVisualPreviewRuntime(runtime, true);
+    renderVisualPreviewOverlays();
+    scheduleVisualPreviewFrame();
+    return;
+  }
+
+  stopVisualPreview(command.previewId, true);
+}
+
+function ensureVisualPreviewRoot(split: boolean): HTMLElement {
+  if (!visualPreviewRoot) {
+    visualPreviewRoot = document.createElement('div');
+    visualPreviewRoot.className = 'display-preview-root';
+    document.body.append(visualPreviewRoot);
+  }
+  visualPreviewRoot.className = split ? 'display-preview-root split' : 'display-preview-root';
+  return visualPreviewRoot;
+}
+
+function renderVisualPreviewOverlays(): void {
+  const active = [...visualPreviewRuntimes.values()].filter((runtime) => runtime.targetZones.size > 0);
+  if (active.length === 0) {
+    clearVisualPreviewRoot();
+    return;
+  }
+  const split = active.some((runtime) => runtime.targetZones.has('L') || runtime.targetZones.has('R'));
+  const zoneIds: DisplayZoneId[] = split ? ['L', 'R'] : ['single'];
+  const root = ensureVisualPreviewRoot(split);
+  const wantedZoneIds = new Set(zoneIds);
+  for (const child of [...root.children]) {
+    const element = child as HTMLElement;
+    if (!element.dataset.zoneId || !wantedZoneIds.has(element.dataset.zoneId as DisplayZoneId)) {
+      cleanupMediaInElement(element);
+      element.remove();
+    }
+  }
+
+  for (const zoneId of zoneIds) {
+    let zone = root.querySelector<HTMLElement>(`.display-preview-zone[data-zone-id="${zoneId}"]`);
+    if (!zone) {
+      zone = document.createElement('section');
+      zone.className = 'display-output display-output-zone display-preview-zone';
+      zone.dataset.zoneId = zoneId;
+      root.append(zone);
+    }
+    const runtime = newestPreviewForZone(zoneId);
+    reconcileVisualPreviewZone(zone, runtime, zoneId);
+  }
+}
+
+function newestPreviewForZone(zoneId: DisplayZoneId): VisualPreviewRuntime | undefined {
+  let selected: VisualPreviewRuntime | undefined;
+  for (const runtime of visualPreviewRuntimes.values()) {
+    if (runtime.targetZones.has(zoneId)) {
+      selected = runtime;
+    }
+  }
+  return selected;
+}
+
+function reconcileVisualPreviewZone(zone: HTMLElement, runtime: VisualPreviewRuntime | undefined, zoneId: DisplayZoneId): void {
+  if (!runtime) {
+    if (zone.childElementCount > 0) {
+      cleanupMediaInElement(zone);
+      zone.replaceChildren();
+    }
+    return;
+  }
+  const previewId = runtime.payload.previewId;
+  const mediaSignature = visualPreviewMediaSignature(runtime);
+  let layer: HTMLElement | undefined = zone.querySelector<HTMLElement>('.display-preview-layer') ?? undefined;
+  if (layer && (layer.dataset.previewId !== previewId || layer.dataset.mediaSignature !== mediaSignature)) {
+    cleanupMediaInElement(layer);
+    layer.remove();
+    layer = undefined;
+  }
+  if (!layer) {
+    layer = createVisualPreviewLayer(runtime, zoneId);
+    zone.replaceChildren(layer);
+  }
+  applyVisualPreviewLayerState(layer, runtime);
+  syncVisualPreviewRuntime(runtime, false);
+}
+
+function createVisualPreviewLayer(runtime: VisualPreviewRuntime, zoneId: DisplayZoneId): HTMLElement {
+  const layer = document.createElement('div');
+  layer.className = 'display-layer display-preview-layer';
+  layer.dataset.previewId = runtime.payload.previewId;
+  layer.dataset.layerId = visualPreviewLayerId(runtime.payload.previewId, zoneId);
+  layer.dataset.visualId = layer.dataset.layerId;
+  layer.dataset.mediaSignature = visualPreviewMediaSignature(runtime);
+  layer.style.zIndex = '2147483000';
+  appendVisualPreviewMedia(layer, runtime, zoneId);
+  const badge = document.createElement('div');
+  badge.className = 'display-preview-badge';
+  badge.textContent = 'PREVIEW';
+  layer.append(badge);
+  return layer;
+}
+
+function appendVisualPreviewMedia(layer: HTMLElement, runtime: VisualPreviewRuntime, zoneId: DisplayZoneId): void {
+  const visual = previewVisualForRuntime(runtime);
+  const layerId = visualPreviewLayerId(runtime.payload.previewId, zoneId);
+  if (visual.kind === 'live') {
+    const video = document.createElement('video');
+    video.dataset.visualId = layerId;
+    applyVisualStyle(video, visual);
+    observeVideoFrames(video);
+    layer.append(video);
+    void attachLiveVisualStream(visual, video, {})
+      .then((attachment) => {
+        if (layer.isConnected) {
+          liveVisualCleanups.set(layerId, attachment.cleanup);
+          reportVisualPreviewStatus(runtime.payload, true);
+        } else {
+          attachment.cleanup();
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Live visual preview failed.';
+        reportLiveVisualError(visual, {}, message);
+        reportVisualPreviewStatus(runtime.payload, false, message);
+      });
+    return;
+  }
+  if (visual.type === 'image' && visual.url) {
+    const image = document.createElement('img');
+    image.alt = visual.label;
+    applyVisualStyle(image, visual);
+    image.addEventListener('load', () => reportVisualPreviewStatus(runtime.payload, true), { once: true });
+    image.addEventListener('error', () => reportVisualPreviewStatus(runtime.payload, false, 'Visual sub-cue image preview failed to load.'), { once: true });
+    image.src = visual.url;
+    layer.append(image);
+    return;
+  }
+  if (visual.url) {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.dataset.visualId = layerId;
+    applyVisualStyle(video, visual);
+    observeVideoFrames(video);
+    video.addEventListener(
+      'loadedmetadata',
+      () => {
+        reportVisualPreviewStatus(runtime.payload, true);
+        syncVisualPreviewRuntime(runtime, true);
+      },
+      { once: true },
+    );
+    video.addEventListener(
+      'error',
+      () => reportVisualPreviewStatus(runtime.payload, false, video.error?.message ?? 'Visual sub-cue video preview failed to load.'),
+      { once: true },
+    );
+    video.src = visual.url;
+    layer.append(video);
+    videoElements.set(layerId, video);
+    return;
+  }
+  const visualLabel = document.createElement('span');
+  visualLabel.textContent = visual.label;
+  const visualMeta = document.createElement('small');
+  visualMeta.textContent = 'preview visual missing media';
+  layer.append(visualLabel, visualMeta);
+  reportVisualPreviewStatus(runtime.payload, false, 'Visual sub-cue preview media is unavailable.');
+}
+
+function previewVisualForRuntime(runtime: VisualPreviewRuntime): VisualState {
+  const visual = runtime.payload.visual;
+  return {
+    ...visual,
+    opacity: visual.opacity ?? 1,
+    playbackRate: (visual.playbackRate ?? 1) * (runtime.payload.playbackRate ?? 1),
+  } as VisualState;
+}
+
+function applyVisualPreviewLayerState(layer: HTMLElement, runtime: VisualPreviewRuntime): void {
+  layer.style.opacity = String(
+    evaluateVisualSubCueOpacity({
+      localTimeMs: runtime.localTimeMs,
+      durationMs: effectiveVisualPreviewDurationMs(runtime.payload),
+      baseOpacity: runtime.payload.visual.opacity ?? 1,
+      fadeIn: runtime.payload.fadeIn,
+      fadeOut: runtime.payload.fadeOut,
+    }),
+  );
+}
+
+function syncVisualPreviewRuntime(runtime: VisualPreviewRuntime, forceReport: boolean): void {
+  updateVisualPreviewTime(runtime);
+  const visual = previewVisualForRuntime(runtime);
+  const mediaDurationMs = visual.durationSeconds !== undefined ? visual.durationSeconds * 1000 : undefined;
+  const sourceTimeMs = runtime.sourceTimeMs ?? sourceTimeMsForVisualPreview(runtime, mediaDurationMs);
+  runtime.sourceTimeMs = sourceTimeMs;
+  for (const zoneId of runtime.targetZones) {
+    const layerId = visualPreviewLayerId(runtime.payload.previewId, zoneId);
+    const video = videoElements.get(layerId) ?? findPreviewVideo(layerId);
+    if (!video) {
+      continue;
+    }
+    const freezeMs = runtime.payload.freezeFrameMs;
+    const freezeClockMs = visual.kind === 'live' ? runtime.localTimeMs : sourceTimeMs;
+    const frozen = freezeMs !== undefined && Number.isFinite(freezeMs) && freezeClockMs >= freezeMs;
+    if (visual.kind === 'live') {
+      if (frozen) {
+        freezeLiveVideo(video, visual);
+      } else {
+        unfreezeLiveVideo(video);
+      }
+      continue;
+    }
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      const targetSeconds = (frozen ? clampFreezeTargetSeconds(freezeMs!, visual.durationSeconds) * 1000 : sourceTimeMs) / 1000;
+      if (Math.abs(video.currentTime - targetSeconds) > 0.08) {
+        video.currentTime = targetSeconds;
+      }
+      video.playbackRate = visual.playbackRate ?? 1;
+      if (runtime.playing && !frozen) {
+        void video.play().catch(() => undefined);
+      } else {
+        video.pause();
+      }
+    }
+  }
+  applyVisualPreviewLayerStates(runtime);
+  reportVisualPreviewPosition(runtime, forceReport);
+}
+
+function applyVisualPreviewLayerStates(runtime: VisualPreviewRuntime): void {
+  const root = visualPreviewRoot;
+  if (!root) {
+    return;
+  }
+  for (const layer of root.querySelectorAll<HTMLElement>(`.display-preview-layer[data-preview-id="${cssEscape(runtime.payload.previewId)}"]`)) {
+    applyVisualPreviewLayerState(layer, runtime);
+  }
+}
+
+function updateVisualPreviewTime(runtime: VisualPreviewRuntime): void {
+  if (!runtime.playing || runtime.anchorWallTimeMs === undefined) {
+    return;
+  }
+  runtime.localTimeMs = Math.max(0, runtime.anchorLocalTimeMs + performance.now() - runtime.anchorWallTimeMs);
+  runtime.sourceTimeMs = undefined;
+  const durationMs = effectiveVisualPreviewDurationMs(runtime.payload);
+  const infinite = isInfiniteSceneLoop(runtime.payload.loop);
+  if (!infinite && durationMs !== undefined && runtime.localTimeMs >= durationMs) {
+    runtime.localTimeMs = durationMs;
+    runtime.playing = false;
+    runtime.paused = false;
+    runtime.completed = true;
+    runtime.anchorWallTimeMs = undefined;
+  }
+}
+
+function sourceTimeMsForVisualPreview(runtime: VisualPreviewRuntime, mediaDurationMs: number | undefined): number {
+  const playbackRate = runtime.payload.playbackRate && runtime.payload.playbackRate > 0 ? runtime.payload.playbackRate : 1;
+  const naturalLocalDurationMs = mediaDurationMs !== undefined && mediaDurationMs > 0 ? mediaDurationMs / playbackRate : undefined;
+  if (naturalLocalDurationMs === undefined || !runtime.payload.loop?.enabled) {
+    return Math.max(0, runtime.localTimeMs * playbackRate);
+  }
+  const timing = resolveLoopTiming(runtime.payload.loop, naturalLocalDurationMs);
+  if (timing.loopDurationMs <= 0) {
+    return timing.loopStartMs * playbackRate;
+  }
+  const phaseMs =
+    timing.totalDurationMs !== undefined && runtime.localTimeMs >= timing.totalDurationMs
+      ? timing.loopEndMs
+      : mapElapsedToLoopPhase(runtime.localTimeMs, timing);
+  return Math.max(0, phaseMs * playbackRate);
+}
+
+function effectiveVisualPreviewDurationMs(payload: VisualSubCuePreviewPayload): number | undefined {
+  const explicitMs =
+    payload.playTimeMs !== undefined && Number.isFinite(payload.playTimeMs) && payload.playTimeMs > 0
+      ? payload.playTimeMs
+      : payload.durationMs !== undefined && Number.isFinite(payload.durationMs) && payload.durationMs > 0
+        ? payload.durationMs
+        : undefined;
+  if (explicitMs !== undefined) {
+    return resolveLoopTiming(payload.loop, explicitMs).totalDurationMs;
+  }
+  const mediaDurationMs = payload.visual.durationSeconds !== undefined ? payload.visual.durationSeconds * 1000 : undefined;
+  if (!mediaDurationMs || mediaDurationMs <= 0) {
+    return undefined;
+  }
+  const rate = payload.playbackRate ?? 1;
+  const baseMs = mediaDurationMs / (rate > 0 ? rate : 1);
+  return resolveLoopTiming(payload.loop, baseMs).totalDurationMs;
+}
+
+function isInfiniteSceneLoop(loop: SceneLoopPolicy | undefined): boolean {
+  return loop?.enabled === true && loop.iterations.type === 'infinite';
+}
+
+function reportVisualPreviewPosition(runtime: VisualPreviewRuntime, force: boolean): void {
+  const now = performance.now();
+  if (!force && runtime.lastReportWallTimeMs !== undefined && now - runtime.lastReportWallTimeMs < 100) {
+    return;
+  }
+  runtime.lastReportWallTimeMs = now;
+  void window.xtream.visualRuntime.reportSubCuePreviewPosition({
+    previewId: runtime.payload.previewId,
+    displayId,
+    localTimeMs: runtime.localTimeMs,
+    sourceTimeMs: runtime.sourceTimeMs,
+    playing: runtime.playing,
+    paused: runtime.paused,
+  });
+}
+
+function reportVisualPreviewStatus(payload: VisualSubCuePreviewPayload, ready: boolean, error?: string): void {
+  void window.xtream.renderer.reportPreviewStatus({
+    key: `visual-subcue:${payload.previewId}:${displayId}`,
+    displayId,
+    visualId: payload.visualId,
+    ready,
+    error,
+    reportedAtWallTimeMs: Date.now(),
+  });
+}
+
+function scheduleVisualPreviewFrame(): void {
+  if (visualPreviewFrame !== undefined || visualPreviewRuntimes.size === 0) {
+    return;
+  }
+  visualPreviewFrame = window.requestAnimationFrame(tickVisualPreviewFrame);
+}
+
+function tickVisualPreviewFrame(): void {
+  visualPreviewFrame = undefined;
+  let hasPlayingPreview = false;
+  const completedPreviewIds: string[] = [];
+  for (const runtime of visualPreviewRuntimes.values()) {
+    syncVisualPreviewRuntime(runtime, false);
+    if (runtime.completed) {
+      completedPreviewIds.push(runtime.payload.previewId);
+      continue;
+    }
+    hasPlayingPreview ||= runtime.playing;
+  }
+  for (const previewId of completedPreviewIds) {
+    stopVisualPreview(previewId, true);
+  }
+  if (hasPlayingPreview) {
+    scheduleVisualPreviewFrame();
+  }
+}
+
+function stopVisualPreview(previewId: string, report: boolean): void {
+  const runtime = visualPreviewRuntimes.get(previewId);
+  if (!runtime) {
+    return;
+  }
+  for (const zoneId of runtime.targetZones) {
+    const layerId = visualPreviewLayerId(previewId, zoneId);
+    const layer = visualPreviewRoot?.querySelector<HTMLElement>(`.display-preview-layer[data-layer-id="${cssEscape(layerId)}"]`);
+    if (layer) {
+      cleanupMediaInElement(layer);
+      layer.remove();
+    } else {
+      cleanupMediaForVisualId(layerId);
+    }
+  }
+  visualPreviewRuntimes.delete(previewId);
+  if (report) {
+    reportVisualPreviewPosition({ ...runtime, playing: false, paused: false }, true);
+  }
+  renderVisualPreviewOverlays();
+}
+
+function clearVisualPreviewRoot(): void {
+  if (!visualPreviewRoot) {
+    return;
+  }
+  cleanupMediaInElement(visualPreviewRoot);
+  visualPreviewRoot.remove();
+  visualPreviewRoot = undefined;
+}
+
+function clearAllVisualPreviews(): void {
+  for (const previewId of [...visualPreviewRuntimes.keys()]) {
+    stopVisualPreview(previewId, false);
+  }
+  visualPreviewRuntimes.clear();
+  clearVisualPreviewRoot();
+  if (visualPreviewFrame !== undefined) {
+    window.cancelAnimationFrame(visualPreviewFrame);
+    visualPreviewFrame = undefined;
+  }
+}
+
+function findPreviewVideo(layerId: string): HTMLVideoElement | undefined {
+  return visualPreviewRoot?.querySelector<HTMLVideoElement>(`video[data-visual-id="${cssEscape(layerId)}"]`) ?? undefined;
+}
+
+function visualPreviewLayerId(previewId: string, zoneId: DisplayZoneId): string {
+  return `visual-preview:${previewId}:${zoneId}`;
+}
+
+function visualPreviewMediaSignature(runtime: VisualPreviewRuntime): string {
+  const visual = runtime.payload.visual;
+  return [
+    runtime.payload.previewId,
+    visual.id,
+    visual.kind,
+    visual.kind === 'live' ? JSON.stringify(visual.capture) : visual.url ?? 'empty',
+    visual.type,
+    runtime.payload.playbackRate ?? '',
+    runtime.payload.freezeFrameMs ?? '',
+  ].join('|');
+}
+
+function cssEscape(value: string): string {
+  return window.CSS?.escape ? window.CSS.escape(value) : value.replace(/["\\]/g, '\\$&');
+}
+
 function handleState(state: DirectorState): void {
   latestDirectorState = state;
   const effectiveState = deriveDirectorStateForStream(state, currentStreamState);
@@ -378,6 +874,7 @@ function handleState(state: DirectorState): void {
   }
   applyBlackoutState(blackedOut);
   syncVideoElements(display, effectiveState);
+  renderVisualPreviewOverlays();
 }
 
 function handleStreamState(state: StreamEnginePublicState): void {
@@ -660,6 +1157,10 @@ function isStreamRuntimeVisualId(visualId: string): boolean {
   return visualId.startsWith('stream-visual:');
 }
 
+function isVisualPreviewLayerId(visualId: string | undefined): boolean {
+  return visualId?.startsWith('visual-preview:') === true;
+}
+
 function createOverlay(visualId: string, detail: string): HTMLElement {
   const overlay = document.createElement('div');
   overlay.className = 'display-output-overlay';
@@ -725,6 +1226,9 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
   currentDirectorSeconds = targetSeconds;
   const syncKey = createPlaybackSyncKey(state);
   for (const video of videoElements.values()) {
+    if (isVisualPreviewLayerId(video.dataset.visualId)) {
+      continue;
+    }
     if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
       continue;
     }
@@ -954,6 +1458,7 @@ function summarizeVideoDiagnostics(videos: HTMLVideoElement[]): {
 
 window.xtream.director.onState(handleState);
 window.xtream.stream.onState(handleStreamState);
+const unsubscribeVisualPreviewCommands = window.xtream.visualRuntime.onSubCuePreviewCommand(handleVisualPreviewCommand);
 void window.xtream.renderer.ready({ kind: 'display', displayId });
 void window.xtream.director.getState().then(handleState);
 void window.xtream.stream.getState().then(handleStreamState);
@@ -975,7 +1480,9 @@ driftTimer = window.setInterval(() => {
   if (currentState?.paused) {
     return;
   }
-  const videos = Array.from(videoElements.values()).filter((video) => video.readyState >= HTMLMediaElement.HAVE_METADATA);
+  const videos = Array.from(videoElements.values()).filter(
+    (video) => !isVisualPreviewLayerId(video.dataset.visualId) && video.readyState >= HTMLMediaElement.HAVE_METADATA,
+  );
   const directorSeconds = currentState ? getDirectorSeconds(currentState) : currentDirectorSeconds;
   currentDirectorSeconds = directorSeconds;
   if (videos.some((video) => getMediaSyncState(video).pendingSeekSeconds !== undefined)) {
@@ -1056,10 +1563,22 @@ syncTimer = window.setInterval(() => {
       syncVideoElements(display, currentState);
     }
   }
+  const completedPreviewIds: string[] = [];
+  for (const runtime of visualPreviewRuntimes.values()) {
+    syncVisualPreviewRuntime(runtime, false);
+    if (runtime.completed) {
+      completedPreviewIds.push(runtime.payload.previewId);
+    }
+  }
+  for (const previewId of completedPreviewIds) {
+    stopVisualPreview(previewId, true);
+  }
 }, DISPLAY_SYNC_INTERVAL_MS);
 
 window.addEventListener('beforeunload', () => {
   unsubscribeIdentifyFlash?.();
+  unsubscribeVisualPreviewCommands?.();
+  clearAllVisualPreviews();
   if (identifyHideTimer !== undefined) {
     window.clearTimeout(identifyHideTimer);
   }

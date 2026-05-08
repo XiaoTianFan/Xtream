@@ -2935,7 +2935,10 @@ export class StreamEngine extends EventEmitter {
     } else {
       return 0;
     }
-    if (sub.kind !== 'visual' && sub.durationOverrideMs !== undefined && base !== undefined) {
+    if (sub.kind === 'visual') {
+      return base;
+    }
+    if (sub.durationOverrideMs !== undefined && base !== undefined) {
       return Math.min(base, sub.durationOverrideMs);
     }
     return sub.durationOverrideMs ?? base;

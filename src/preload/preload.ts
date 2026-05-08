@@ -51,6 +51,8 @@ import type {
   TransportCommand,
   VisualId,
   VisualMetadataReport,
+  VisualSubCuePreviewCommand,
+  VisualSubCuePreviewPosition,
   VisualState,
   VisualUpdate,
   VirtualOutputId,
@@ -173,6 +175,21 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent, outputIds: VirtualOutputId[]) => callback(outputIds);
       ipcRenderer.on('audio:solo-output-ids', listener);
       return () => ipcRenderer.removeListener('audio:solo-output-ids', listener);
+    },
+  },
+  visualRuntime: {
+    preview: (command: VisualSubCuePreviewCommand): Promise<void> => ipcRenderer.invoke('visual:subcue-preview', command),
+    reportSubCuePreviewPosition: (position: VisualSubCuePreviewPosition): Promise<void> =>
+      ipcRenderer.invoke('visual:subcue-preview-position', position),
+    onSubCuePreviewCommand: (callback: (command: VisualSubCuePreviewCommand) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: VisualSubCuePreviewCommand) => callback(command);
+      ipcRenderer.on('visual:subcue-preview-command', listener);
+      return () => ipcRenderer.removeListener('visual:subcue-preview-command', listener);
+    },
+    onSubCuePreviewPosition: (callback: (position: VisualSubCuePreviewPosition) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, position: VisualSubCuePreviewPosition) => callback(position);
+      ipcRenderer.on('visual:subcue-preview-position', listener);
+      return () => ipcRenderer.removeListener('visual:subcue-preview-position', listener);
     },
   },
   stream: {

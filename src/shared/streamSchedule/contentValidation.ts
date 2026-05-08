@@ -186,23 +186,27 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
           message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} — record id mismatch`,
         });
       }
-      if ('startOffsetMs' in subCue && subCue.startOffsetMs !== undefined && subCue.startOffsetMs < 0) {
+      if ('startOffsetMs' in subCue && subCue.startOffsetMs !== undefined && (!Number.isFinite(subCue.startOffsetMs) || subCue.startOffsetMs < 0)) {
         out.push({
           severity: 'error',
           sceneId,
           subCueId,
-          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has negative start offset`,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has invalid start offset`,
         });
       }
-      if ('durationOverrideMs' in subCue && subCue.durationOverrideMs !== undefined && subCue.durationOverrideMs < 0) {
+      if (
+        'durationOverrideMs' in subCue &&
+        subCue.durationOverrideMs !== undefined &&
+        (!Number.isFinite(subCue.durationOverrideMs) || subCue.durationOverrideMs < 0)
+      ) {
         out.push({
           severity: 'error',
           sceneId,
           subCueId,
-          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has negative duration override`,
+          message: `${sceneLabel} · ${subCueOrdinalKind(stream, sceneId, subCueId, subCue.kind)} has invalid duration override`,
         });
       }
-      if ('playbackRate' in subCue && subCue.playbackRate !== undefined && subCue.playbackRate <= 0) {
+      if ('playbackRate' in subCue && subCue.playbackRate !== undefined && (!Number.isFinite(subCue.playbackRate) || subCue.playbackRate <= 0)) {
         out.push({
           severity: 'error',
           sceneId,
@@ -392,6 +396,14 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
             sceneId,
             subCueId,
             message: `${sceneLabel} · ${ordLabel} freeze frame exceeds visual duration`,
+          });
+        }
+        if (subCue.freezeFrameMs !== undefined && visualMedia?.type === 'image') {
+          out.push({
+            severity: 'warning',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} freeze frame is ignored for image visual media`,
           });
         }
         if (subCue.fadeIn !== undefined && (!Number.isFinite(subCue.fadeIn.durationMs) || subCue.fadeIn.durationMs < 0)) {
