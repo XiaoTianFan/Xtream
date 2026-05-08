@@ -335,6 +335,9 @@ export function createMediaPoolController(elements: MediaPoolElements, options: 
     });
     elements.mediaPoolPanel.addEventListener('dragleave', clearMediaPoolDragOver);
     elements.mediaPoolPanel.addEventListener('drop', async (event) => {
+      if (!isFileDragEvent(event)) {
+        return;
+      }
       event.preventDefault();
       elements.mediaPoolPanel.classList.remove('drag-over');
       const paths = getDroppedFilePaths(event.dataTransfer, window.xtream.platform.getPathForFile);

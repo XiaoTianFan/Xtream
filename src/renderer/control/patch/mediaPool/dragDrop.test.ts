@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fileUriToPath,
   getDroppedFilePaths,
+  parseDroppedFileUriList,
   readMediaPoolDragPayload,
   writeMediaPoolDragPayload,
   XTREAM_MEDIA_POOL_ITEM_MIME,
@@ -60,5 +62,18 @@ describe('mediaPool dragDrop', () => {
 
     expect(readMediaPoolDragPayload(dataTransfer)).toBeUndefined();
     expect(getDroppedFilePaths(dataTransfer, () => '')).toEqual([]);
+  });
+
+  it('parses dropped file URI lists without losing existing path behavior', () => {
+    expect(parseDroppedFileUriList('file:///C:/Shows/logo.png\n# comment\nfile:///C:/Shows/loop.mp4', 'Win32')).toEqual([
+      'C:\\Shows\\logo.png',
+      'C:\\Shows\\loop.mp4',
+    ]);
+    expect(parseDroppedFileUriList('file:///Users/me/logo.png', 'MacIntel')).toEqual(['/Users/me/logo.png']);
+  });
+
+  it('ignores non-file URI entries when parsing dropped paths', () => {
+    expect(fileUriToPath('https://example.test/logo.png', 'Win32')).toBeUndefined();
+    expect(fileUriToPath('not a uri', 'Win32')).toBeUndefined();
   });
 });

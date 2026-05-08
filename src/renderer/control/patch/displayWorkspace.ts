@@ -150,15 +150,39 @@ export function createDisplayWorkspaceController(elements: DisplayWorkspaceEleme
     if (targetPane && card.contains(targetPane)) {
       return targetPane;
     }
-    const hitElement = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
-      ? document.elementFromPoint(event.clientX, event.clientY)
-      : undefined;
-    const hitPane = hitElement?.closest<HTMLElement>('[data-display-zone]');
-    if (hitPane && card.contains(hitPane)) {
-      return hitPane;
+    const pointPane = resolveDisplayDropPaneAtPoint(card, event);
+    if (pointPane) {
+      return pointPane;
     }
     const zoneId = getDefaultDisplayDropZone(display, card);
     return card.querySelector<HTMLElement>(`[data-display-zone="${zoneId}"]`) ?? undefined;
+  }
+
+  function resolveDisplayDropPaneAtPoint(card: HTMLElement, event: DragEvent): HTMLElement | undefined {
+    if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+      return undefined;
+    }
+    const stack = typeof document.elementsFromPoint === 'function'
+      ? document.elementsFromPoint(event.clientX, event.clientY)
+      : [];
+    for (const element of stack) {
+      const pane = element.closest<HTMLElement>('[data-display-zone]');
+      if (pane && card.contains(pane)) {
+        return pane;
+      }
+    }
+    for (const pane of card.querySelectorAll<HTMLElement>('[data-display-zone]')) {
+      const rect = pane.getBoundingClientRect();
+      if (
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      ) {
+        return pane;
+      }
+    }
+    return undefined;
   }
 
   function getPaneDisplayZone(pane: HTMLElement | undefined): DisplayZoneId | undefined {

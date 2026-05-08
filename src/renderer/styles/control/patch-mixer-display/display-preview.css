@@ -126,7 +126,7 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-teal) 64%, transparent);
 }
 
-.display-preview-pane:last-child {
+.display-preview-pane:last-of-type {
   border-right: 0;
 }
 

@@ -25,10 +25,12 @@ function createDataTransferStub(): DataTransfer {
   } as unknown as DataTransfer;
 }
 
-function createDragEvent(type: string, dataTransfer: DataTransfer): DragEvent {
+function createDragEvent(type: string, dataTransfer: DataTransfer, init: { clientX?: number; clientY?: number } = {}): DragEvent {
   const event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
   Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
   Object.defineProperty(event, 'relatedTarget', { value: null });
+  Object.defineProperty(event, 'clientX', { value: init.clientX ?? 0 });
+  Object.defineProperty(event, 'clientY', { value: init.clientY ?? 0 });
   return event;
 }
 
@@ -153,6 +155,17 @@ async function dropPayloadOnPane(pane: HTMLElement, payload: { type: 'visual' | 
   await flushPromises();
 }
 
+async function dropPayloadOnTarget(
+  target: HTMLElement,
+  payload: { type: 'visual' | 'audio-source'; id: string },
+  init: { clientX?: number; clientY?: number } = {},
+): Promise<void> {
+  const dataTransfer = createDataTransferStub();
+  writeMediaPoolDragPayload(dataTransfer, payload);
+  target.dispatchEvent(createDragEvent('drop', dataTransfer, init));
+  await flushPromises();
+}
+
 describe('display workspace media drops', () => {
   beforeEach(() => {
     document.body.replaceChildren();
@@ -213,5 +226,23 @@ describe('display workspace media drops', () => {
     await dropPayloadOnPane(displayList.querySelector<HTMLElement>('[data-display-zone="R"]')!, { type: 'visual', id: 'visual-1' });
 
     expect(update).toHaveBeenCalledWith('d1', { layout: { type: 'split', visualIds: ['raw-left', 'visual-1'] } });
+  });
+
+  it('resolves split zones under card overlays using the hit-test stack', async () => {
+    const rawState = stateWithDisplay({ type: 'split', visualIds: ['visual-1', undefined] });
+    const { update } = installXtream(rawState);
+    const { displayList } = renderWorkspace(rawState);
+    const overlay = displayList.querySelector<HTMLElement>('.display-overlay')!;
+    const rightPane = displayList.querySelector<HTMLElement>('[data-display-zone="R"]')!;
+    const elementsFromPoint = vi.fn(() => [overlay, rightPane]);
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: elementsFromPoint,
+    });
+
+    await dropPayloadOnTarget(overlay, { type: 'visual', id: 'visual-2' }, { clientX: 120, clientY: 40 });
+
+    expect(update).toHaveBeenCalledWith('d1', { layout: { type: 'split', visualIds: ['visual-1', 'visual-2'] } });
+    Reflect.deleteProperty(document, 'elementsFromPoint');
   });
 });
