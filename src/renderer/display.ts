@@ -476,6 +476,7 @@ function newestPreviewForZone(zoneId: DisplayZoneId): VisualPreviewRuntime | und
 }
 
 function reconcileVisualPreviewZone(zone: HTMLElement, runtime: VisualPreviewRuntime | undefined, zoneId: DisplayZoneId): void {
+  zone.classList.toggle('active', runtime !== undefined);
   if (!runtime) {
     if (zone.childElementCount > 0) {
       cleanupMediaInElement(zone);

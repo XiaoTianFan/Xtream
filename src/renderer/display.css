@@ -115,6 +115,10 @@ body {
   background: transparent;
 }
 
+.display-preview-zone.active {
+  background: #000;
+}
+
 .display-preview-layer {
   background: #000;
 }

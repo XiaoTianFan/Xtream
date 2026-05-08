@@ -50,6 +50,31 @@ describe('stream surface signatures', () => {
       selectedSceneRunning: false,
     })));
   });
+
+  it('ignores visual preview-lane timing edits in the scene edit render signature', () => {
+    const base = streamPublic(visualStream());
+    const edited = streamPublic(visualStream({
+      startOffsetMs: 1500,
+      durationOverrideMs: 8000,
+      loop: { enabled: true, iterations: { type: 'count', count: 3 } },
+      fadeIn: { durationMs: 1200, curve: 'equal-power' },
+      fadeOut: { durationMs: 900, curve: 'log' },
+      freezeFrameMs: 4000,
+      playbackRate: 1.25,
+    }));
+
+    expect(JSON.stringify(createSceneEditRenderModel({
+      streamState: base,
+      sceneEditSceneId: 'scene-a',
+      currentState: directorState(),
+      selectedSceneRunning: false,
+    }))).toBe(JSON.stringify(createSceneEditRenderModel({
+      streamState: edited,
+      sceneEditSceneId: 'scene-a',
+      currentState: directorState(),
+      selectedSceneRunning: false,
+    })));
+  });
 });
 
 function audioStream(audioOverrides: Record<string, unknown> = {}): PersistedStreamConfig {
@@ -96,6 +121,33 @@ function streamPublic(stream: PersistedStreamConfig): StreamEnginePublicState {
     validationMessages: [],
     runtime: null,
   } as unknown as StreamEnginePublicState;
+}
+
+function visualStream(visualOverrides: Record<string, unknown> = {}): PersistedStreamConfig {
+  return {
+    id: 'stream',
+    label: 'Stream',
+    sceneOrder: ['scene-a'],
+    scenes: {
+      'scene-a': {
+        id: 'scene-a',
+        title: 'Scene A',
+        trigger: { type: 'manual' },
+        loop: { enabled: false },
+        preload: { enabled: false, leadTimeMs: 0 },
+        subCueOrder: ['visual-a'],
+        subCues: {
+          'visual-a': {
+            id: 'visual-a',
+            kind: 'visual',
+            visualId: 'vid-a',
+            targets: [{ displayId: 'display-a' }],
+            ...visualOverrides,
+          },
+        },
+      },
+    },
+  } as PersistedStreamConfig;
 }
 
 function directorState(): DirectorState {

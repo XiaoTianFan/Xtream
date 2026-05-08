@@ -6,6 +6,7 @@ import type {
   VisualSubCuePreviewPayload,
   VisualSubCuePreviewPosition,
 } from '../../../../shared/types';
+import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
 import {
   getVisualSubCueBaseDurationMs,
@@ -67,11 +68,20 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   let previewFrame: number | undefined;
   let previewDispatchMessage: string | undefined;
   const previewPositions = new Map<string, VisualSubCuePreviewPosition>();
+  let activeFreezeMenu: HTMLElement | undefined;
   let disposed = false;
 
   const previewId = `visual-subcue-preview:${draftSub.id}`;
   const root = document.createElement('div');
   root.className = 'stream-visual-preview-lane-editor';
+  for (const eventName of ['pointerdown', 'pointerup', 'click', 'dblclick', 'contextmenu']) {
+    root.addEventListener(eventName, (event) => {
+      if (eventName === 'click') {
+        dismissFreezeMarkerMenu();
+      }
+      event.stopPropagation();
+    });
+  }
 
   const rail = document.createElement('div');
   rail.className = 'stream-visual-preview-lane-rail stream-audio-waveform-rail';
@@ -204,6 +214,15 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         fadeOut: { durationMs: draftSub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(draftSub.fadeOut?.curve) },
       });
     }
+  });
+  stage.addEventListener('contextmenu', (event) => {
+    const point = lanePoint(stage, event);
+    if (hitTest(point.x, point.y).type !== 'freeze-marker') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    showFreezeMarkerMenu(event.clientX, event.clientY);
   });
 
   void loadSnapshots();
@@ -392,6 +411,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     overlay.replaceChildren(
       createOverlayRegion('stream-visual-preview-lane-fade in', 0, Math.max(0, fadeInX - rect.left)),
       createOverlayRegion('stream-visual-preview-lane-fade out', Math.max(0, fadeOutX - rect.left), Math.max(0, rect.left + rect.width - fadeOutX), isInfiniteRender()),
+      createOverlayFadeCurve(durationMs, rect),
       ...(markerX !== undefined ? [createOverlayMarker(markerX)] : []),
       createOverlayPlayhead(playheadX),
     );
@@ -445,6 +465,39 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     playhead.className = 'stream-visual-preview-lane-playhead';
     playhead.style.left = `${leftPx}px`;
     return playhead;
+  }
+
+  function createOverlayFadeCurve(durationMs: number, rect: VisualPreviewLaneRect): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'stream-visual-preview-lane-fade-curve');
+    svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', visualFadeEnvelopePath(durationMs, rect));
+    svg.append(path);
+    return svg;
+  }
+
+  function visualFadeEnvelopePath(durationMs: number, rect: VisualPreviewLaneRect): string {
+    const fadeOut = isInfiniteRender() ? undefined : draftSub.fadeOut;
+    if (!draftSub.fadeIn?.durationMs && !fadeOut?.durationMs) {
+      return '';
+    }
+    const sampleCount = Math.max(24, Math.min(160, Math.round(rect.width / 8)));
+    const parts: string[] = [];
+    for (let i = 0; i <= sampleCount; i += 1) {
+      const localMs = (durationMs * i) / sampleCount;
+      const gain = evaluateFadeGain({
+        timeMs: localMs,
+        durationMs,
+        fadeIn: draftSub.fadeIn,
+        fadeOut,
+      });
+      const x = msToLaneX(localMs, durationMs, rect) - rect.left;
+      const y = fadeGainToY(gain, rect);
+      parts.push(`${i === 0 ? 'M' : 'L'} ${roundPathNumber(x)} ${roundPathNumber(y)}`);
+    }
+    return parts.join(' ');
   }
 
   async function loadSnapshots(): Promise<void> {
@@ -691,6 +744,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       return;
     }
     disposed = true;
+    dismissFreezeMarkerMenu();
     unsubscribePreviewPosition?.();
     unsubscribePreviewSnapshot?.();
     disconnectObserver.disconnect();
@@ -730,6 +784,48 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     }
     return undefined;
   }
+
+  function showFreezeMarkerMenu(clientX: number, clientY: number): void {
+    dismissFreezeMarkerMenu();
+    const menu = document.createElement('div');
+    menu.className = 'context-menu audio-source-menu stream-visual-preview-lane-menu';
+    menu.setAttribute('role', 'menu');
+    menu.addEventListener('click', (event) => event.stopPropagation());
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary context-menu-item';
+    remove.setAttribute('role', 'menuitem');
+    remove.textContent = 'Remove freeze marker';
+    remove.addEventListener('click', () => {
+      dismissFreezeMarkerMenu();
+      patchAndRefreshPreview({ freezeFrameMs: undefined });
+    });
+    menu.append(remove);
+    document.body.append(menu);
+    positionContextMenu(menu, clientX, clientY);
+    activeFreezeMenu = menu;
+    document.addEventListener('click', dismissFreezeMarkerMenu, { once: true });
+    window.addEventListener('blur', dismissFreezeMarkerMenu, { once: true });
+  }
+
+  function dismissFreezeMarkerMenu(): void {
+    activeFreezeMenu?.remove();
+    activeFreezeMenu = undefined;
+  }
+}
+
+function fadeGainToY(gain: number, rect: VisualPreviewLaneRect): number {
+  return rect.height - Math.max(0, Math.min(1, gain)) * rect.height;
+}
+
+function roundPathNumber(value: number): string {
+  return String(Math.round(value * 100) / 100);
+}
+
+function positionContextMenu(menu: HTMLElement, clientX: number, clientY: number): void {
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(clientX, window.innerWidth - bounds.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(clientY, window.innerHeight - bounds.height - 4))}px`;
 }
 
 function createRailButton(label: string, onClick: () => void): HTMLButtonElement {

@@ -130,6 +130,61 @@ describe('visualSubCuePreviewLaneEditor', () => {
     expect(patches).toEqual([{ freezeFrameMs: 5000 }]);
   });
 
+  it('removes a freeze marker from the marker context menu', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ freezeFrameMs: 5000 }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 320, clientY: 96 }));
+    document.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-menu .context-menu-item')?.click();
+
+    expect(patches).toEqual([{ freezeFrameMs: undefined }]);
+  });
+
+  it('contains lane interactions so they do not bubble to parent redraw handlers', () => {
+    const parentPointerDown = vi.fn();
+    const parentClick = vi.fn();
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+    editor.parentElement?.addEventListener('pointerdown', parentPointerDown);
+    editor.parentElement?.addEventListener('click', parentClick);
+
+    editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-transport')?.click();
+
+    expect(parentPointerDown).not.toHaveBeenCalled();
+    expect(parentClick).not.toHaveBeenCalled();
+  });
+
+  it('renders a visual fade curve and cycles its curve on double click', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ fadeIn: { durationMs: 2500, curve: 'linear' } }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    const path = editor.querySelector<SVGPathElement>('.stream-visual-preview-lane-fade-curve path');
+    expect(path?.getAttribute('d')).toContain('L');
+
+    stage.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 40, clientY: 12 }));
+
+    expect(patches).toEqual([{ fadeIn: { durationMs: 2500, curve: 'equal-power' } }]);
+  });
+
   it('sends transient preview commands and stops on cleanup', async () => {
     vi.useFakeTimers();
     const preview = vi.fn(async (command) => ({

@@ -93,6 +93,19 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
     ...sceneWithoutFlow,
     subCues: Object.fromEntries(
       Object.entries(subCues).map(([id, subCue]) => {
+        if (subCue.kind === 'visual' && options.omitAudioTimingEditorFields) {
+          const {
+            startOffsetMs: _startOffsetMs,
+            durationOverrideMs: _durationOverrideMs,
+            loop: _loop,
+            fadeIn: _fadeIn,
+            fadeOut: _fadeOut,
+            freezeFrameMs: _freezeFrameMs,
+            playbackRate: _playbackRate,
+            ...stableVisualSubCue
+          } = subCue;
+          return [id, stableVisualSubCue];
+        }
         if (subCue.kind !== 'audio') {
           return [id, subCue];
         }
