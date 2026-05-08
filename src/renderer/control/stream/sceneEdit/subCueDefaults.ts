@@ -1,5 +1,6 @@
 import { PATCH_COMPAT_SCENE_ID } from '../../../../shared/streamWorkspace';
 import type {
+  DisplayWindowState,
   DirectorState,
   PersistedAudioSubCueConfig,
   PersistedControlSubCueConfig,
@@ -7,15 +8,17 @@ import type {
   PersistedVisualSubCueConfig,
   SceneId,
   SubCueId,
+  VirtualOutputState,
 } from '../../../../shared/types';
-/** Default visual mingle for new display targets uses full single zone per display entry. */
+
+const MAIN_OUTPUT_ID = 'output-main';
+const MAIN_DISPLAY_ID = 'display-0';
 
 export function buildDefaultAudioSubCue(
   id: SubCueId,
   state: DirectorState,
 ): PersistedAudioSubCueConfig {
-  const outputIds = Object.keys(state.outputs);
-  const firstOutput = outputIds[0] ?? '';
+  const mainOutput = pickMainOutputId(state.outputs);
   const firstAudio =
     Object.values(state.audioSources).find((a) => a.id)?.id ?? Object.keys(state.audioSources)[0] ?? '';
 
@@ -23,7 +26,7 @@ export function buildDefaultAudioSubCue(
     id,
     kind: 'audio',
     audioSourceId: firstAudio,
-    outputIds: firstOutput ? [firstOutput] : [],
+    outputIds: mainOutput ? [mainOutput] : [],
     playbackRate: 1,
     pitchShiftSemitones: 0,
   };
@@ -31,13 +34,13 @@ export function buildDefaultAudioSubCue(
 
 export function buildDefaultVisualSubCue(id: SubCueId, state: DirectorState): PersistedVisualSubCueConfig {
   const firstVisual = Object.keys(state.visuals)[0];
-  const targets =
-    Object.values(state.displays).length > 0
-      ? Object.values(state.displays).map((d) => ({
-          displayId: d.id,
-          zoneId: d.layout.type === 'split' ? ('L' as const) : undefined,
-        }))
-      : [];
+  const mainDisplay = pickMainDisplay(state.displays);
+  const targets = mainDisplay
+    ? [{
+        displayId: mainDisplay.id,
+        zoneId: mainDisplay.layout.type === 'split' ? ('L' as const) : undefined,
+      }]
+    : [];
 
   return {
     id,
@@ -46,6 +49,23 @@ export function buildDefaultVisualSubCue(id: SubCueId, state: DirectorState): Pe
     targets,
     playbackRate: 1,
   };
+}
+
+function pickMainOutputId(outputs: Record<string, VirtualOutputState>): string | undefined {
+  if (outputs[MAIN_OUTPUT_ID]) {
+    return MAIN_OUTPUT_ID;
+  }
+  const outputIds = Object.keys(outputs).sort();
+  return outputIds.find((outputId) => outputs[outputId]?.label?.toLowerCase().includes('main')) ?? outputIds[0];
+}
+
+function pickMainDisplay(displaysById: Record<string, DisplayWindowState>): DisplayWindowState | undefined {
+  const displays = Object.values(displaysById)
+    .filter((display) => display.health !== 'closed')
+    .sort((left, right) => left.id.localeCompare(right.id));
+  return displays.find((display) => display.id === MAIN_DISPLAY_ID) ??
+    displays.find((display) => display.label?.toLowerCase().includes('main')) ??
+    displays[0];
 }
 
 export function buildDefaultControlSubCue(stream: PersistedStreamConfig, sceneId: SceneId, id: SubCueId): PersistedControlSubCueConfig {

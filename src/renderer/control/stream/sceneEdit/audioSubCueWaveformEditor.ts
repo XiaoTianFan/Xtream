@@ -119,7 +119,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   let pendingWaveformPatch: Partial<PersistedAudioSubCueConfig> | undefined;
   const source = currentState.audioSources[sub.audioSourceId];
   const sourceDurationMs = source?.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined;
-  let automationMode: AudioWaveformAutomationMode | undefined = 'level';
+  let automationMode: AudioWaveformAutomationMode | undefined;
   const cachedPeaks = getCachedAudioWaveformPeaks(source, currentState);
   let peaks: AudioWaveformPeaks | undefined = cachedPeaks;
   let loadState: 'missing' | 'pending' | 'ready' | 'error' = source ? (cachedPeaks ? 'ready' : 'pending') : 'missing';
@@ -158,7 +158,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   playButton.disabled = !previewAvailable;
   pauseButton.disabled = !previewAvailable;
 
-  const levelButton = createModeButton('Level', true, () => {
+  const levelButton = createModeButton('Level', false, () => {
     automationMode = automationMode === 'level' ? undefined : 'level';
     syncModeButtons();
     render();

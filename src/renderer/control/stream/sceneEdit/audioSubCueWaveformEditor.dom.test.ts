@@ -72,6 +72,22 @@ describe('audioSubCueWaveformEditor', () => {
     expect(transports.every((button) => button.querySelector('svg'))).toBe(true);
   });
 
+  it('opens without enabling level automation editing', () => {
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue(),
+      currentState: directorState(),
+      patchSubCue: vi.fn(),
+    });
+
+    const level = findWaveformButton(editor, 'Level');
+    const pan = findWaveformButton(editor, 'Pan');
+
+    expect(level?.classList.contains('active')).toBe(false);
+    expect(level?.getAttribute('aria-pressed')).toBe('false');
+    expect(pan?.classList.contains('active')).toBe(false);
+    expect(pan?.getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('maps Play times to fixed-count looping and keeps Infinite Loop exclusive', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({
@@ -146,6 +162,7 @@ describe('audioSubCueWaveformEditor', () => {
       patchSubCue: (patch) => patches.push(patch),
     });
     document.body.append(editor);
+    findWaveformButton(editor, 'Level')?.click();
     const canvas = editor.querySelector('canvas') as HTMLCanvasElement;
     canvas.setPointerCapture = vi.fn();
     canvas.releasePointerCapture = vi.fn();
@@ -170,6 +187,7 @@ describe('audioSubCueWaveformEditor', () => {
       patchSubCue: (patch) => patches.push(patch),
     });
     document.body.append(editor);
+    findWaveformButton(editor, 'Level')?.click();
     const canvas = editor.querySelector('canvas') as HTMLCanvasElement;
     canvas.setPointerCapture = vi.fn();
     canvas.releasePointerCapture = vi.fn();
@@ -193,6 +211,7 @@ describe('audioSubCueWaveformEditor', () => {
       patchSubCue: (patch) => patches.push(patch),
     });
     document.body.append(editor);
+    findWaveformButton(editor, 'Level')?.click();
 
     const clear = editor.querySelector<HTMLButtonElement>('.stream-audio-waveform-clear-automation');
     expect(clear?.getAttribute('aria-label')).toBe('Clear automation');
@@ -326,6 +345,10 @@ function installCanvasContextRecorder(): { fillStyles: string[]; fillTexts: stri
   } as unknown as CanvasRenderingContext2D;
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context);
   return { fillStyles, fillTexts };
+}
+
+function findWaveformButton(root: HTMLElement, label: string): HTMLButtonElement | undefined {
+  return [...root.querySelectorAll<HTMLButtonElement>('.stream-audio-waveform-button')].find((button) => button.textContent?.includes(label));
 }
 
 function audioSubCue(overrides: Partial<PersistedAudioSubCueConfig> = {}): PersistedAudioSubCueConfig {
