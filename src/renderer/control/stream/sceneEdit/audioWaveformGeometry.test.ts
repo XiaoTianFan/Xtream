@@ -61,6 +61,24 @@ describe('audioWaveformGeometry', () => {
     expect(cursorForAudioWaveformHit({ type: 'seek' })).toBe('pointer');
   });
 
+  it('hit tests bottom inner-loop handles before generic range seeking', () => {
+    expect(
+      hitTestAudioWaveform(
+        {
+          durationMs: 10_000,
+          sourceStartMs: 1000,
+          sourceEndMs: 9000,
+          innerLoopEditable: true,
+          innerLoopRange: { startMs: 3000, endMs: 6000 },
+        },
+        rect,
+        300,
+        148,
+      ),
+    ).toEqual({ type: 'loop-start' });
+    expect(cursorForAudioWaveformHit({ type: 'loop-end' })).toBe('ew-resize');
+  });
+
   it('cycles fade curves in the authored order', () => {
     expect(cycleFadeCurve(undefined)).toBe('linear');
     expect(cycleFadeCurve('linear')).toBe('equal-power');

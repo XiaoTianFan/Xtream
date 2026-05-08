@@ -1,15 +1,18 @@
 import type {
   DirectorState,
+  LoopIterations,
+  PassIterations,
   PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
   RuntimeSubCueTiming,
   SceneLoopPolicy,
+  SubCueInnerLoopPolicy,
   VisualState,
   VisualSubCuePreviewPayload,
   VisualSubCuePreviewPosition,
 } from '../../../../shared/types';
 import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
-import { mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
+import { clampInnerLoopRange, mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
 import { pickLinkedTimingFields, visualTimingPatchToAudio } from '../../../../shared/subCueTimingLink';
 import {
   clampVisualSourceRange,
@@ -20,6 +23,7 @@ import {
 import { decorateRailButton } from '../../shared/icons';
 import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
+import { createInfinityNumberToggle, type InfinityNumberControl, type InfinityNumberValue } from './infinityNumberControl';
 import {
   createPlaceholderVisualPreviewSnapshots,
   getCachedVisualPreviewSnapshots,
@@ -154,6 +158,8 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
 
   const controls = document.createElement('div');
   controls.className = 'stream-visual-preview-lane-controls stream-audio-waveform-controls';
+  let passControl: InfinityNumberControl | undefined;
+  let loopControl: InfinityNumberControl | undefined;
   const timingControls = createTimingControls();
   controls.append(...timingControls);
 
@@ -351,6 +357,8 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         sourceStartMs: mediaMode() === 'video-file' ? selectedSourceRange().startMs : undefined,
         sourceEndMs: mediaMode() === 'video-file' ? selectedSourceRange().endMs : undefined,
         rangeEditable: mediaMode() === 'video-file',
+        innerLoopRange: mediaMode() === 'video-file' ? visualLoopSourceRange() : undefined,
+        innerLoopEditable: mediaMode() === 'video-file' && hasLoopHandleRange(draftSub),
         freezeFrameMs: supportsFreeze() ? draftSub.freezeFrameMs : undefined,
         freezeLocalTimeMs: freezeLocalTimeMs(),
         freezePinMode: freezePinMode && supportsFreeze(),
@@ -381,6 +389,29 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       stageLanePatch({
         sourceStartMs: next.sourceStartMs,
         sourceEndMs: next.sourceEndMs,
+        innerLoop: clampInnerLoopForBase(draftSub.innerLoop, (next.selectedDurationMs ?? range.durationMs) / playbackRate()),
+      });
+      return;
+    }
+    if (drag.target.type === 'loop-start' || drag.target.type === 'loop-end') {
+      if (mediaMode() !== 'video-file') {
+        return;
+      }
+      const loopRange = visualLoopLocalRange();
+      if (!loopRange) {
+        return;
+      }
+      const range = selectedSourceRange();
+      const localMs = clampLocalLoopMs((laneXToMs(x, laneDurationMs(), laneRect()) - range.startMs) / playbackRate(), selectedBaseDurationMs());
+      stageLanePatch({
+        innerLoop: {
+          enabled: true,
+          range:
+            drag.target.type === 'loop-start'
+              ? clampRequiredLoopRange(localMs, loopRange.endMs, selectedBaseDurationMs())
+              : clampRequiredLoopRange(loopRange.startMs, localMs, selectedBaseDurationMs()),
+          iterations: loopIterationsForPatch(draftSub),
+        },
       });
       return;
     }
@@ -494,9 +525,19 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     const playheadX = msToLaneX(getPreviewLaneCursorMs(), durationMs, rect) - rect.left;
     const markerLocalMs = freezeLocalTimeMs();
     const markerX = markerLocalMs === undefined ? undefined : msToLaneX(markerLocalMs, durationMs, rect) - rect.left;
+    const loopRange = mediaMode() === 'video-file' ? visualLoopSourceRange() : undefined;
+    const loopStartLocalX = loopRange ? laneOverlayX(msToLaneX(loopRange.startMs, durationMs, rect), rect, 'handle') : undefined;
+    const loopEndLocalX = loopRange ? laneOverlayX(msToLaneX(loopRange.endMs, durationMs, rect), rect, 'handle') : undefined;
     overlay.replaceChildren(
       ...(mediaMode() === 'video-file' ? [createOverlayRegion('stream-visual-preview-lane-range', rangeStartLocalX, Math.max(0, rangeEndLocalX - rangeStartLocalX))] : []),
       ...(mediaMode() === 'video-file' ? [createOverlayRangeEdge('start', rangeStartLocalX), createOverlayRangeEdge('end', rangeEndLocalX)] : []),
+      ...(loopStartLocalX !== undefined && loopEndLocalX !== undefined
+        ? [
+            createOverlayRegion('stream-visual-preview-lane-loop-region', loopStartLocalX, Math.max(0, loopEndLocalX - loopStartLocalX)),
+            createOverlayLoopEdge('start', loopStartLocalX),
+            createOverlayLoopEdge('end', loopEndLocalX),
+          ]
+        : []),
       createOverlayRegion('stream-visual-preview-lane-fade in', rangeStartLocalX, Math.max(0, fadeInLocalX - rangeStartLocalX)),
       createOverlayRegion('stream-visual-preview-lane-fade out', fadeOutLocalX, Math.max(0, rangeEndLocalX - fadeOutLocalX), isInfiniteRender()),
       createOverlayFadeCurve(durationMs, rect),
@@ -558,6 +599,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   function createOverlayRangeEdge(edge: 'start' | 'end', leftPx: number): HTMLElement {
     const marker = document.createElement('div');
     marker.className = `stream-visual-preview-lane-range-edge ${edge}`;
+    marker.style.left = `${leftPx}px`;
+    return marker;
+  }
+
+  function createOverlayLoopEdge(edge: 'start' | 'end', leftPx: number): HTMLElement {
+    const marker = document.createElement('div');
+    marker.className = `stream-visual-preview-lane-loop-edge ${edge}`;
     marker.style.left = `${leftPx}px`;
     return marker;
   }
@@ -639,18 +687,16 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     const infinite = isInfiniteRender();
     const items: HTMLElement[] = [];
     if (mode === 'video-file') {
-      items.push(
-        createDraggableNumberField('Play times', getPlayTimes(draftSub), (value) => patchAndRefreshPreview(playTimesPatch(value)), {
-          min: 1,
-          step: 1,
-          dragStep: 0.05,
-          integer: true,
-          disabled: infinite,
-        }),
-        createInfiniteToggle('Infinite Loop', infinite, (enabled) =>
-          patchAndRefreshPreview({ loop: enabled ? infiniteLoopPolicy() : playTimesPatch(getPlayTimes(draftSub)).loop }),
-        ),
-      );
+      passControl = createInfinityNumberToggle('Pass time', passControlValue(draftSub), (value) => patchAndRefreshPreview(passValuePatch(value)), {
+        min: 1,
+        step: 1,
+        infinityDisabled: loopIsInfinite(draftSub),
+      });
+      loopControl = createInfinityNumberToggle('Loop time', loopControlValue(draftSub), (value) => patchAndRefreshPreview(loopValuePatch(value)), {
+        min: 0,
+        step: 1,
+      });
+      items.push(passControl, loopControl);
     } else {
       items.push(
         createDraggableNumberField('Duration', draftSub.durationOverrideMs, (durationOverrideMs) => patchAndRefreshPreview({ durationOverrideMs }), {
@@ -716,13 +762,15 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     const mode = mediaMode();
     const fields = [...controls.querySelectorAll<HTMLElement>('.stream-draggable-number')];
     const loopButton = controls.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-loop');
-    loopButton?.classList.toggle('active', infinite);
-    loopButton?.setAttribute('aria-pressed', String(infinite));
-    const primary = fields[0];
-    setDraggableDisabled(primary, infinite);
     if (mode === 'video-file') {
-      setDraggableValue(primary, getPlayTimes(draftSub));
+      const loopInfinite = loopIsInfinite(draftSub);
+      passControl?.sync(passControlValue(draftSub), { disabled: loopInfinite, infinityDisabled: loopInfinite });
+      loopControl?.sync(loopControlValue(draftSub), { infinityDisabled: passIsInfinite(draftSub) });
     } else {
+      loopButton?.classList.toggle('active', infinite);
+      loopButton?.setAttribute('aria-pressed', String(infinite));
+      const primary = fields[0];
+      setDraggableDisabled(primary, infinite);
       setDraggableValue(primary, draftSub.durationOverrideMs);
     }
     setDraggableValue(fields.find((field) => field.textContent?.includes('Freeze Frame')), draftSub.freezeFrameMs);
@@ -851,6 +899,67 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     });
     const phase = mapElapsedToSubCuePassPhase(Math.max(0, localTimeMs), timing);
     return Math.min(range.endMs, Math.max(range.startMs, range.startMs + phase.mediaElapsedMs * rate));
+  }
+
+  function selectedBaseDurationMs(): number {
+    const range = selectedSourceRange();
+    return Math.max(0, range.durationMs / playbackRate());
+  }
+
+  function visualLoopLocalRange(): { startMs: number; endMs: number } | undefined {
+    const range = draftSub.innerLoop?.range;
+    if (!range) {
+      return undefined;
+    }
+    return clampInnerLoopRange(range, selectedBaseDurationMs());
+  }
+
+  function visualLoopSourceRange(): { startMs: number; endMs: number } | undefined {
+    if (!hasLoopHandleRange(draftSub)) {
+      return undefined;
+    }
+    const selectedRange = selectedSourceRange();
+    const loopRange = visualLoopLocalRange();
+    if (!loopRange) {
+      return undefined;
+    }
+    const rate = playbackRate();
+    return {
+      startMs: Math.min(selectedRange.endMs, selectedRange.startMs + loopRange.startMs * rate),
+      endMs: Math.min(selectedRange.endMs, selectedRange.startMs + loopRange.endMs * rate),
+    };
+  }
+
+  function loopRangeForPatch(): { startMs: number; endMs: number } {
+    return visualLoopLocalRange() ?? defaultInnerLoopRange(selectedBaseDurationMs());
+  }
+
+  function passValuePatch(value: InfinityNumberValue): Partial<PersistedVisualSubCueConfig> {
+    const pass =
+      value.type === 'infinite'
+        ? { iterations: { type: 'infinite' } as PassIterations }
+        : { iterations: { type: 'count', count: Math.max(1, Math.round(value.count)) } as PassIterations };
+    return {
+      pass,
+      innerLoop: value.type === 'infinite' && loopIsInfinite(draftSub) ? { enabled: false, range: draftSub.innerLoop?.range } : draftSub.innerLoop,
+      loop: undefined,
+    };
+  }
+
+  function loopValuePatch(value: InfinityNumberValue): Partial<PersistedVisualSubCueConfig> {
+    const iterations: LoopIterations =
+      value.type === 'infinite'
+        ? { type: 'infinite' }
+        : { type: 'count', count: Math.max(0, Math.round(value.count)) };
+    const range = loopRangeForPatch();
+    if (iterations.type === 'count' && iterations.count <= 0) {
+      return { innerLoop: range ? { enabled: false, range } : { enabled: false }, loop: undefined };
+    }
+    return {
+      ...(iterations.type === 'infinite' ? { pass: { iterations: { type: 'count', count: 1 } as PassIterations } } : {}),
+      innerLoop: { enabled: true, range, iterations },
+      loop: undefined,
+    };
   }
 
   function startPreviewTicker(): void {
@@ -1038,22 +1147,97 @@ function createInfiniteToggle(label: string, pressed: boolean, onToggle: (presse
   return button;
 }
 
-function getPlayTimes(sub: PersistedVisualSubCueConfig): number {
-  if (sub.loop?.enabled && sub.loop.iterations.type === 'count') {
-    return Math.max(1, Math.round(sub.loop.iterations.count));
-  }
-  return 1;
+function infiniteLoopPolicy(): SceneLoopPolicy {
+  return { enabled: true, iterations: { type: 'infinite' } };
 }
 
-function playTimesPatch(value: number | undefined): Partial<PersistedVisualSubCueConfig> {
-  const playTimes = Math.max(1, Math.round(value ?? 1));
+function passControlValue(sub: Pick<PersistedVisualSubCueConfig, 'pass' | 'loop'>): InfinityNumberValue {
+  if (sub.pass?.iterations.type === 'infinite' || !sub.pass && sub.loop?.enabled && !sub.loop.range && sub.loop.iterations.type === 'infinite') {
+    return { type: 'infinite' };
+  }
+  if (sub.pass?.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(1, Math.round(sub.pass.iterations.count)) };
+  }
+  if (!sub.pass && sub.loop?.enabled && !sub.loop.range && sub.loop.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(1, Math.round(sub.loop.iterations.count)) };
+  }
+  return { type: 'count', count: 1 };
+}
+
+function loopControlValue(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): InfinityNumberValue {
+  if (sub.innerLoop?.enabled && sub.innerLoop.iterations.type === 'infinite') {
+    return { type: 'infinite' };
+  }
+  if (sub.innerLoop?.enabled && sub.innerLoop.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(0, Math.round(sub.innerLoop.iterations.count)) };
+  }
+  if (!sub.innerLoop && sub.loop?.enabled && sub.loop.range) {
+    return sub.loop.iterations.type === 'infinite'
+      ? { type: 'infinite' }
+      : { type: 'count', count: Math.max(0, Math.round(sub.loop.iterations.count) - 1) };
+  }
+  return { type: 'count', count: 0 };
+}
+
+function passIsInfinite(sub: Pick<PersistedVisualSubCueConfig, 'pass' | 'loop'>): boolean {
+  return passControlValue(sub).type === 'infinite';
+}
+
+function loopIsInfinite(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): boolean {
+  return loopControlValue(sub).type === 'infinite';
+}
+
+function hasLoopHandleRange(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): boolean {
+  const value = loopControlValue(sub);
+  return Boolean(sub.innerLoop?.range || sub.loop?.enabled && sub.loop.range || value.type === 'infinite' || value.count > 0);
+}
+
+function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
+  const base = Math.max(1, Math.round(baseDurationMs));
+  if (base <= 3) {
+    return { startMs: 0, endMs: base };
+  }
   return {
-    loop: playTimes <= 1 ? { enabled: false } : { enabled: true, iterations: { type: 'count', count: playTimes } },
+    startMs: Math.round(base / 3),
+    endMs: Math.round((base * 2) / 3),
   };
 }
 
-function infiniteLoopPolicy(): SceneLoopPolicy {
-  return { enabled: true, iterations: { type: 'infinite' } };
+function clampLocalLoopMs(value: number, baseDurationMs: number): number {
+  return Math.max(0, Math.min(Math.max(0, baseDurationMs), Number.isFinite(value) ? value : 0));
+}
+
+function clampRequiredLoopRange(startMs: number, endMs: number, baseDurationMs: number): { startMs: number; endMs: number } {
+  return clampInnerLoopRange({ startMs, endMs }, baseDurationMs) ?? defaultInnerLoopRange(baseDurationMs);
+}
+
+function clampInnerLoopForBase(
+  innerLoop: SubCueInnerLoopPolicy | undefined,
+  baseDurationMs: number,
+): SubCueInnerLoopPolicy | undefined {
+  if (!innerLoop?.range) {
+    return innerLoop;
+  }
+  const range = clampInnerLoopRange(innerLoop.range, baseDurationMs);
+  if (!range) {
+    return { enabled: false };
+  }
+  return innerLoop.enabled
+    ? { enabled: true, range, iterations: loopIterationsForPolicy(innerLoop) }
+    : { enabled: false, range };
+}
+
+function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIterations {
+  return innerLoop.enabled
+    ? innerLoop.iterations.type === 'infinite'
+      ? { type: 'infinite' }
+      : { type: 'count', count: Math.max(0, Math.round(innerLoop.iterations.count)) }
+    : { type: 'count', count: 0 };
+}
+
+function loopIterationsForPatch(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
+  const value = loopControlValue(sub);
+  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(1, Math.round(value.count)) };
 }
 
 function setDraggableDisabled(field: HTMLElement | undefined, disabled: boolean): void {

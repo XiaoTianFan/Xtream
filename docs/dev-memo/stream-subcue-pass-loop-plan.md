@@ -546,3 +546,25 @@ Renderer tests:
 ## Settled behavior
 
 Loop time is an extra-repeat count. A loop time of `0` disables inner-loop expansion, a loop time of `1` replays the selected loop range once after its first natural traversal, and a loop time of `3` replays that range three additional times before exiting to the pass tail. Therefore B4 is `(One Pass: 30 + 10 * 3) * 2 = 120s`.
+
+## Phase 6-8 implementation notes
+
+Focused verification commands:
+
+- `npm run typecheck`
+- `npm test -- --run src/renderer/control/stream/sceneEdit/audioSubCueWaveformEditor.dom.test.ts src/renderer/control/stream/sceneEdit/visualSubCuePreviewLaneEditor.dom.test.ts src/renderer/control/stream/sceneEdit/audioWaveformGeometry.test.ts src/renderer/control/stream/sceneEdit/visualPreviewLaneGeometry.test.ts src/shared/subCueTimingLink.test.ts`
+
+Manual QA checklist:
+
+- Audio sub-cue shows `Pass time` and `Loop time`; pass accepts integers >= 1 or infinity, loop accepts integers >= 0 or infinity.
+- Finite-video visual sub-cue shows the same controls; image and live visuals still use `Duration` and `Infinite Render`.
+- Toggling loop infinity sets pass to count 1 and disables pass infinity while loop infinity remains active.
+- Toggling pass infinity clears loop infinity and keeps any finite loop range available for later reuse.
+- Bottom loop handles render inside the selected source range and cannot drag outside it.
+- Moving source range edges clamps the authored inner-loop range.
+- Audio and linked finite-video visual timing patches propagate `pass`, `innerLoop`, loop count, loop infinity, and loop range.
+- Preview seeking into A1-A3 and B1-B8 cases keeps audio and finite-video source phase aligned with the expanded pass/loop timeline.
+
+Release note draft:
+
+- Stream audio sub-cues and finite video visual sub-cues now separate whole-range pass count from inner loop repeats. Use `Pass time` for how many times the selected source range plays and `Loop time` for optional repeats inside each pass, including infinity interlocks that prevent invalid infinite combinations.

@@ -14,6 +14,8 @@ type LinkedTimingField =
   | 'fadeIn'
   | 'fadeOut'
   | 'loop'
+  | 'pass'
+  | 'innerLoop'
   | 'playbackRate'
   | 'startOffsetMs';
 
@@ -24,6 +26,8 @@ const LINKED_TIMING_FIELDS: LinkedTimingField[] = [
   'fadeIn',
   'fadeOut',
   'loop',
+  'pass',
+  'innerLoop',
   'playbackRate',
   'startOffsetMs',
 ];

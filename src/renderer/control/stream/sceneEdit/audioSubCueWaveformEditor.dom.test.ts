@@ -44,7 +44,7 @@ describe('audioSubCueWaveformEditor', () => {
     });
   });
 
-  it('patches the infinite loop policy from the waveform control row', () => {
+  it('patches loop infinity from the waveform control row', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({
       sub: audioSubCue({ loop: { enabled: false } }),
@@ -53,10 +53,20 @@ describe('audioSubCueWaveformEditor', () => {
     });
     document.body.append(editor);
 
-    const loop = editor.querySelector('.stream-audio-waveform-loop') as HTMLButtonElement;
-    loop.click();
+    const loopInfinity = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!;
+    loopInfinity.click();
 
-    expect(patches).toEqual([{ loop: { enabled: true, iterations: { type: 'infinite' } } }]);
+    expect(patches).toEqual([
+      {
+        pass: { iterations: { type: 'count', count: 1 } },
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 2133, endMs: 4267 },
+          iterations: { type: 'infinite' },
+        },
+        loop: undefined,
+      },
+    ]);
   });
 
   it('uses icon transport controls with accessible labels', () => {
@@ -88,7 +98,7 @@ describe('audioSubCueWaveformEditor', () => {
     expect(pan?.getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('maps Play times to fixed-count looping and keeps Infinite Loop exclusive', () => {
+  it('maps Pass time and Loop time to structured pass and inner-loop policies', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({
       sub: audioSubCue({ loop: { enabled: false } }),
@@ -96,21 +106,44 @@ describe('audioSubCueWaveformEditor', () => {
       patchSubCue: (patch) => patches.push(patch),
     });
 
-    const playTimes = editor.querySelector<HTMLInputElement>('.stream-draggable-number .label-input');
-    expect(playTimes).not.toBeNull();
-    playTimes!.value = '3';
-    playTimes!.dispatchEvent(new Event('change'));
+    const pass = editor.querySelector<HTMLInputElement>('[aria-label="Pass time"]');
+    expect(pass).not.toBeNull();
+    pass!.value = '3';
+    pass!.dispatchEvent(new Event('change'));
 
-    const loop = editor.querySelector('.stream-audio-waveform-loop') as HTMLButtonElement;
-    expect(loop.textContent).toContain('Infinite Loop');
-    loop.click();
+    const loopInfinity = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!;
+    loopInfinity.click();
 
     expect(patches).toEqual([
-      { loop: { enabled: true, iterations: { type: 'count', count: 3 } } },
-      { loop: { enabled: true, iterations: { type: 'infinite' } } },
+      { pass: { iterations: { type: 'count', count: 3 } }, innerLoop: undefined, loop: undefined },
+      {
+        pass: { iterations: { type: 'count', count: 1 } },
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 2133, endMs: 4267 },
+          iterations: { type: 'infinite' },
+        },
+        loop: undefined,
+      },
     ]);
-    expect(loop.classList.contains('active')).toBe(true);
-    expect(playTimes!.disabled).toBe(true);
+    expect(loopInfinity.classList.contains('active')).toBe(true);
+    expect(pass!.disabled).toBe(true);
+  });
+
+  it('disables loop infinity while pass infinity is active', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue(),
+      currentState: directorState({ noUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    const passInfinity = editor.querySelector<HTMLButtonElement>('[aria-label="Pass time infinity"]')!;
+    const loopInfinity = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!;
+    passInfinity.click();
+
+    expect(patches).toEqual([{ pass: { iterations: { type: 'infinite' } }, innerLoop: undefined, loop: undefined }]);
+    expect(loopInfinity.disabled).toBe(true);
   });
 
   it('stops preview UI state after fixed-count play times finish', () => {
@@ -177,6 +210,71 @@ describe('audioSubCueWaveformEditor', () => {
 
     expect(patches).toHaveLength(1);
     expect(patches[0].levelAutomation?.length).toBeGreaterThan(0);
+  });
+
+  it('commits bottom loop-handle drags as inner loop ranges', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({
+        playbackRate: 1,
+        innerLoop: { enabled: true, range: { startMs: 2000, endMs: 4000 }, iterations: { type: 'count', count: 1 } },
+      }),
+      currentState: directorState(),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const canvas = editor.querySelector('canvas') as HTMLCanvasElement;
+    canvas.setPointerCapture = vi.fn();
+    canvas.releasePointerCapture = vi.fn();
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 192, clientY: 150 }));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
+    expect(patches).toEqual([]);
+    canvas.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
+
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 3000, endMs: 4000 },
+          iterations: { type: 'count', count: 1 },
+        },
+      },
+    ]);
+  });
+
+  it('clamps inner loop ranges when source range edges move', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({
+        playbackRate: 1,
+        innerLoop: { enabled: true, range: { startMs: 1000, endMs: 7000 }, iterations: { type: 'count', count: 1 } },
+      }),
+      currentState: directorState(),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const canvas = editor.querySelector('canvas') as HTMLCanvasElement;
+    canvas.setPointerCapture = vi.fn();
+    canvas.releasePointerCapture = vi.fn();
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 576, clientY: 90 }));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 192, clientY: 90 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 192, clientY: 90 }));
+
+    expect(patches).toEqual([
+      {
+        sourceStartMs: 1000,
+        sourceEndMs: 3000,
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 1000, endMs: 2000 },
+          iterations: { type: 'count', count: 1 },
+        },
+      },
+    ]);
   });
 
   it('writes automation drawing into fixed time buckets', () => {

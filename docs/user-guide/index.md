@@ -1,5 +1,7 @@
 # Xtream User Guide
 
+Documentation version: `0.0.1` nightly
+
 Xtream is a desktop show-control system for media-rich rooms. Use it to import visual and audio media, create display windows, route audio through virtual outputs, and build scene-based Stream playback for performances, installations, demos, and exhibitions.
 
 This guide is written for operators, artists, venue technicians, and technically comfortable users setting up a show workstation.
@@ -53,3 +55,9 @@ Useful references:
 ## Release Notes
 
 The current release-note entry point is [Release notes](release-notes/index.md). It links to the runtime changelog, which remains the canonical chronological product-history source.
+
+## Documentation Log
+
+| Docs version | Notes |
+| --- | --- |
+| `0.0.1` nightly | First complete user-guide pass covering phase 1 through phase 5: first-show onboarding, Stream authoring, live operation, diagnostics, deep references, release discovery, and the visual sub-cue preview lane. |

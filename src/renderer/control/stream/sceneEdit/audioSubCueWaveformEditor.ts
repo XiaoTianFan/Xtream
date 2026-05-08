@@ -2,11 +2,13 @@ import type {
   AudioSubCuePreviewPayload,
   AudioSubCuePreviewPosition,
   DirectorState,
+  LoopIterations,
+  PassIterations,
   PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
-  SceneLoopPolicy,
+  SubCueInnerLoopPolicy,
 } from '../../../../shared/types';
-import { mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
+import { clampInnerLoopRange, mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
 import {
   clampPitchShiftSemitones,
   evaluateFadeGain,
@@ -14,6 +16,7 @@ import {
 import { audioTimingPatchToVisual, pickLinkedTimingFields } from '../../../../shared/subCueTimingLink';
 import { createSubCueSection } from './subCueFormControls';
 import { createDraggableNumberField } from './draggableNumberField';
+import { createInfinityNumberToggle, type InfinityNumberValue } from './infinityNumberControl';
 import { buildAudioSubCuePreviewPayload, chooseAudioSubCuePreviewOutput } from './audioSubCuePreviewPayload';
 import {
   getCachedAudioWaveformPeaks,
@@ -73,6 +76,8 @@ type WaveformTheme = {
   fadeFill: string;
   fadeLine: string;
   fadeEnvelope: string;
+  loopFill: string;
+  loopLine: string;
   levelActive: string;
   panActive: string;
   automationMuted: string;
@@ -91,6 +96,8 @@ const DARK_WAVEFORM_THEME: WaveformTheme = {
   fadeFill: 'rgba(214, 164, 73, 0.19)',
   fadeLine: 'rgba(236, 185, 83, 0.95)',
   fadeEnvelope: 'rgba(236, 185, 83, 0.98)',
+  loopFill: 'rgba(255, 255, 255, 0.13)',
+  loopLine: 'rgba(255, 255, 255, 0.88)',
   levelActive: 'rgba(64, 216, 182, 0.96)',
   panActive: 'rgba(228, 121, 164, 0.96)',
   automationMuted: 'rgb(210, 220, 226)',
@@ -109,6 +116,8 @@ const LIGHT_WAVEFORM_THEME: WaveformTheme = {
   fadeFill: 'rgba(154, 122, 74, 0.18)',
   fadeLine: 'rgba(134, 99, 42, 0.92)',
   fadeEnvelope: 'rgba(134, 99, 42, 0.96)',
+  loopFill: 'rgba(255, 255, 255, 0.28)',
+  loopLine: 'rgba(255, 255, 255, 0.92)',
   levelActive: 'rgba(22, 132, 109, 0.94)',
   panActive: 'rgba(166, 67, 111, 0.94)',
   automationMuted: 'rgb(70, 77, 82)',
@@ -186,17 +195,18 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
 
   const controls = document.createElement('div');
   controls.className = 'stream-audio-waveform-controls';
-  const infinite = Boolean(sub.loop?.enabled && sub.loop.iterations?.type === 'infinite');
-  const playTimesControl = createDraggableNumberField(
-    'Play times',
-    getPlayTimes(sub),
-    (playTimes) => patchAndRefreshPreview(playTimesPatch(playTimes)),
-    { min: 1, step: 1, dragStep: 0.05, integer: true, disabled: infinite },
-  );
-  const infiniteLoopButton = createInfiniteLoopToggle(infinite, (enabled) => patchAndRefreshPreview({ loop: enabled ? infiniteLoopPolicy() : playTimesPatch(getPlayTimes(draftSub)).loop }));
+  const passControl = createInfinityNumberToggle('Pass time', passControlValue(draftSub), (value) => patchAndRefreshPreview(passValuePatch(value)), {
+    min: 1,
+    step: 1,
+    infinityDisabled: loopIsInfinite(draftSub),
+  });
+  const loopControl = createInfinityNumberToggle('Loop time', loopControlValue(draftSub), (value) => patchAndRefreshPreview(loopValuePatch(value)), {
+    min: 0,
+    step: 1,
+  });
   controls.append(
-    playTimesControl,
-    infiniteLoopButton,
+    passControl,
+    loopControl,
     createDraggableNumberField('Delay Start', sub.startOffsetMs ?? 0, (startOffsetMs) => patchAndRefreshPreview({ startOffsetMs }), {
       min: 0,
       step: 1,
@@ -325,18 +335,9 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
   }
 
   function syncTimingControls(): void {
-    const isInfinite = Boolean(draftSub.loop?.enabled && draftSub.loop.iterations?.type === 'infinite');
-    infiniteLoopButton.classList.toggle('active', isInfinite);
-    infiniteLoopButton.setAttribute('aria-pressed', String(isInfinite));
-    const playTimesInput = playTimesControl.querySelector<HTMLInputElement>('input');
-    const playTimesGrip = playTimesControl.querySelector<HTMLButtonElement>('.stream-draggable-number-grip');
-    if (playTimesInput) {
-      playTimesInput.disabled = isInfinite;
-      playTimesInput.value = String(getPlayTimes(draftSub));
-    }
-    if (playTimesGrip) {
-      playTimesGrip.disabled = isInfinite;
-    }
+    const loopInfinite = loopIsInfinite(draftSub);
+    passControl.sync(passControlValue(draftSub), { disabled: loopInfinite, infinityDisabled: loopInfinite });
+    loopControl.sync(loopControlValue(draftSub), { infinityDisabled: passIsInfinite(draftSub) });
   }
 
   function scheduleThemeRender(): void {
@@ -367,6 +368,8 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
         sourceEndMs: draftSub.sourceEndMs,
         fadeIn: draftSub.fadeIn,
         fadeOut: draftSub.fadeOut,
+        innerLoopRange: audioLoopSourceRange(),
+        innerLoopEditable: hasLoopHandleRange(draftSub),
         automationMode,
         automationPoints: activeAutomationPoints(),
       },
@@ -396,6 +399,26 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
       stageWaveformPatch({
         sourceStartMs: next.sourceStartMs,
         sourceEndMs: next.sourceEndMs,
+        innerLoop: clampInnerLoopForBase(draftSub.innerLoop, (next.selectedDurationMs ?? range.durationMs ?? 0) / audioPlaybackRate()),
+      });
+      return;
+    }
+    if (drag.target.type === 'loop-start' || drag.target.type === 'loop-end') {
+      const loopRange = audioLoopLocalRange();
+      if (!loopRange) {
+        return;
+      }
+      const baseDurationMs = selectedBaseDurationMs();
+      const localMs = clampLocalLoopMs((mediaMs - range.startMs) / audioPlaybackRate(), baseDurationMs);
+      stageWaveformPatch({
+        innerLoop: {
+          enabled: true,
+          range:
+            drag.target.type === 'loop-start'
+              ? clampRequiredLoopRange(localMs, loopRange.endMs, baseDurationMs)
+              : clampRequiredLoopRange(loopRange.startMs, localMs, baseDurationMs),
+          iterations: loopIterationsForPatch(draftSub),
+        },
       });
       return;
     }
@@ -479,6 +502,7 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     drawBackground(ctx, rect, theme);
     drawPeaks(ctx, rect, loadState, peaks, theme);
     drawRangeAndFades(ctx, rect, theme);
+    drawInnerLoopRegion(ctx, rect, theme);
     drawFadeEnvelope(ctx, rect, theme);
     drawAutomationLines(ctx, rect, theme);
     drawRangeTimeLabels(ctx, rect, theme);
@@ -565,6 +589,31 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     ctx.moveTo(fadeOutX, rect.top);
     ctx.lineTo(fadeOutX, rect.top + rect.height * 0.32);
     ctx.stroke();
+  }
+
+  function drawInnerLoopRegion(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
+    if (!sourceDurationMs) {
+      return;
+    }
+    const loopRange = audioLoopSourceRange();
+    if (!loopRange) {
+      return;
+    }
+    const startX = msToWaveformX(loopRange.startMs, sourceDurationMs, rect);
+    const endX = msToWaveformX(loopRange.endMs, sourceDurationMs, rect);
+    const handleTop = rect.top + rect.height * 0.68;
+    ctx.save();
+    ctx.fillStyle = theme.loopFill;
+    ctx.fillRect(startX, handleTop, Math.max(0, endX - startX), rect.height - (handleTop - rect.top));
+    ctx.strokeStyle = theme.loopLine;
+    ctx.lineWidth = 2;
+    for (const x of [startX, endX]) {
+      ctx.beginPath();
+      ctx.moveTo(x, handleTop);
+      ctx.lineTo(x, rect.top + rect.height);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawFadeEnvelope(ctx: CanvasRenderingContext2D, rect: AudioWaveformRect, theme: WaveformTheme): void {
@@ -727,6 +776,71 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     });
     const phase = mapElapsedToSubCuePassPhase(Math.max(0, localTimeMs), timing);
     return Math.min(rangeEndMs, Math.max(range.startMs, range.startMs + phase.mediaElapsedMs * playbackRate));
+  }
+
+  function audioPlaybackRate(): number {
+    return Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
+  }
+
+  function selectedBaseDurationMs(): number {
+    const range = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    return Math.max(0, (range.durationMs ?? sourceDurationMs ?? 0) / audioPlaybackRate());
+  }
+
+  function audioLoopLocalRange(): { startMs: number; endMs: number } | undefined {
+    const range = draftSub.innerLoop?.range;
+    if (!range) {
+      return undefined;
+    }
+    return clampInnerLoopRange(range, selectedBaseDurationMs());
+  }
+
+  function loopRangeForPatch(): { startMs: number; endMs: number } {
+    return audioLoopLocalRange() ?? defaultInnerLoopRange(selectedBaseDurationMs());
+  }
+
+  function audioLoopSourceRange(): { startMs: number; endMs: number } | undefined {
+    if (!sourceDurationMs || !hasLoopHandleRange(draftSub)) {
+      return undefined;
+    }
+    const selectedRange = normalizeWaveformRange({ sourceStartMs: draftSub.sourceStartMs, sourceEndMs: draftSub.sourceEndMs, durationMs: sourceDurationMs });
+    const loopRange = audioLoopLocalRange();
+    if (!loopRange) {
+      return undefined;
+    }
+    const rate = audioPlaybackRate();
+    return {
+      startMs: Math.min(selectedRange.endMs ?? sourceDurationMs, selectedRange.startMs + loopRange.startMs * rate),
+      endMs: Math.min(selectedRange.endMs ?? sourceDurationMs, selectedRange.startMs + loopRange.endMs * rate),
+    };
+  }
+
+  function passValuePatch(value: InfinityNumberValue): Partial<PersistedAudioSubCueConfig> {
+    const pass =
+      value.type === 'infinite'
+        ? { iterations: { type: 'infinite' } as PassIterations }
+        : { iterations: { type: 'count', count: Math.max(1, Math.round(value.count)) } as PassIterations };
+    return {
+      pass,
+      innerLoop: value.type === 'infinite' && loopIsInfinite(draftSub) ? { enabled: false, range: draftSub.innerLoop?.range } : draftSub.innerLoop,
+      loop: undefined,
+    };
+  }
+
+  function loopValuePatch(value: InfinityNumberValue): Partial<PersistedAudioSubCueConfig> {
+    const iterations: LoopIterations =
+      value.type === 'infinite'
+        ? { type: 'infinite' }
+        : { type: 'count', count: Math.max(0, Math.round(value.count)) };
+    const range = loopRangeForPatch();
+    if (iterations.type === 'count' && iterations.count <= 0) {
+      return { innerLoop: range ? { enabled: false, range } : { enabled: false }, loop: undefined };
+    }
+    return {
+      ...(iterations.type === 'infinite' ? { pass: { iterations: { type: 'count', count: 1 } as PassIterations } } : {}),
+      innerLoop: { enabled: true, range, iterations },
+      loop: undefined,
+    };
   }
 
   function applyPreviewPosition(position: AudioSubCuePreviewPosition): void {
@@ -996,16 +1110,6 @@ function createModeButton(label: string, active: boolean, onClick: () => void): 
   return button;
 }
 
-function createInfiniteLoopToggle(pressed: boolean, onToggle: (pressed: boolean) => void): HTMLButtonElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `stream-audio-waveform-loop${pressed ? ' active' : ''}`;
-  button.textContent = 'Infinite Loop';
-  button.setAttribute('aria-pressed', String(pressed));
-  button.addEventListener('click', () => onToggle(button.getAttribute('aria-pressed') !== 'true'));
-  return button;
-}
-
 function createClearAutomationButton(onClick: () => void): HTMLButtonElement {
   const button = createRailButton('Clear automation', onClick);
   button.classList.add('stream-audio-waveform-clear-automation');
@@ -1025,18 +1129,93 @@ function isInfinitePreviewLoop(payload: AudioSubCuePreviewPayload): boolean {
   );
 }
 
-function getPlayTimes(sub: PersistedAudioSubCueConfig): number {
-  if (sub.loop?.enabled && sub.loop.iterations.type === 'count') {
-    return Math.max(1, Math.round(sub.loop.iterations.count));
+function passControlValue(sub: Pick<PersistedAudioSubCueConfig, 'pass' | 'loop'>): InfinityNumberValue {
+  if (sub.pass?.iterations.type === 'infinite' || !sub.pass && sub.loop?.enabled && !sub.loop.range && sub.loop.iterations.type === 'infinite') {
+    return { type: 'infinite' };
   }
-  return 1;
+  if (sub.pass?.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(1, Math.round(sub.pass.iterations.count)) };
+  }
+  if (!sub.pass && sub.loop?.enabled && !sub.loop.range && sub.loop.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(1, Math.round(sub.loop.iterations.count)) };
+  }
+  return { type: 'count', count: 1 };
 }
 
-function playTimesPatch(value: number | undefined): Partial<PersistedAudioSubCueConfig> {
-  const playTimes = Math.max(1, Math.round(value ?? 1));
+function loopControlValue(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): InfinityNumberValue {
+  if (sub.innerLoop?.enabled && sub.innerLoop.iterations.type === 'infinite') {
+    return { type: 'infinite' };
+  }
+  if (sub.innerLoop?.enabled && sub.innerLoop.iterations.type === 'count') {
+    return { type: 'count', count: Math.max(0, Math.round(sub.innerLoop.iterations.count)) };
+  }
+  if (!sub.innerLoop && sub.loop?.enabled && sub.loop.range) {
+    return sub.loop.iterations.type === 'infinite'
+      ? { type: 'infinite' }
+      : { type: 'count', count: Math.max(0, Math.round(sub.loop.iterations.count) - 1) };
+  }
+  return { type: 'count', count: 0 };
+}
+
+function passIsInfinite(sub: Pick<PersistedAudioSubCueConfig, 'pass' | 'loop'>): boolean {
+  return passControlValue(sub).type === 'infinite';
+}
+
+function loopIsInfinite(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): boolean {
+  return loopControlValue(sub).type === 'infinite';
+}
+
+function hasLoopHandleRange(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): boolean {
+  const value = loopControlValue(sub);
+  return Boolean(sub.innerLoop?.range || sub.loop?.enabled && sub.loop.range || value.type === 'infinite' || value.count > 0);
+}
+
+function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
+  const base = Math.max(1, Math.round(baseDurationMs));
+  if (base <= 3) {
+    return { startMs: 0, endMs: base };
+  }
   return {
-    loop: playTimes <= 1 ? { enabled: false } : { enabled: true, iterations: { type: 'count', count: playTimes } },
+    startMs: Math.round(base / 3),
+    endMs: Math.round((base * 2) / 3),
   };
+}
+
+function clampLocalLoopMs(value: number, baseDurationMs: number): number {
+  return Math.max(0, Math.min(Math.max(0, baseDurationMs), Number.isFinite(value) ? value : 0));
+}
+
+function clampRequiredLoopRange(startMs: number, endMs: number, baseDurationMs: number): { startMs: number; endMs: number } {
+  return clampInnerLoopRange({ startMs, endMs }, baseDurationMs) ?? defaultInnerLoopRange(baseDurationMs);
+}
+
+function clampInnerLoopForBase(
+  innerLoop: SubCueInnerLoopPolicy | undefined,
+  baseDurationMs: number,
+): SubCueInnerLoopPolicy | undefined {
+  if (!innerLoop?.range) {
+    return innerLoop;
+  }
+  const range = clampInnerLoopRange(innerLoop.range, baseDurationMs);
+  if (!range) {
+    return { enabled: false };
+  }
+  return innerLoop.enabled
+    ? { enabled: true, range, iterations: loopIterationsForPolicy(innerLoop) }
+    : { enabled: false, range };
+}
+
+function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIterations {
+  return innerLoop.enabled
+    ? innerLoop.iterations.type === 'infinite'
+      ? { type: 'infinite' }
+      : { type: 'count', count: Math.max(0, Math.round(innerLoop.iterations.count)) }
+    : { type: 'count', count: 0 };
+}
+
+function loopIterationsForPatch(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
+  const value = loopControlValue(sub);
+  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(1, Math.round(value.count)) };
 }
 
 function getAutomationBucketMs(selectedDurationMs: number): number {
@@ -1065,10 +1244,6 @@ function interpolateAutomationBuckets(
     points.push(to);
   }
   return points;
-}
-
-function infiniteLoopPolicy(): SceneLoopPolicy {
-  return { enabled: true, iterations: { type: 'infinite' } };
 }
 
 function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | MouseEvent): { x: number; y: number } {

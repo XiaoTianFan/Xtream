@@ -36,6 +36,18 @@ The visual sub-cue editor uses a preview-centered lane. Use it to review the sel
 
 Recent versions reuse preview thumbnail cache data when returning to cues, so the editor should feel steadier while you move between sub-cues.
 
+```mermaid
+flowchart LR
+  A["Cue start"] --> B["Fade in"]
+  B --> C["Playable source range"]
+  C --> D["Freeze marker"]
+  D --> E["Held frame or live capture still"]
+  E --> F["Fade out"]
+  F --> G["Cue end"]
+```
+
+Read the lane from left to right as the cue's playable time. For video, the lane can represent the selected source range rather than the whole file. For image and live visual sources, the lane depends on duration or loop policy because those sources do not have a natural file end.
+
 ## Display And Zone Targets
 
 A visual sub-cue must target at least one display or display zone. Single displays have one target. Split displays have left and right zones.
@@ -57,6 +69,8 @@ Fade in and fade out affect visual opacity in display layers. Invalid fade timin
 Freeze frames let a visual hold at a selected media frame.
 
 For file video, freeze holds the selected frame from the media. For live visuals, freeze captures a canvas frame so the output can hold the current live image. Validate freeze points carefully: an invalid freeze marker or missing source frame can prevent the cue from behaving as expected.
+
+Images are already static, so freeze markers are not useful for image media and can be reported as ignored.
 
 ## Loop Policy
 
@@ -90,4 +104,3 @@ Use loop policy when a video, image, or live source should repeat or remain acti
 - [Build Stream scenes](build-stream-scenes.md)
 - [Triggers, loops, and time](../reference/triggers-loops-and-time.md)
 - [Display composition reference](../reference/display-composition-reference.md)
-

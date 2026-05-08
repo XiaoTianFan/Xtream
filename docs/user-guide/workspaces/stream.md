@@ -53,6 +53,19 @@ The scene edit panel is where you adjust scene title, note, enabled state, trigg
 
 The sub-cue rail lists audio, visual, and control sub-cues. Use it to select, add, duplicate, remove, and inspect cues. Scenes and sub-cues with validation errors are highlighted in the workspace so you can find problems without reading logs line by line.
 
+Audio sub-cues use a waveform-centered editor for trims, auditioning, fades, pitch, and automation. Visual sub-cues use a preview-centered lane for playback review, source range trimming, fades, and freeze markers.
+
+```mermaid
+flowchart LR
+  A["Media pool visual"] --> B["Visual sub-cue"]
+  B --> C["Preview lane"]
+  C --> D["Source range"]
+  C --> E["Fade handles"]
+  C --> F["Freeze marker"]
+  B --> G["Display and zone targets"]
+  G --> H["Display layers"]
+```
+
 ## Validation And Readiness
 
 Stream validation appears in the global footer, scene list state, Flow cards, scene pills, and sub-cue rows. Messages use user-facing labels such as scene titles and sub-cue positions instead of internal ids.
@@ -67,4 +80,3 @@ A Stream issue can block playback, degrade readiness, or simply warn that someth
 - [Edit visual sub-cues](../tasks/edit-visual-sub-cues.md)
 - [Use control sub-cues](../tasks/use-control-sub-cues.md)
 - [Stream model](../reference/stream-model.md)
-

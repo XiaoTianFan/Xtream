@@ -554,7 +554,7 @@ html[data-theme="light"] .stream-audio-waveform-clear-automation.stream-audio-wa
 
 .stream-audio-waveform-controls {
   display: grid;
-  grid-template-columns: repeat(5, minmax(6rem, 1fr));
+  grid-template-columns: repeat(6, minmax(5.5rem, 1fr));
   gap: 0.35rem;
   align-items: stretch;
   min-width: 0;
@@ -623,6 +623,8 @@ html[data-theme="light"] .stream-audio-waveform-clear-automation.stream-audio-wa
   --visual-lane-fade-fill: rgba(214, 164, 73, 0.19);
   --visual-lane-fade-line: rgba(236, 185, 83, 0.95);
   --visual-lane-fade-envelope: rgba(236, 185, 83, 0.98);
+  --visual-lane-loop-fill: rgba(255, 255, 255, 0.13);
+  --visual-lane-loop-line: rgba(255, 255, 255, 0.9);
 
   position: relative;
   min-width: 0;
@@ -641,6 +643,8 @@ html[data-theme="light"] .stream-visual-preview-lane-stage {
   --visual-lane-fade-fill: rgba(154, 122, 74, 0.18);
   --visual-lane-fade-line: rgba(134, 99, 42, 0.92);
   --visual-lane-fade-envelope: rgba(134, 99, 42, 0.96);
+  --visual-lane-loop-fill: rgba(255, 255, 255, 0.28);
+  --visual-lane-loop-line: rgba(255, 255, 255, 0.92);
 
   background: rgba(227, 224, 219, 0.92);
 }
@@ -712,6 +716,8 @@ html[data-theme="light"] .stream-visual-preview-lane-tile {
 .stream-visual-preview-lane-fade,
 .stream-visual-preview-lane-range,
 .stream-visual-preview-lane-range-edge,
+.stream-visual-preview-lane-loop-region,
+.stream-visual-preview-lane-loop-edge,
 .stream-visual-preview-lane-playhead,
 .stream-visual-preview-lane-marker {
   position: absolute;
@@ -726,6 +732,18 @@ html[data-theme="light"] .stream-visual-preview-lane-tile {
 .stream-visual-preview-lane-range-edge {
   width: 0;
   border-left: 2px solid var(--visual-lane-range-line);
+}
+
+.stream-visual-preview-lane-loop-region {
+  top: 68%;
+  background: var(--visual-lane-loop-fill);
+}
+
+.stream-visual-preview-lane-loop-edge {
+  top: 68%;
+  width: 0;
+  border-left: 2px solid var(--visual-lane-loop-line);
+  filter: drop-shadow(0 0 4px rgb(0 0 0 / 0.62));
 }
 
 .stream-visual-preview-lane-fade {
@@ -805,7 +823,7 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 
 .stream-visual-preview-lane-controls {
   display: grid;
-  grid-template-columns: repeat(5, minmax(6rem, 1fr));
+  grid-template-columns: repeat(6, minmax(5.5rem, 1fr));
   gap: 0.35rem;
   align-items: stretch;
   min-width: 0;
@@ -844,6 +862,57 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
   background: color-mix(in srgb, var(--surface-low) 76%, transparent);
 }
 
+.stream-infinity-number {
+  display: grid;
+  grid-template-columns: minmax(2.35rem, 0.58fr) minmax(2.8rem, 1fr);
+  align-items: center;
+  min-width: 0;
+  height: 2rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-low) 76%, transparent);
+}
+
+.stream-infinity-number-toggle {
+  min-width: 0;
+  height: 2rem;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stream-infinity-number-toggle.active {
+  color: var(--accent-teal);
+  background: color-mix(in srgb, var(--accent-teal) 16%, transparent);
+}
+
+.stream-infinity-number-toggle:hover:not(:disabled),
+.stream-infinity-number-toggle:focus-visible {
+  color: var(--accent-teal);
+}
+
+.stream-infinity-number .label-input {
+  width: 100%;
+  min-width: 0;
+  height: 2rem;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-data);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.stream-infinity-number.is-infinite .label-input {
+  color: var(--accent-teal);
+  opacity: 1;
+}
+
 .stream-draggable-number-grip {
   min-width: 0;
   height: 2rem;
@@ -870,7 +939,9 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 }
 
 .stream-draggable-number .label-input:disabled,
-.stream-draggable-number-grip:disabled {
+.stream-draggable-number-grip:disabled,
+.stream-infinity-number .label-input:disabled,
+.stream-infinity-number-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.52;
 }

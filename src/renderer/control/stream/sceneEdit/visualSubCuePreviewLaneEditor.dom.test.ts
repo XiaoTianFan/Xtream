@@ -45,7 +45,7 @@ describe('visualSubCuePreviewLaneEditor', () => {
     });
   });
 
-  it('shows video playback controls and maps Play times to loop policy', () => {
+  it('shows video playback controls and maps Pass time and Loop time to pass-loop policies', () => {
     const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
     const editor = createVisualSubCuePreviewLaneEditor({
       sub: visualSubCue(),
@@ -53,23 +53,45 @@ describe('visualSubCuePreviewLaneEditor', () => {
       patchSubCue: (patch) => patches.push(patch),
     });
 
-    expect(editor.textContent).toContain('Play times');
-    expect(editor.textContent).toContain('Infinite Loop');
+    expect(editor.textContent).toContain('Pass time');
+    expect(editor.textContent).toContain('Loop time');
     expect(editor.textContent).toContain('Playback Rate');
     expect(editor.textContent).not.toContain('Duration');
 
-    const playTimes = editor.querySelector<HTMLInputElement>('.stream-draggable-number input');
-    playTimes!.value = '4';
-    playTimes!.dispatchEvent(new Event('change'));
+    const pass = editor.querySelector<HTMLInputElement>('[aria-label="Pass time"]');
+    pass!.value = '4';
+    pass!.dispatchEvent(new Event('change'));
 
-    const loop = editor.querySelector<HTMLButtonElement>('.stream-visual-preview-lane-loop');
+    const loop = editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]');
     loop!.click();
 
     expect(patches).toEqual([
-      { loop: { enabled: true, iterations: { type: 'count', count: 4 } } },
-      { loop: { enabled: true, iterations: { type: 'infinite' } } },
+      { pass: { iterations: { type: 'count', count: 4 } }, innerLoop: undefined, loop: undefined },
+      {
+        pass: { iterations: { type: 'count', count: 1 } },
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 3333, endMs: 6667 },
+          iterations: { type: 'infinite' },
+        },
+        loop: undefined,
+      },
     ]);
-    expect(playTimes!.disabled).toBe(true);
+    expect(pass!.disabled).toBe(true);
+  });
+
+  it('disables video loop infinity while pass infinity is active', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    editor.querySelector<HTMLButtonElement>('[aria-label="Pass time infinity"]')!.click();
+
+    expect(patches).toEqual([{ pass: { iterations: { type: 'infinite' } }, innerLoop: undefined, loop: undefined }]);
+    expect(editor.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!.disabled).toBe(true);
   });
 
   it('switches image visuals to Duration and Infinite Render controls', () => {
@@ -227,6 +249,37 @@ describe('visualSubCuePreviewLaneEditor', () => {
     stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 128, clientY: 96 }));
 
     expect(patches).toEqual([{ sourceStartMs: 2000, sourceEndMs: undefined }]);
+  });
+
+  it('commits video bottom loop-handle drags as inner loop ranges', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({
+        innerLoop: { enabled: true, range: { startMs: 2000, endMs: 5000 }, iterations: { type: 'count', count: 2 } },
+      }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 128, clientY: 150 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
+    expect(patches).toEqual([]);
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
+
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 4000, endMs: 5000 },
+          iterations: { type: 'count', count: 2 },
+        },
+      },
+    ]);
   });
 
   it('renders the full-range right edge inside the lane and fade handles above range edges', () => {

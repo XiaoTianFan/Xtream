@@ -20,6 +20,8 @@ export type AudioWaveformRect = {
 export type AudioWaveformHitTarget =
   | { type: 'fade-in' }
   | { type: 'fade-out' }
+  | { type: 'loop-start' }
+  | { type: 'loop-end' }
   | { type: 'range-start' }
   | { type: 'range-end' }
   | { type: 'automation-point'; index: number }
@@ -33,12 +35,15 @@ export type AudioWaveformModel = {
   sourceEndMs?: number;
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
+  innerLoopRange?: { startMs: number; endMs: number };
+  innerLoopEditable?: boolean;
   automationPoints?: CurvePoint[];
   automationMode?: AudioWaveformAutomationMode;
 };
 
 const EDGE_HIT_PX = 8;
 const FADE_HIT_HEIGHT_PX = 34;
+const LOOP_HIT_HEIGHT_PX = 34;
 const POINT_HIT_PX = 8;
 
 export function msToWaveformX(ms: number, durationMs: number | undefined, rect: AudioWaveformRect): number {
@@ -130,14 +135,23 @@ export function hitTestAudioWaveform(model: AudioWaveformModel, rect: AudioWavef
   const rangeStartX = msToWaveformX(range.startMs, model.durationMs, rect);
   const rangeEndX = msToWaveformX(range.endMs ?? model.durationMs, model.durationMs, rect);
   const topHit = y <= rect.top + FADE_HIT_HEIGHT_PX;
+  const bottomHit = y >= rect.top + rect.height - LOOP_HIT_HEIGHT_PX;
   const fadeInX = msToWaveformX(range.startMs + (model.fadeIn?.durationMs ?? 0), model.durationMs, rect);
   const fadeOutX = msToWaveformX((range.endMs ?? model.durationMs) - (model.fadeOut?.durationMs ?? 0), model.durationMs, rect);
+  const loopStartX = model.innerLoopRange ? msToWaveformX(model.innerLoopRange.startMs, model.durationMs, rect) : undefined;
+  const loopEndX = model.innerLoopRange ? msToWaveformX(model.innerLoopRange.endMs, model.durationMs, rect) : undefined;
 
   if (topHit && x <= Math.max(rangeStartX + EDGE_HIT_PX, fadeInX + EDGE_HIT_PX)) {
     return { type: 'fade-in' };
   }
   if (topHit && x >= Math.min(rangeEndX - EDGE_HIT_PX, fadeOutX - EDGE_HIT_PX)) {
     return { type: 'fade-out' };
+  }
+  if (model.innerLoopEditable && bottomHit && loopStartX !== undefined && Math.abs(x - loopStartX) <= EDGE_HIT_PX) {
+    return { type: 'loop-start' };
+  }
+  if (model.innerLoopEditable && bottomHit && loopEndX !== undefined && Math.abs(x - loopEndX) <= EDGE_HIT_PX) {
+    return { type: 'loop-end' };
   }
   if (Math.abs(x - rangeStartX) <= EDGE_HIT_PX) {
     return { type: 'range-start' };
@@ -170,6 +184,8 @@ export function cursorForAudioWaveformHit(hit: AudioWaveformHitTarget): string {
       return 'nesw-resize';
     case 'range-start':
     case 'range-end':
+    case 'loop-start':
+    case 'loop-end':
       return 'ew-resize';
     case 'automation-point':
       return 'move';

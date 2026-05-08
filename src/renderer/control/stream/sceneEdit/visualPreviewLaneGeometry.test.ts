@@ -52,6 +52,24 @@ describe('visualPreviewLaneGeometry', () => {
     });
   });
 
+  it('hit tests bottom inner-loop handles for editable video lanes', () => {
+    expect(
+      hitTestVisualPreviewLane(
+        {
+          durationMs: 10_000,
+          sourceStartMs: 1000,
+          sourceEndMs: 9000,
+          rangeEditable: true,
+          innerLoopEditable: true,
+          innerLoopRange: { startMs: 3000, endMs: 6000 },
+        },
+        rect,
+        130,
+        132,
+      ),
+    ).toEqual({ type: 'loop-start' });
+  });
+
   it('disables fade-out hit testing for infinite renders', () => {
     expect(hitTestVisualPreviewLane({ durationMs: 10_000, fadeOutDisabled: true }, rect, 405, 30)).toEqual({ type: 'seek' });
   });

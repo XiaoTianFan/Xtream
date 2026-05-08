@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { DirectorState, PersistedSceneConfig } from './types';
 import {
+  audioTimingPatchToVisual,
   clearTimingLinksForRemovedSubCue,
   findEligibleEmbeddedAudioTimingSubCueId,
   getActiveTimingLinkPair,
   normalizeSceneTimingLinks,
+  pickLinkedTimingFields,
+  visualTimingPatchToAudio,
 } from './subCueTimingLink';
 
 describe('subCueTimingLink', () => {
@@ -47,6 +50,35 @@ describe('subCueTimingLink', () => {
     const sc = scene({ visualLink: 'missing', audioLink: 'sub-v' });
     normalizeSceneTimingLinks(sc);
     expect(sc.subCues['sub-v']).toMatchObject({ linkedTimingSubCueId: undefined });
+  });
+
+  it('includes pass and inner loop fields in linked timing patches', () => {
+    const update = {
+      pass: { iterations: { type: 'count' as const, count: 3 } },
+      innerLoop: {
+        enabled: true as const,
+        range: { startMs: 1000, endMs: 2000 },
+        iterations: { type: 'infinite' as const },
+      },
+      playbackRate: 1.25,
+      targets: [{ displayId: 'other' }],
+    };
+
+    expect(pickLinkedTimingFields(update)).toEqual({
+      pass: update.pass,
+      innerLoop: update.innerLoop,
+      playbackRate: 1.25,
+    });
+    expect(visualTimingPatchToAudio(update)).toEqual({
+      pass: update.pass,
+      innerLoop: update.innerLoop,
+      playbackRate: 1.25,
+    });
+    expect(audioTimingPatchToVisual(update)).toEqual({
+      pass: update.pass,
+      innerLoop: update.innerLoop,
+      playbackRate: 1.25,
+    });
   });
 });
 
