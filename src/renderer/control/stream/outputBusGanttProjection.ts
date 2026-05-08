@@ -132,7 +132,7 @@ function orderedTimelineIds(runtime: NonNullable<StreamEnginePublicState['runtim
 
 function audioSubCueDurationMs(sub: PersistedAudioSubCueConfig, state: DirectorState): number | undefined {
   const source = state.audioSources[sub.audioSourceId];
-  const base = getAudioSubCueBaseDurationMs(sub, source?.durationSeconds);
+  const base = getAudioSubCueBaseDurationMs(sub, source?.durationSeconds, source?.playbackRate);
   if (base === undefined) {
     return undefined;
   }

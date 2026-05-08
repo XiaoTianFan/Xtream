@@ -17,7 +17,7 @@ It is designed for installations, exhibitions, performances, demos, and other ro
 
 ## Highlights
 
-- **Patch workspace** for importing media, previewing assets, mapping visuals to display windows, and mixing virtual audio outputs.
+- **Patch workspace** for standalone static aesthetic scenes, simple playback, importing media, previewing assets, mapping visuals to display windows, and mixing virtual audio outputs with customized routing.
 - **Stream workspace** for programming scenes with manual, follow, delay, and timecode triggers.
 - **Audio, visual, and control sub-cues** for routing audio, targeting displays, adjusting fades and loops, and automating transport or global safety actions.
 - **Thread-based playback** so manual scenes, side timelines, loops, and parallel branches can run without flattening everything into one brittle timeline.
@@ -30,7 +30,7 @@ It is designed for installations, exhibitions, performances, demos, and other ro
 
 | Workspace | Use it for |
 | --- | --- |
-| **Patch** | Media pool, display windows, visual mapping, virtual outputs, meters, transport, and asset details. |
+| **Patch** | Standalone static scenes, simple playback, media pool, display windows, visual mapping, virtual outputs, meters, transport, and asset details. |
 | **Stream** | Scene lists, Flow layout, Gantt timing, scene editing, sub-cues, thread playback, and Stream transport. |
 | **Config** | Runtime overview, show settings, Stream playback preferences, display composition, diagnostics, and session log. |
 | **Performance** | Planned surface for live execution and monitoring. |
@@ -79,6 +79,7 @@ Xtream is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Pe
 
 ## Working in Progress
 
+- [User guide](docs/user-guide/index.md)
 - [Runtime changelog](docs/runtime-changelog.md)
 
 ## Current Status

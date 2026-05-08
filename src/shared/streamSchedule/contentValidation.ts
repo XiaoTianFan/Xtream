@@ -48,8 +48,9 @@ export function validateStreamContextFromDirector(state: DirectorState | undefin
     audioDurations: new Map(
       Object.values(state.audioSources ?? {}).flatMap((s) => (s.durationSeconds !== undefined ? [[s.id, s.durationSeconds] as const] : [])),
     ),
+    audioMedia: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, { id: s.id, durationSeconds: s.durationSeconds, playbackRate: s.playbackRate }])),
     visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
-    visualMedia: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, { id: v.id, kind: v.kind, type: v.type, durationSeconds: v.durationSeconds }])),
+    visualMedia: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, { id: v.id, kind: v.kind, type: v.type, durationSeconds: v.durationSeconds, playbackRate: v.playbackRate }])),
   };
 }
 
@@ -218,14 +219,15 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
       }
       if (subCue.kind === 'audio') {
         const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'audio');
-        const sourceDurationSeconds = context.audioDurations?.get(subCue.audioSourceId);
+        const audioMedia = context.audioMedia?.get(subCue.audioSourceId);
+        const sourceDurationSeconds = audioMedia?.durationSeconds ?? context.audioDurations?.get(subCue.audioSourceId);
         pushLoopIssues(
           out,
           createSubCuePassLoopValidationMessages({
             pass: subCue.pass,
             innerLoop: subCue.innerLoop,
             legacyLoop: subCue.loop,
-            baseDurationMs: getAudioSubCueBaseDurationMs(subCue, sourceDurationSeconds),
+            baseDurationMs: getAudioSubCueBaseDurationMs(subCue, sourceDurationSeconds, audioMedia?.playbackRate),
             label: `${sceneLabel} · ${ordLabel}`,
           }),
           sceneId,

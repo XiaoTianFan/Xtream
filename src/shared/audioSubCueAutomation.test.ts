@@ -25,6 +25,7 @@ describe('audioSubCueAutomation', () => {
       12,
     );
     expect(base).toBe(3_000);
+    expect(getAudioSubCueBaseDurationMs({ sourceStartMs: 0, sourceEndMs: 8_000, playbackRate: 2 }, 12, 2)).toBe(2_000);
   });
 
   it('keeps duration override as a cap and fallback', () => {

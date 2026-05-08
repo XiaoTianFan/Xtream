@@ -303,6 +303,59 @@ describe('deriveDirectorStateForStream', () => {
     expect(derived.visuals[visualId]).toMatchObject({ opacity: 0.4 });
   });
 
+  it('keeps active and orphaned audio projections distinct for the same sub-cue', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_100);
+    const state = streamDisplayFrameDirectorState({
+      audioSources: {
+        a1: { id: 'a1', type: 'external-file', label: 'Audio', url: 'file://audio.wav', durationSeconds: 12, ready: true },
+      } as DirectorState['audioSources'],
+      outputs: {
+        'output-main': {
+          id: 'output-main',
+          label: 'Main',
+          sources: [],
+          busLevelDb: 0,
+          ready: true,
+          physicalRoutingAvailable: true,
+        },
+      } as DirectorState['outputs'],
+    });
+    const cue = {
+      sceneId: 'scene-1',
+      subCueId: 'aud',
+      audioSourceId: 'a1',
+      outputId: 'output-main',
+      streamStartMs: 0,
+      localStartMs: 0,
+      levelDb: 0,
+      playbackRate: 1,
+    };
+    const streamState = {
+      stream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      playbackStream: { id: 'stream-main', label: 'Main', sceneOrder: [], scenes: {} },
+      editTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      playbackTimeline: { revision: 1, status: 'valid', entries: {}, calculatedAtWallTimeMs: 0, issues: [] },
+      validationMessages: [],
+      runtime: {
+        status: 'running',
+        originWallTimeMs: 0,
+        offsetStreamMs: 0,
+        sceneStates: {},
+        activeAudioSubCues: [
+          { ...cue, streamStartMs: 2_000 },
+          { ...cue, orphaned: true, fadeOutStartedWallTimeMs: 1_000, fadeOutDurationMs: 500 },
+        ],
+      },
+    } satisfies StreamEnginePublicState;
+
+    const derived = deriveDirectorStateForStream(state, streamState);
+    const sourceIds = derived.outputs['output-main'].sources.map((source) => source.audioSourceId);
+
+    expect(sourceIds).toHaveLength(2);
+    expect(new Set(sourceIds).size).toBe(2);
+    expect(sourceIds.some((id) => id.includes(':orphan') || id.includes(':1000'))).toBe(true);
+  });
+
   it('does not project infinite audio sub-cues with the source duration as a play-time cap', () => {
     const state = {
       paused: true,

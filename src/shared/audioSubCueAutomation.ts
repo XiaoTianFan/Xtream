@@ -1,4 +1,6 @@
-import type { CurvePoint, FadeSpec, PersistedAudioSubCueConfig } from './types';
+import type { AudioSourceState, CurvePoint, FadeSpec, PersistedAudioSubCueConfig } from './types';
+
+export type AudioSubCueMediaInfo = Pick<AudioSourceState, 'id' | 'durationSeconds' | 'playbackRate'>;
 
 export const AUDIO_SUBCUE_LEVEL_MIN_DB = -60;
 export const AUDIO_SUBCUE_LEVEL_MAX_DB = 12;
@@ -63,9 +65,11 @@ export function getAudioSubCueSelectedSourceDurationMs(
 export function getAudioSubCueBaseDurationMs(
   sub: Pick<PersistedAudioSubCueConfig, 'sourceStartMs' | 'sourceEndMs' | 'durationOverrideMs' | 'playbackRate'>,
   sourceDurationSeconds: number | undefined,
+  sourcePlaybackRate = 1,
 ): number | undefined {
   const selectedSourceDurationMs = getAudioSubCueSelectedSourceDurationMs(sub, sourceDurationSeconds);
-  const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
+  const sourceRate = sourcePlaybackRate > 0 ? sourcePlaybackRate : 1;
+  const rate = sourceRate * (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
   let base = selectedSourceDurationMs === undefined ? undefined : selectedSourceDurationMs / rate;
   if (base === undefined && sub.durationOverrideMs === undefined) {
     return undefined;

@@ -1,7 +1,7 @@
 import type { AudioSourceId, PersistedSceneConfig, PersistedStreamConfig, VisualId } from '../types';
 import { resolveLoopTiming } from '../streamLoopTiming';
 import { resolveSubCuePassLoopTiming } from '../subCuePassLoopTiming';
-import { getAudioSubCueBaseDurationMs } from '../audioSubCueAutomation';
+import { getAudioSubCueBaseDurationMs, type AudioSubCueMediaInfo } from '../audioSubCueAutomation';
 import { getVisualSubCueBaseDurationMs, type VisualSubCueMediaInfo } from '../visualSubCueTiming';
 
 export type StreamDurationClassification = 'finite' | 'indefinite-loop' | 'unknown-error';
@@ -20,13 +20,15 @@ function subCueBaseDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
   visualMedia: Record<VisualId, VisualSubCueMediaInfo> = {},
+  audioMedia: Record<AudioSourceId, AudioSubCueMediaInfo> = {},
 ): number | undefined {
   let base: number | undefined;
   if (sub.kind === 'visual') {
     base = getVisualSubCueBaseDurationMs(sub, visualMedia[sub.visualId], visualDurations[sub.visualId]);
   } else if (sub.kind === 'audio') {
-    const d = audioDurations[sub.audioSourceId];
-    base = getAudioSubCueBaseDurationMs(sub, d);
+    const source = audioMedia[sub.audioSourceId];
+    const d = source?.durationSeconds ?? audioDurations[sub.audioSourceId];
+    base = getAudioSubCueBaseDurationMs(sub, d, source?.playbackRate);
     if (base === undefined) {
       return undefined;
     }
@@ -47,8 +49,9 @@ function classifySubCueEffectiveDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
   visualMedia: Record<VisualId, VisualSubCueMediaInfo> = {},
+  audioMedia: Record<AudioSourceId, AudioSubCueMediaInfo> = {},
 ): SceneDurationEstimate {
-  const base = subCueBaseDurationMs(sub, visualDurations, audioDurations, visualMedia);
+  const base = subCueBaseDurationMs(sub, visualDurations, audioDurations, visualMedia, audioMedia);
   if (base === undefined) {
     return { classification: 'unknown-error' };
   }
@@ -75,6 +78,7 @@ export function classifySceneDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
   visualMedia: Record<VisualId, VisualSubCueMediaInfo> = {},
+  audioMedia: Record<AudioSourceId, AudioSubCueMediaInfo> = {},
 ): SceneDurationEstimate {
   if (scene.disabled) {
     return { classification: 'finite', durationMs: 0 };
@@ -86,7 +90,7 @@ export function classifySceneDurationMs(
     if (!sub) {
       continue;
     }
-    const eff = classifySubCueEffectiveDurationMs(sub, visualDurations, audioDurations, visualMedia);
+    const eff = classifySubCueEffectiveDurationMs(sub, visualDurations, audioDurations, visualMedia, audioMedia);
     if (eff.classification === 'unknown-error') {
       return { classification: 'unknown-error' };
     }
@@ -111,8 +115,9 @@ export function estimateSceneDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
   visualMedia: Record<VisualId, VisualSubCueMediaInfo> = {},
+  audioMedia: Record<AudioSourceId, AudioSubCueMediaInfo> = {},
 ): number | undefined {
-  const classified = classifySceneDurationMs(scene, visualDurations, audioDurations, visualMedia);
+  const classified = classifySceneDurationMs(scene, visualDurations, audioDurations, visualMedia, audioMedia);
   return classified.classification === 'finite' ? classified.durationMs : undefined;
 }
 
@@ -125,6 +130,7 @@ export function estimateLinearManualStreamDurationMs(
   visualDurations: Record<VisualId, number>,
   audioDurations: Record<AudioSourceId, number>,
   visualMedia: Record<VisualId, VisualSubCueMediaInfo> = {},
+  audioMedia: Record<AudioSourceId, AudioSubCueMediaInfo> = {},
 ): number | undefined {
   let total = 0;
   for (const sceneId of stream.sceneOrder) {
@@ -135,7 +141,7 @@ export function estimateLinearManualStreamDurationMs(
     if (scene.trigger.type !== 'manual') {
       return undefined;
     }
-    const d = estimateSceneDurationMs(scene, visualDurations, audioDurations, visualMedia);
+    const d = estimateSceneDurationMs(scene, visualDurations, audioDurations, visualMedia, audioMedia);
     if (d === undefined) {
       return undefined;
     }

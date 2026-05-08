@@ -14,6 +14,7 @@ describe('visualSubCueTiming', () => {
 
   it('uses natural video duration with playback rate and legacy duration cap', () => {
     expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 2 }, video)).toBe(5000);
+    expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 2 }, { ...video, playbackRate: 2 })).toBe(2500);
     expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 1, durationOverrideMs: 4000 }, video)).toBe(4000);
     expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 2, sourceStartMs: 2000, sourceEndMs: 8000 }, video)).toBe(3000);
   });

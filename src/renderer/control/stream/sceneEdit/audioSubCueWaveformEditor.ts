@@ -6,7 +6,7 @@ import type {
   PersistedVisualSubCueConfig,
   SceneLoopPolicy,
 } from '../../../../shared/types';
-import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
+import { mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
 import {
   clampPitchShiftSemitones,
   evaluateFadeGain,
@@ -719,9 +719,14 @@ export function createAudioSubCueWaveformEditor(deps: AudioSubCueWaveformEditorD
     const playbackRate = Math.max(0.01, (source?.playbackRate ?? 1) * (draftSub.playbackRate ?? 1));
     const rangeEndMs = range.endMs ?? sourceDurationMs ?? range.startMs;
     const baseDurationMs = Math.max(0, rangeEndMs - range.startMs) / playbackRate;
-    const timing = resolveLoopTiming(draftSub.loop, baseDurationMs);
-    const phaseMs = Math.min(baseDurationMs, mapElapsedToLoopPhase(Math.max(0, localTimeMs), timing));
-    return Math.min(rangeEndMs, Math.max(range.startMs, range.startMs + phaseMs * playbackRate));
+    const timing = resolveSubCuePassLoopTiming({
+      pass: draftSub.pass,
+      innerLoop: draftSub.innerLoop,
+      legacyLoop: draftSub.loop,
+      baseDurationMs,
+    });
+    const phase = mapElapsedToSubCuePassPhase(Math.max(0, localTimeMs), timing);
+    return Math.min(rangeEndMs, Math.max(range.startMs, range.startMs + phase.mediaElapsedMs * playbackRate));
   }
 
   function applyPreviewPosition(position: AudioSubCuePreviewPosition): void {

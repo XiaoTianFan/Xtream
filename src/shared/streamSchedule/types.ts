@@ -8,6 +8,7 @@ import type {
   VisualId,
   VirtualOutputId,
 } from '../types';
+import type { AudioSubCueMediaInfo } from '../audioSubCueAutomation';
 import type { VisualSubCueMediaInfo } from '../visualSubCueTiming';
 
 export type ValidateStreamContentContext = {
@@ -17,6 +18,7 @@ export type ValidateStreamContentContext = {
   displayZones?: ReadonlyMap<string, ReadonlySet<DisplayZoneId>>;
   audioSourceLabels?: ReadonlyMap<AudioSourceId, string>;
   audioDurations?: ReadonlyMap<AudioSourceId, number>;
+  audioMedia?: ReadonlyMap<AudioSourceId, AudioSubCueMediaInfo>;
   visualLabels?: ReadonlyMap<VisualId, string>;
   visualMedia?: ReadonlyMap<VisualId, VisualSubCueMediaInfo>;
 };

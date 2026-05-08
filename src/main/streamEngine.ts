@@ -27,7 +27,7 @@ import type {
 import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlaybackSettings, normalizeStreamPersistence } from '../shared/streamWorkspace';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
 import { isElapsedWithinSubCueTotal, mapElapsedToSubCuePassPhase, migrateLegacySubCueLoopPolicy, resolveSubCuePassLoopTiming } from '../shared/subCuePassLoopTiming';
-import { getAudioSubCueBaseDurationMs, normalizeAudioSourceRange } from '../shared/audioSubCueAutomation';
+import { getAudioSubCueBaseDurationMs, normalizeAudioSourceRange, type AudioSubCueMediaInfo } from '../shared/audioSubCueAutomation';
 import { getVisualSubCueBaseDurationMs, type VisualSubCueMediaInfo } from '../shared/visualSubCueTiming';
 import {
   buildStreamSchedule,
@@ -2599,11 +2599,15 @@ export class StreamEngine extends EventEmitter {
   }
 
   private audioCueKey(cue: StreamRuntimeAudioSubCue): string {
-    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.outputId}`;
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.outputId}:${cue.streamStartMs}:${cue.localStartMs}:${
+      cue.passIndex ?? 'pass'
+    }`;
   }
 
   private visualCueKey(cue: StreamRuntimeVisualSubCue): string {
-    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}`;
+    return `${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}:${cue.streamStartMs}:${
+      cue.localStartMs
+    }:${cue.passIndex ?? 'pass'}`;
   }
 
   private audioProjectionKey(cue: StreamRuntimeAudioSubCue): string {
@@ -3008,13 +3012,14 @@ export class StreamEngine extends EventEmitter {
   }
 
   private getSubCueBaseDurationMs(sub: PersistedSubCueConfig): number | undefined {
-    const { visualDurations, audioDurations, visualMedia } = this.getDurationContext();
+    const { visualDurations, audioDurations, visualMedia, audioMedia } = this.getDurationContext();
     let base: number | undefined;
     if (sub.kind === 'visual') {
       base = getVisualSubCueBaseDurationMs(sub, visualMedia[sub.visualId], visualDurations[sub.visualId]);
     } else if (sub.kind === 'audio') {
-      const d = audioDurations[sub.audioSourceId];
-      base = getAudioSubCueBaseDurationMs(sub, d);
+      const source = audioMedia[sub.audioSourceId];
+      const d = source?.durationSeconds ?? audioDurations[sub.audioSourceId];
+      base = getAudioSubCueBaseDurationMs(sub, d, source?.playbackRate);
     } else {
       return 0;
     }
@@ -3165,10 +3170,11 @@ export class StreamEngine extends EventEmitter {
     visualDurations: Record<string, number>;
     audioDurations: Record<string, number>;
     visualMedia: Record<string, VisualSubCueMediaInfo>;
+    audioMedia: Record<string, AudioSubCueMediaInfo>;
   } {
     const getState = (this.director as unknown as { getState?: Director['getState'] }).getState;
     if (!getState) {
-      return { visualDurations: {}, audioDurations: {}, visualMedia: {} };
+      return { visualDurations: {}, audioDurations: {}, visualMedia: {}, audioMedia: {} };
     }
     const state = getState.call(this.director);
     return {
@@ -3181,7 +3187,13 @@ export class StreamEngine extends EventEmitter {
       visualMedia: Object.fromEntries(
         Object.values(state.visuals ?? {}).map((visual) => [
           visual.id,
-          { id: visual.id, kind: visual.kind, type: visual.type, durationSeconds: visual.durationSeconds },
+          { id: visual.id, kind: visual.kind, type: visual.type, durationSeconds: visual.durationSeconds, playbackRate: visual.playbackRate },
+        ]),
+      ),
+      audioMedia: Object.fromEntries(
+        Object.values(state.audioSources ?? {}).map((source) => [
+          source.id,
+          { id: source.id, durationSeconds: source.durationSeconds, playbackRate: source.playbackRate },
         ]),
       ),
     };
@@ -3207,8 +3219,9 @@ export class StreamEngine extends EventEmitter {
       audioDurations: new Map(
         Object.values(state.audioSources ?? {}).flatMap((source) => (source.durationSeconds !== undefined ? [[source.id, source.durationSeconds] as const] : [])),
       ),
+      audioMedia: new Map(Object.values(state.audioSources ?? {}).map((s) => [s.id, { id: s.id, durationSeconds: s.durationSeconds, playbackRate: s.playbackRate }])),
       visualLabels: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, v.label])),
-      visualMedia: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, { id: v.id, kind: v.kind, type: v.type, durationSeconds: v.durationSeconds }])),
+      visualMedia: new Map(Object.values(state.visuals ?? {}).map((v) => [v.id, { id: v.id, kind: v.kind, type: v.type, durationSeconds: v.durationSeconds, playbackRate: v.playbackRate }])),
     };
   }
 

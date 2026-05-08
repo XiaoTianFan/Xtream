@@ -386,9 +386,10 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       continue;
     }
     const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
+    const temporalSuffix = cue.orphaned ? `:${cue.streamStartMs}:${cue.localStartMs}:${cue.fadeOutStartedWallTimeMs ?? 'orphan'}` : '';
     const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}${cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''}${
       cue.passIndex !== undefined ? `:pass-${cue.passIndex}` : ''
-    }`;
+    }${temporalSuffix}`;
     const sourceRange = normalizeAudioSourceRange({
       sourceStartMs: cue.sourceStartMs,
       sourceEndMs: cue.sourceEndMs,

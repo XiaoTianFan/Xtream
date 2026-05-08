@@ -28,7 +28,7 @@ export function buildAudioSubCuePreviewPayload(
   if (!source || !url || !outputId || !output) {
     return undefined;
   }
-  const baseDurationMs = getAudioSubCueBaseDurationMs(sub, source.durationSeconds);
+  const baseDurationMs = getAudioSubCueBaseDurationMs(sub, source.durationSeconds, source.playbackRate);
   const timing =
     baseDurationMs === undefined
       ? undefined

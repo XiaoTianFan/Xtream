@@ -21,7 +21,7 @@ Recent archived implementation notes were removed from the current tree. The pub
 
 The current app is a desktop show-control system with four shell surfaces:
 
-- Patch: media pool, display windows, visual mapping, audio outputs, meters, transport, and asset details.
+- Patch: standalone static aesthetic scenes, simple routed playback, media pool, display windows, visual mapping, audio outputs, meters, transport, and asset details.
 - Stream: scene programming with List, Flow, and Gantt modes; audio, visual, and control sub-cues; thread-based playback; Stream transport.
 - Config: runtime overview, show and playback settings, diagnostics, session log, display composition, and app-local settings.
 - Performance: currently a planned live execution/monitoring surface.
@@ -175,6 +175,8 @@ Cover:
 
 Cover the operator console for building the patch:
 
+- Standalone static aesthetic scenes.
+- Simple playback that needs customized audio and visual routing.
 - Patch header and transport.
 - Media pool tabs.
 - Importing visual and audio files.

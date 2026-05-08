@@ -9,8 +9,7 @@ import type {
   VisualSubCuePreviewPosition,
 } from '../../../../shared/types';
 import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
-import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
-import { resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
+import { mapElapsedToSubCuePassPhase, resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
 import { pickLinkedTimingFields, visualTimingPatchToAudio } from '../../../../shared/subCueTimingLink';
 import {
   clampVisualSourceRange,
@@ -844,9 +843,14 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     }
     const range = selectedSourceRange();
     const baseDurationMs = range.durationMs / rate;
-    const timing = resolveLoopTiming(draftSub.loop, baseDurationMs);
-    const phaseMs = Math.min(baseDurationMs, mapElapsedToLoopPhase(Math.max(0, localTimeMs), timing));
-    return Math.min(range.endMs, Math.max(range.startMs, range.startMs + phaseMs * rate));
+    const timing = resolveSubCuePassLoopTiming({
+      pass: draftSub.pass,
+      innerLoop: draftSub.innerLoop,
+      legacyLoop: draftSub.loop,
+      baseDurationMs,
+    });
+    const phase = mapElapsedToSubCuePassPhase(Math.max(0, localTimeMs), timing);
+    return Math.min(range.endMs, Math.max(range.startMs, range.startMs + phase.mediaElapsedMs * rate));
   }
 
   function startPreviewTicker(): void {

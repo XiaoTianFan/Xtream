@@ -1,7 +1,7 @@
 import type { FadeSpec, PersistedVisualSubCueConfig, VisualState } from './types';
 import { clampNumber, evaluateFadeGain, normalizeFadeSpec } from './audioSubCueAutomation';
 
-export type VisualSubCueMediaInfo = Pick<VisualState, 'id' | 'kind' | 'type' | 'durationSeconds'>;
+export type VisualSubCueMediaInfo = Pick<VisualState, 'id' | 'kind' | 'type' | 'durationSeconds' | 'playbackRate'>;
 
 function finiteNumber(value: number | undefined): number | undefined {
   return value !== undefined && Number.isFinite(value) ? value : undefined;
@@ -38,7 +38,8 @@ export function getVisualSubCueBaseDurationMs(
   if (durationSeconds === undefined) {
     return durationOverrideMs !== undefined ? Math.max(0, durationOverrideMs) : undefined;
   }
-  const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
+  const mediaRate = media?.playbackRate && media.playbackRate > 0 ? media.playbackRate : 1;
+  const rate = mediaRate * (sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1);
   const sourceRange = normalizeVisualSourceRange(sub, media, knownDurationSeconds);
   const mediaDurationMs = (sourceRange.durationMs ?? durationSeconds * 1000) / rate;
   return durationOverrideMs !== undefined ? Math.min(mediaDurationMs, Math.max(0, durationOverrideMs)) : mediaDurationMs;

@@ -366,6 +366,72 @@ describe('StreamEngine', () => {
     });
   });
 
+  it('uses pool playback rates when expanding sub-cue pass durations', () => {
+    const director = createDirector({
+      visuals: {
+        v1: { id: 'v1', durationSeconds: 40, playbackRate: 2 },
+      } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: {
+        id: 'vis',
+        kind: 'visual',
+        visualId: 'v1',
+        targets: [{ displayId: 'd1' }],
+        pass: { iterations: { type: 'count', count: 2 } },
+      },
+    };
+
+    engine.loadFromShow({ stream });
+
+    expect(engine.getPublicState().runtime?.expectedDurationMs).toBeUndefined();
+    expect(engine.getPublicState().editTimeline.entries['scene-1']?.durationMs).toBe(40_000);
+  });
+
+  it('seeking into a later counted inner-loop pass emits pass-local runtime timing', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 40 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: {
+        id: 'vis',
+        kind: 'visual',
+        visualId: 'v1',
+        targets: [{ displayId: 'd1' }],
+        sourceStartMs: 10_000,
+        sourceEndMs: 40_000,
+        pass: { iterations: { type: 'count', count: 2 } },
+        innerLoop: { enabled: true, range: { startMs: 10_000, endMs: 20_000 }, iterations: { type: 'count', count: 1 } },
+      },
+    };
+    engine.loadFromShow({ stream });
+    engine.applyTransport({ type: 'play' });
+
+    const state = engine.applyTransport({ type: 'seek', timeMs: 50_000 });
+
+    expect(state.runtime?.expectedDurationMs).toBe(80_000);
+    expect(state.runtime?.activeVisualSubCues).toMatchObject([
+      {
+        streamStartMs: 40_000,
+        localStartMs: 0,
+        localEndMs: 40_000,
+        passIndex: 1,
+        mediaLoop: undefined,
+        subCueTiming: {
+          baseDurationMs: 30_000,
+          pass: { iterations: { type: 'count', count: 2 } },
+          innerLoop: { enabled: true, range: { startMs: 10_000, endMs: 20_000 }, iterations: { type: 'count', count: 1 } },
+        },
+      },
+    ]);
+  });
+
   it('surfaces timeline calculation errors in validation state', () => {
     const director = createDirector({
       visuals: { live: { id: 'live', label: 'Live camera', kind: 'live', type: 'video', ready: true } } as DirectorState['visuals'],
