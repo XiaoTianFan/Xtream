@@ -96,6 +96,18 @@ describe('Director', () => {
     });
   });
 
+  it('labels imported audio file sources from the file basename', () => {
+    const director = new Director(() => 1000);
+
+    const source = director.addAudioFileSource('F:\\media\\room-mix.final.wav', 'file:///F:/media/room-mix.final.wav');
+
+    expect(source).toMatchObject({
+      label: 'room-mix.final.wav',
+      type: 'external-file',
+      path: 'F:\\media\\room-mix.final.wav',
+    });
+  });
+
   it('does not auto-route newly added audio sources', () => {
     const director = new Director(() => 1000);
     const source = director.addAudioFileSource('F:\\media\\a.wav', 'file:///F:/media/a.wav');
@@ -115,7 +127,7 @@ describe('Director', () => {
     const [left, right] = director.splitStereoAudioSource(source.id);
 
     expect(left).toMatchObject({
-      label: 'Audio Source 1 L',
+      label: 'stereo.wav L',
       type: 'external-file',
       path: 'F:\\media\\stereo.wav',
       channelCount: 1,
@@ -125,7 +137,7 @@ describe('Director', () => {
       ready: true,
     });
     expect(right).toMatchObject({
-      label: 'Audio Source 1 R',
+      label: 'stereo.wav R',
       channelCount: 1,
       channelMode: 'right',
       derivedFromAudioSourceId: source.id,

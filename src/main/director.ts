@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import path from 'node:path';
 import { toPersistedDiskMediaPath } from './showConfig';
 import type {
   AudioMetadataReport,
@@ -49,6 +50,10 @@ const DRIFT_DEGRADE_THRESHOLD_SECONDS = 2;
 const DRIFT_CORRECTION_COOLDOWN_MS = 3000;
 const MAX_CORRECTION_ATTEMPTS = 10;
 const DRIFT_DEGRADATION_REASON_PREFIX = 'Rail drift stayed above';
+
+function getDiskFileBasename(filePath: string): string {
+  return path.posix.basename(filePath.replace(/\\/g, '/'));
+}
 
 function isExtractionPendingAudioSource(source: AudioSourceState): boolean {
   return source.type === 'embedded-visual' && source.extractionMode === 'file' && source.extractionStatus === 'pending';
@@ -324,9 +329,10 @@ export class Director extends EventEmitter {
 
   addAudioFileSource(audioPath: string, audioUrl: string): AudioSourceState {
     const id = this.createAudioSourceId();
+    const fileLabel = getDiskFileBasename(audioPath);
     this.state.audioSources[id] = {
       id,
-      label: `Audio Source ${Object.keys(this.state.audioSources).length + 1}`,
+      label: fileLabel || `Audio Source ${Object.keys(this.state.audioSources).length + 1}`,
       type: 'external-file',
       path: audioPath,
       url: audioUrl,
