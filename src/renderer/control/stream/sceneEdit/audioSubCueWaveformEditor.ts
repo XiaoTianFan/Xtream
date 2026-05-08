@@ -1167,7 +1167,7 @@ function loopIsInfinite(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loo
 
 function hasLoopHandleRange(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): boolean {
   const value = loopControlValue(sub);
-  return Boolean(sub.innerLoop?.range || sub.loop?.enabled && sub.loop.range || value.type === 'infinite' || value.count > 0);
+  return value.type === 'infinite' || value.count > 0;
 }
 
 function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
@@ -1215,7 +1215,7 @@ function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIteratio
 
 function loopIterationsForPatch(sub: Pick<PersistedAudioSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
   const value = loopControlValue(sub);
-  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(1, Math.round(value.count)) };
+  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(0, Math.round(value.count)) };
 }
 
 function getAutomationBucketMs(selectedDurationMs: number): number {

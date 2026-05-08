@@ -248,7 +248,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       patchAndRefreshPreview({
         fadeIn: { durationMs: draftSub.fadeIn?.durationMs ?? 0, curve: cycleFadeCurve(draftSub.fadeIn?.curve) },
       });
-    } else if (target.type === 'fade-out' && !isInfiniteRender()) {
+    } else if (target.type === 'fade-out' && !isFadeOutDisabled()) {
       patchAndRefreshPreview({
         fadeOut: { durationMs: draftSub.fadeOut?.durationMs ?? 0, curve: cycleFadeCurve(draftSub.fadeOut?.curve) },
       });
@@ -348,6 +348,10 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     return Boolean(draftSub.loop?.enabled && draftSub.loop.iterations.type === 'infinite');
   }
 
+  function isFadeOutDisabled(): boolean {
+    return mediaMode() === 'video-file' ? loopIsInfinite(draftSub) : isInfiniteRender();
+  }
+
   function hitTest(x: number, y: number): VisualPreviewLaneHitTarget {
     return hitTestVisualPreviewLane(
       {
@@ -362,7 +366,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         freezeFrameMs: supportsFreeze() ? draftSub.freezeFrameMs : undefined,
         freezeLocalTimeMs: freezeLocalTimeMs(),
         freezePinMode: freezePinMode && supportsFreeze(),
-        fadeOutDisabled: isInfiniteRender(),
+        fadeOutDisabled: isFadeOutDisabled(),
       },
       laneRect(),
       x,
@@ -428,7 +432,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
       return;
     }
     if (drag.target.type === 'fade-out') {
-      if (isInfiniteRender()) {
+      if (isFadeOutDisabled()) {
         return;
       }
       const durationMs = laneDurationMs();
@@ -539,7 +543,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
           ]
         : []),
       createOverlayRegion('stream-visual-preview-lane-fade in', rangeStartLocalX, Math.max(0, fadeInLocalX - rangeStartLocalX)),
-      createOverlayRegion('stream-visual-preview-lane-fade out', fadeOutLocalX, Math.max(0, rangeEndLocalX - fadeOutLocalX), isInfiniteRender()),
+      createOverlayRegion('stream-visual-preview-lane-fade out', fadeOutLocalX, Math.max(0, rangeEndLocalX - fadeOutLocalX), isFadeOutDisabled()),
       createOverlayFadeCurve(durationMs, rect),
       ...(markerX !== undefined ? [createOverlayMarker(markerX)] : []),
       createOverlayPlayhead(playheadX),
@@ -622,7 +626,7 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   }
 
   function visualFadeEnvelopePath(durationMs: number, rect: VisualPreviewLaneRect): string {
-    const fadeOut = isInfiniteRender() ? undefined : draftSub.fadeOut;
+    const fadeOut = isFadeOutDisabled() ? undefined : draftSub.fadeOut;
     if (!draftSub.fadeIn?.durationMs && !fadeOut?.durationMs) {
       return '';
     }
@@ -1189,7 +1193,7 @@ function loopIsInfinite(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'lo
 
 function hasLoopHandleRange(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): boolean {
   const value = loopControlValue(sub);
-  return Boolean(sub.innerLoop?.range || sub.loop?.enabled && sub.loop.range || value.type === 'infinite' || value.count > 0);
+  return value.type === 'infinite' || value.count > 0;
 }
 
 function defaultInnerLoopRange(baseDurationMs: number): { startMs: number; endMs: number } {
@@ -1237,7 +1241,7 @@ function loopIterationsForPolicy(innerLoop: SubCueInnerLoopPolicy): LoopIteratio
 
 function loopIterationsForPatch(sub: Pick<PersistedVisualSubCueConfig, 'innerLoop' | 'loop'>): LoopIterations {
   const value = loopControlValue(sub);
-  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(1, Math.round(value.count)) };
+  return value.type === 'infinite' ? { type: 'infinite' } : { type: 'count', count: Math.max(0, Math.round(value.count)) };
 }
 
 function setDraggableDisabled(field: HTMLElement | undefined, disabled: boolean): void {

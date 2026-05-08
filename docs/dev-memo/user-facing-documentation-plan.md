@@ -12,7 +12,7 @@ Existing public-facing docs are small:
 
 - `README.md` gives the product summary, workspace overview, show project format, developer setup commands, and license.
 - `docs/runtime-changelog.md` is the best product-history source. It documents v0.0.4 through v0.2.3 with operator-facing release notes.
-- `docs/mac-setup-cn.md` is a Chinese beginner Terminal setup guide, but it references a missing `docs\project-setup-and-manual-testing.md` and still reads like a generic Electron setup guide in places.
+- The old standalone Chinese macOS setup guide has been removed. Setup now belongs in `docs/user-guide/getting-started/install-and-open.md`.
 - `docs/stream-visual-subcue-preview-lane-editor-plan.md` is an implementation plan. It is useful source material, but it should not sit in the primary user manual without being rewritten around user outcomes.
 
 Recent archived implementation notes were removed from the current tree. The public docs should absorb only the user-relevant concepts from those plans, not recreate internal architecture notes.
@@ -112,8 +112,6 @@ Suggested sections:
 
 ### `getting-started/install-and-open.md`
 
-Merge and replace the useful parts of `docs/mac-setup-cn.md` over time.
-
 Cover:
 
 - Installing a packaged app when available.
@@ -121,10 +119,6 @@ Cover:
 - Windows and macOS notes.
 - Required permissions for live capture, screen capture, and audio routing.
 - Where recent shows and default show live conceptually.
-
-Write later:
-
-- A Chinese version should be a translation of the real guide, not a separate generic guide.
 
 ### `getting-started/first-show.md`
 
@@ -576,7 +570,6 @@ Write:
 3. `reference/display-composition-reference.md`
 4. `reference/glossary.md`
 5. `release-notes/index.md`
-6. Replace or rewrite `docs/mac-setup-cn.md` as a translated user-facing setup page.
 
 Acceptance check:
 
@@ -641,6 +634,6 @@ Each reference page should include:
 
 - Which platforms should the first public docs target: Windows only, Windows and macOS, or source-run users on all platforms?
 - Are packaged releases available to users, or should setup docs remain source-first for now?
-- Should docs be English-only first, or should Chinese setup material be maintained in parallel?
+- Documentation is English-only for now; no Chinese setup material is maintained in the project.
 - Should screenshots be added now, or after the current UI stabilizes around visual sub-cue preview lanes?
 - What level of commercial/licensing wording should be visible in the user guide beyond the README license section?

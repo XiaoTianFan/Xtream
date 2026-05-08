@@ -2,7 +2,14 @@
  * @vitest-environment happy-dom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CalculatedStreamTimeline, DirectorState, PersistedSceneConfig, PersistedStreamConfig, StreamEnginePublicState } from '../../../../shared/types';
+import type {
+  CalculatedStreamTimeline,
+  DirectorState,
+  PersistedSceneConfig,
+  PersistedStreamConfig,
+  StreamEnginePublicState,
+  SubCueInnerLoopPolicy,
+} from '../../../../shared/types';
 import { createSceneEditPane } from './sceneEditPane';
 
 class FakeResizeObserver {
@@ -92,6 +99,55 @@ describe('scene edit timing links', () => {
       update: { pitchShiftSemitones: 4 },
     });
   });
+
+  it('mirrors linked visual pass and inner-loop infinity edits with normalized interlocks', () => {
+    const pane = paneFor(scene({ linked: true }), { kind: 'subcue', sceneId: 'scene-a', subCueId: 'sub-v' });
+
+    pane.querySelector<HTMLInputElement>('[aria-label="Pass time"]')!.value = '4';
+    pane.querySelector<HTMLInputElement>('[aria-label="Pass time"]')!.dispatchEvent(new Event('change'));
+    pane.querySelector<HTMLButtonElement>('[aria-label="Loop time infinity"]')!.click();
+
+    const timingEdit = vi.mocked(window.xtream.stream.edit).mock.calls.at(-1)?.[0];
+    const subCues = timingEdit?.type === 'update-scene' ? timingEdit.update.subCues : undefined;
+    const expected = {
+      pass: { iterations: { type: 'count', count: 1 } },
+      innerLoop: {
+        enabled: true,
+        range: { startMs: 3333, endMs: 6667 },
+        iterations: { type: 'infinite' },
+      },
+    };
+    expect(subCues?.['sub-v']).toMatchObject(expected);
+    expect(subCues?.['sub-a']).toMatchObject(expected);
+  });
+
+  it('mirrors linked visual loop-handle range edits', () => {
+    const pane = paneFor(scene({
+      linked: true,
+      innerLoop: { enabled: true, range: { startMs: 2000, endMs: 4000 }, iterations: { type: 'count', count: 1 } },
+    }), { kind: 'subcue', sceneId: 'scene-a', subCueId: 'sub-v' });
+    document.body.append(pane);
+    const stage = pane.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 128, clientY: 150 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 192, clientY: 150 }));
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 192, clientY: 150 }));
+
+    const timingEdit = vi.mocked(window.xtream.stream.edit).mock.calls.at(-1)?.[0];
+    const subCues = timingEdit?.type === 'update-scene' ? timingEdit.update.subCues : undefined;
+    const expected = {
+      innerLoop: {
+        enabled: true,
+        range: { startMs: 3000, endMs: 4000 },
+        iterations: { type: 'count', count: 1 },
+      },
+    };
+    expect(subCues?.['sub-a']).toMatchObject(expected);
+    expect(subCues?.['sub-v']).toMatchObject(expected);
+  });
 });
 
 function changeNumber(root: HTMLElement, label: string, value: string): void {
@@ -120,7 +176,7 @@ function paneFor(scene: PersistedSceneConfig, selection: { kind: 'scene' } | { k
   });
 }
 
-function scene(options: { linked?: boolean; visualTiming?: boolean } = {}): PersistedSceneConfig {
+function scene(options: { linked?: boolean; visualTiming?: boolean; innerLoop?: SubCueInnerLoopPolicy } = {}): PersistedSceneConfig {
   return {
     id: 'scene-a',
     title: 'Scene',
@@ -137,6 +193,7 @@ function scene(options: { linked?: boolean; visualTiming?: boolean } = {}): Pers
         playbackRate: options.visualTiming ? 1.5 : 1,
         sourceStartMs: options.visualTiming ? 1000 : undefined,
         sourceEndMs: options.visualTiming ? 8000 : undefined,
+        innerLoop: options.innerLoop,
         startOffsetMs: options.visualTiming ? 250 : undefined,
         linkedTimingSubCueId: options.linked ? 'sub-a' : undefined,
       },
@@ -147,6 +204,7 @@ function scene(options: { linked?: boolean; visualTiming?: boolean } = {}): Pers
         outputIds: ['output-a'],
         playbackRate: 1,
         pitchShiftSemitones: 0,
+        innerLoop: options.innerLoop,
         linkedTimingSubCueId: options.linked ? 'sub-v' : undefined,
       },
     },

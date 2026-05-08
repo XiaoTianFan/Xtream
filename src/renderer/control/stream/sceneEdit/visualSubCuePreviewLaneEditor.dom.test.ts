@@ -80,6 +80,30 @@ describe('visualSubCuePreviewLaneEditor', () => {
     expect(pass!.disabled).toBe(true);
   });
 
+  it('maps finite video Loop time input to counted inner-loop repeats', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    const loop = editor.querySelector<HTMLInputElement>('[aria-label="Loop time"]');
+    loop!.value = '3';
+    loop!.dispatchEvent(new Event('change'));
+
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 3333, endMs: 6667 },
+          iterations: { type: 'count', count: 3 },
+        },
+        loop: undefined,
+      },
+    ]);
+  });
+
   it('disables video loop infinity while pass infinity is active', () => {
     const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
     const editor = createVisualSubCuePreviewLaneEditor({
@@ -280,6 +304,81 @@ describe('visualSubCuePreviewLaneEditor', () => {
         },
       },
     ]);
+  });
+
+  it('keeps preserved disabled video loop ranges inert until Loop time is enabled', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({
+        innerLoop: { enabled: false, range: { startMs: 2000, endMs: 5000 } },
+      }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    expect(editor.querySelector('.stream-visual-preview-lane-loop-region')).toBeNull();
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 128, clientY: 150 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
+
+    expect(patches).toEqual([]);
+  });
+
+  it('clamps video inner loop ranges when source range edges move', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({
+        innerLoop: { enabled: true, range: { startMs: 1000, endMs: 7000 }, iterations: { type: 'count', count: 1 } },
+      }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 640, clientY: 96 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 192, clientY: 96 }));
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 192, clientY: 96 }));
+
+    expect(patches).toEqual([
+      {
+        sourceStartMs: undefined,
+        sourceEndMs: 3000,
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 1000, endMs: 3000 },
+          iterations: { type: 'count', count: 1 },
+        },
+      },
+    ]);
+  });
+
+  it('disables video fade-out editing while inner-loop infinity is active', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({
+        fadeOut: { durationMs: 1000, curve: 'linear' },
+        innerLoop: { enabled: true, range: { startMs: 2000, endMs: 5000 }, iterations: { type: 'infinite' } },
+      }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    expect(editor.querySelector<HTMLElement>('.stream-visual-preview-lane-fade.out')?.classList.contains('disabled')).toBe(true);
+    stage.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 620, clientY: 12 }));
+
+    expect(patches).toEqual([]);
   });
 
   it('renders the full-range right edge inside the lane and fade handles above range edges', () => {

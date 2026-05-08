@@ -4,8 +4,11 @@ import type {
   PersistedSceneConfig,
   PersistedSubCueConfig,
   PersistedVisualSubCueConfig,
+  SubCueInnerLoopPolicy,
   SubCueId,
+  SubCuePassPolicy,
 } from './types';
+import { normalizeSubCuePassLoopPolicies } from './subCuePassLoopTiming';
 
 type LinkedTimingField =
   | 'sourceStartMs'
@@ -51,7 +54,7 @@ export function pickLinkedTimingFields<T extends Partial<PersistedSubCueConfig>>
       (picked as Record<string, unknown>)[field] = (update as Record<string, unknown>)[field];
     }
   }
-  return picked;
+  return normalizeLinkedPassLoopFields(picked);
 }
 
 export function hasLinkedTimingFields(update: Partial<PersistedSubCueConfig>): boolean {
@@ -72,6 +75,32 @@ export function visualTimingPatchToAudio(update: Partial<PersistedVisualSubCueCo
 
 export function audioTimingPatchToVisual(update: Partial<PersistedAudioSubCueConfig>): VisualTimingPatch {
   return pickLinkedTimingFields(update) as VisualTimingPatch;
+}
+
+function normalizeLinkedPassLoopFields<T extends Partial<PersistedSubCueConfig>>(picked: Partial<T>): Partial<T> {
+  const hasPass = hasOwn(picked, 'pass');
+  const hasInnerLoop = hasOwn(picked, 'innerLoop');
+  if (!hasPass && !hasInnerLoop) {
+    return picked;
+  }
+
+  const record = picked as Record<string, unknown>;
+  const normalized = normalizeSubCuePassLoopPolicies({
+    pass: record.pass as SubCuePassPolicy | undefined,
+    innerLoop: record.innerLoop as SubCueInnerLoopPolicy | undefined,
+  });
+
+  if (hasPass) {
+    record.pass = normalized.pass;
+  }
+  if (hasInnerLoop) {
+    record.innerLoop = normalized.innerLoop;
+  }
+  if (!hasPass && normalized.innerLoop.enabled && normalized.innerLoop.iterations.type === 'infinite') {
+    record.pass = normalized.pass;
+  }
+
+  return picked;
 }
 
 export function findEligibleEmbeddedAudioTimingSubCueId(

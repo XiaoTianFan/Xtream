@@ -64,18 +64,19 @@ describe('subCueTimingLink', () => {
       targets: [{ displayId: 'other' }],
     };
 
+    const normalizedPass = { iterations: { type: 'count' as const, count: 1 } };
     expect(pickLinkedTimingFields(update)).toEqual({
-      pass: update.pass,
+      pass: normalizedPass,
       innerLoop: update.innerLoop,
       playbackRate: 1.25,
     });
     expect(visualTimingPatchToAudio(update)).toEqual({
-      pass: update.pass,
+      pass: normalizedPass,
       innerLoop: update.innerLoop,
       playbackRate: 1.25,
     });
     expect(audioTimingPatchToVisual(update)).toEqual({
-      pass: update.pass,
+      pass: normalizedPass,
       innerLoop: update.innerLoop,
       playbackRate: 1.25,
     });

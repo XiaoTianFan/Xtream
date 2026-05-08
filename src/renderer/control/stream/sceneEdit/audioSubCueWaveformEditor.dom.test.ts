@@ -130,6 +130,31 @@ describe('audioSubCueWaveformEditor', () => {
     expect(pass!.disabled).toBe(true);
   });
 
+  it('maps finite Loop time input to counted inner-loop repeats', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({ loop: { enabled: false } }),
+      currentState: directorState({ noUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+
+    const loop = editor.querySelector<HTMLInputElement>('[aria-label="Loop time"]');
+    expect(loop).not.toBeNull();
+    loop!.value = '2';
+    loop!.dispatchEvent(new Event('change'));
+
+    expect(patches).toEqual([
+      {
+        innerLoop: {
+          enabled: true,
+          range: { startMs: 2133, endMs: 4267 },
+          iterations: { type: 'count', count: 2 },
+        },
+        loop: undefined,
+      },
+    ]);
+  });
+
   it('disables loop infinity while pass infinity is active', () => {
     const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
     const editor = createAudioSubCueWaveformEditor({
@@ -242,6 +267,29 @@ describe('audioSubCueWaveformEditor', () => {
         },
       },
     ]);
+  });
+
+  it('keeps preserved disabled loop ranges inert until Loop time is enabled', () => {
+    const patches: Array<Partial<PersistedAudioSubCueConfig>> = [];
+    const editor = createAudioSubCueWaveformEditor({
+      sub: audioSubCue({
+        playbackRate: 1,
+        innerLoop: { enabled: false, range: { startMs: 2000, endMs: 4000 } },
+      }),
+      currentState: directorState(),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const canvas = editor.querySelector('canvas') as HTMLCanvasElement;
+    canvas.setPointerCapture = vi.fn();
+    canvas.releasePointerCapture = vi.fn();
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 192, clientY: 150 }));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 256, clientY: 150 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 256, clientY: 150 }));
+
+    expect(patches).toEqual([]);
   });
 
   it('clamps inner loop ranges when source range edges move', () => {
