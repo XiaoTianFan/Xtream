@@ -377,6 +377,62 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
             message: `${sceneLabel} · ${ordLabel} requires duration or infinite render for image/live visual media`,
           });
         }
+        if (subCue.sourceStartMs !== undefined && (!Number.isFinite(subCue.sourceStartMs) || subCue.sourceStartMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid source start`,
+          });
+        }
+        if (subCue.sourceEndMs !== undefined && (!Number.isFinite(subCue.sourceEndMs) || subCue.sourceEndMs < 0)) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} has invalid source end`,
+          });
+        }
+        if (
+          subCue.sourceStartMs !== undefined &&
+          subCue.sourceEndMs !== undefined &&
+          Number.isFinite(subCue.sourceStartMs) &&
+          Number.isFinite(subCue.sourceEndMs) &&
+          subCue.sourceEndMs <= subCue.sourceStartMs
+        ) {
+          out.push({
+            severity: 'error',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} source end must be after source start`,
+          });
+        }
+        if (visualDurationMs !== undefined) {
+          if (subCue.sourceStartMs !== undefined && Number.isFinite(subCue.sourceStartMs) && subCue.sourceStartMs > visualDurationMs) {
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} source start exceeds visual duration`,
+            });
+          }
+          if (subCue.sourceEndMs !== undefined && Number.isFinite(subCue.sourceEndMs) && subCue.sourceEndMs > visualDurationMs) {
+            out.push({
+              severity: 'error',
+              sceneId,
+              subCueId,
+              message: `${sceneLabel} · ${ordLabel} source end exceeds visual duration`,
+            });
+          }
+        }
+        if ((subCue.sourceStartMs !== undefined || subCue.sourceEndMs !== undefined) && visualMedia && (visualMedia.kind === 'live' || visualMedia.type === 'image')) {
+          out.push({
+            severity: 'warning',
+            sceneId,
+            subCueId,
+            message: `${sceneLabel} · ${ordLabel} source range is ignored for image/live visual media`,
+          });
+        }
         if (subCue.freezeFrameMs !== undefined && (!Number.isFinite(subCue.freezeFrameMs) || subCue.freezeFrameMs < 0)) {
           out.push({
             severity: 'error',

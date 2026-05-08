@@ -185,6 +185,77 @@ describe('visualSubCuePreviewLaneEditor', () => {
     expect(patches).toEqual([{ fadeIn: { durationMs: 2500, curve: 'equal-power' } }]);
   });
 
+  it('drags video lane edges to commit a selected source range', () => {
+    const patches: Array<Partial<PersistedVisualSubCueConfig>> = [];
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue(),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: (patch) => patches.push(patch),
+    });
+    document.body.append(editor);
+    const stage = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-stage')!;
+    stage.setPointerCapture = vi.fn();
+    stage.releasePointerCapture = vi.fn();
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 164, right: 640, bottom: 164, x: 0, y: 0, toJSON: () => ({}) });
+
+    stage.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 0, clientY: 96 }));
+    stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 128, clientY: 96 }));
+    expect(patches).toEqual([]);
+    stage.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 128, clientY: 96 }));
+
+    expect(patches).toEqual([{ sourceStartMs: 2000, sourceEndMs: undefined }]);
+  });
+
+  it('renders the full-range right edge inside the lane and fade handles above range edges', () => {
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({ fadeIn: { durationMs: 0, curve: 'linear' }, fadeOut: { durationMs: 0, curve: 'linear' } }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+    const fadeIn = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-fade.in');
+    const fadeOut = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-fade.out');
+    const rightEdge = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-range-edge.end');
+    expect(fadeIn?.style.left).toBe('0px');
+    expect(fadeIn?.style.width).toBe('0px');
+    expect(rightEdge?.style.left).toBe('638px');
+    expect(fadeOut?.style.left).toBe('638px');
+    expect(fadeOut?.style.width).toBe('0px');
+
+    const overlayChildren = [...editor.querySelector<HTMLElement>('.stream-visual-preview-lane-overlay')!.children];
+    const rightEdgeIndex = overlayChildren.findIndex((child) => child.classList.contains('stream-visual-preview-lane-range-edge') && child.classList.contains('end'));
+    const fadeOutIndex = overlayChildren.findIndex((child) => child.classList.contains('stream-visual-preview-lane-fade') && child.classList.contains('out'));
+    expect(fadeOutIndex).toBeGreaterThan(rightEdgeIndex);
+  });
+
+  it('keeps fade handles inside the rendered source range when the range reaches the far right', () => {
+    const editor = createVisualSubCuePreviewLaneEditor({
+      sub: visualSubCue({
+        sourceStartMs: 9999,
+        fadeIn: { durationMs: 5000, curve: 'linear' },
+        fadeOut: { durationMs: 5000, curve: 'linear' },
+      }),
+      currentState: directorState({ noVideoUrl: true }),
+      patchSubCue: vi.fn(),
+    });
+    document.body.append(editor);
+
+    const range = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-range');
+    const leftEdge = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-range-edge.start');
+    const rightEdge = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-range-edge.end');
+    const fadeIn = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-fade.in');
+    const fadeOut = editor.querySelector<HTMLElement>('.stream-visual-preview-lane-fade.out');
+
+    expect(range?.style.left).toBe('638px');
+    expect(range?.style.width).toBe('0px');
+    expect(leftEdge?.style.left).toBe('638px');
+    expect(rightEdge?.style.left).toBe('638px');
+    expect(fadeIn?.style.left).toBe('638px');
+    expect(fadeIn?.style.width).toBe('0px');
+    expect(fadeOut?.style.left).toBe('638px');
+    expect(fadeOut?.style.width).toBe('0px');
+  });
+
   it('sends transient preview commands and stops on cleanup', async () => {
     vi.useFakeTimers();
     const preview = vi.fn(async (command) => ({

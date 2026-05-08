@@ -22,6 +22,8 @@ import { evaluateVisualSubCueOpacity } from '../shared/visualSubCueTiming';
 
 type RuntimeOffset = {
   runtimeOffsetSeconds?: number;
+  runtimeSourceStartSeconds?: number;
+  runtimeSourceEndSeconds?: number;
   runtimeFreezeFrameSeconds?: number;
   runtimeLoop?: LoopState;
 };
@@ -201,6 +203,8 @@ function createStreamVisualLayer(args: {
     playbackRate: (visual.playbackRate ?? 1) * cue.playbackRate,
     durationSeconds: cue.localEndMs !== undefined ? cue.localEndMs / 1000 : visual.durationSeconds,
     runtimeOffsetSeconds: absoluteStartMs / 1000,
+    runtimeSourceStartSeconds: cue.sourceStartMs !== undefined ? cue.sourceStartMs / 1000 : undefined,
+    runtimeSourceEndSeconds: cue.sourceEndMs !== undefined ? cue.sourceEndMs / 1000 : undefined,
     runtimeFreezeFrameSeconds: cue.freezeFrameMs !== undefined ? cue.freezeFrameMs / 1000 : undefined,
     runtimeLoop: cue.mediaLoop,
   } as VisualState & RuntimeOffset;

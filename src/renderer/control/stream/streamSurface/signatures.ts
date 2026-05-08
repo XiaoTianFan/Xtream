@@ -96,6 +96,8 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
         if (subCue.kind === 'visual' && options.omitAudioTimingEditorFields) {
           const {
             startOffsetMs: _startOffsetMs,
+            sourceStartMs: _sourceStartMs,
+            sourceEndMs: _sourceEndMs,
             durationOverrideMs: _durationOverrideMs,
             loop: _loop,
             fadeIn: _fadeIn,

@@ -11,6 +11,8 @@ export type VisualPreviewLaneRect = {
 export type VisualPreviewLaneHitTarget =
   | { type: 'fade-in' }
   | { type: 'fade-out' }
+  | { type: 'range-start' }
+  | { type: 'range-end' }
   | { type: 'freeze-marker' }
   | { type: 'drop-freeze' }
   | { type: 'seek' }
@@ -20,6 +22,9 @@ export type VisualPreviewLaneModel = {
   durationMs?: number;
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  rangeEditable?: boolean;
   freezeFrameMs?: number;
   freezeLocalTimeMs?: number;
   freezePinMode?: boolean;
@@ -29,6 +34,7 @@ export type VisualPreviewLaneModel = {
 const DEFAULT_LANE_DURATION_MS = 10_000;
 const FADE_HIT_HEIGHT_PX = 40;
 const FADE_HANDLE_HIT_PX = 10;
+const RANGE_EDGE_HIT_PX = 8;
 const FREEZE_HIT_PX = 9;
 
 export function normalizeVisualDurationForLane(durationMs: number | undefined, fallbackMs = DEFAULT_LANE_DURATION_MS): number {
@@ -75,14 +81,24 @@ export function hitTestVisualPreviewLane(
   }
   const durationMs = normalizeVisualDurationForLane(model.durationMs);
   const topHit = y <= rect.top + FADE_HIT_HEIGHT_PX;
-  const fadeInX = msToLaneX(model.fadeIn?.durationMs ?? 0, durationMs, rect);
-  const fadeOutX = msToLaneX(durationMs - (model.fadeOut?.durationMs ?? 0), durationMs, rect);
+  const rangeStartMs = model.rangeEditable ? clampNumber(model.sourceStartMs ?? 0, 0, durationMs) : 0;
+  const rangeEndMs = model.rangeEditable ? clampNumber(model.sourceEndMs ?? durationMs, rangeStartMs, durationMs) : durationMs;
+  const rangeStartX = msToLaneX(rangeStartMs, durationMs, rect);
+  const rangeEndX = msToLaneX(rangeEndMs, durationMs, rect);
+  const fadeInX = msToLaneX(rangeStartMs + (model.fadeIn?.durationMs ?? 0), durationMs, rect);
+  const fadeOutX = msToLaneX(rangeEndMs - (model.fadeOut?.durationMs ?? 0), durationMs, rect);
 
-  if (topHit && x <= Math.max(rect.left + FADE_HANDLE_HIT_PX, fadeInX + FADE_HANDLE_HIT_PX)) {
+  if (topHit && x <= Math.max(rangeStartX + FADE_HANDLE_HIT_PX, fadeInX + FADE_HANDLE_HIT_PX)) {
     return { type: 'fade-in' };
   }
-  if (!model.fadeOutDisabled && topHit && x >= Math.min(rect.left + rect.width - FADE_HANDLE_HIT_PX, fadeOutX - FADE_HANDLE_HIT_PX)) {
+  if (!model.fadeOutDisabled && topHit && x >= Math.min(rangeEndX - FADE_HANDLE_HIT_PX, fadeOutX - FADE_HANDLE_HIT_PX)) {
     return { type: 'fade-out' };
+  }
+  if (model.rangeEditable && Math.abs(x - rangeStartX) <= RANGE_EDGE_HIT_PX) {
+    return { type: 'range-start' };
+  }
+  if (model.rangeEditable && Math.abs(x - rangeEndX) <= RANGE_EDGE_HIT_PX) {
+    return { type: 'range-end' };
   }
 
   const freezeLocalTimeMs = model.freezeLocalTimeMs ?? model.freezeFrameMs;
@@ -104,6 +120,9 @@ export function cursorForVisualPreviewLaneHit(hit: VisualPreviewLaneHitTarget): 
     case 'fade-in':
       return 'ew-resize';
     case 'fade-out':
+      return 'ew-resize';
+    case 'range-start':
+    case 'range-end':
       return 'ew-resize';
     case 'freeze-marker':
       return 'grab';

@@ -255,6 +255,8 @@ export type VisualSubCuePreviewPayload = {
   visualId: VisualId;
   targets: VisualDisplayTarget[];
   visual: VisualState;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
   playTimeMs?: number;
   durationMs?: number;
   playbackRate?: number;
@@ -588,6 +590,10 @@ export type PersistedVisualSubCueConfig = {
   visualId: VisualId;
   targets: VisualDisplayTarget[];
   startOffsetMs?: number;
+  /** Source-media in point in milliseconds for finite video visuals. */
+  sourceStartMs?: number;
+  /** Source-media out point in milliseconds for finite video visuals. Omitted means source duration when known. */
+  sourceEndMs?: number;
   durationOverrideMs?: number;
   loop?: SceneLoopPolicy;
   fadeIn?: FadeSpec;
@@ -861,6 +867,8 @@ export type StreamRuntimeVisualSubCue = {
   streamStartMs: number;
   localStartMs: number;
   localEndMs?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
   playbackRate: number;
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;

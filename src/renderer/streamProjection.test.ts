@@ -101,6 +101,8 @@ describe('deriveDirectorStateForStream', () => {
             target: { displayId: 'd1' },
             streamStartMs: 2_000,
             localStartMs: 1_000,
+            sourceStartMs: 1_000,
+            sourceEndMs: 9_000,
             playbackRate: 0.5,
             freezeFrameMs: 2500,
             mediaLoop: { enabled: true, startSeconds: 0, endSeconds: 10 },
@@ -138,7 +140,14 @@ describe('deriveDirectorStateForStream', () => {
     });
     expect(derived.displays.d1.layout).toMatchObject({ type: 'single' });
     const visualId = derived.displays.d1.layout.type === 'single' ? derived.displays.d1.layout.visualId ?? '' : '';
-    expect(derived.visuals[visualId]).toMatchObject({ playbackRate: 1, runtimeOffsetSeconds: 3, runtimeFreezeFrameSeconds: 2.5, runtimeLoop: { enabled: true, endSeconds: 10 } });
+    expect(derived.visuals[visualId]).toMatchObject({
+      playbackRate: 1,
+      runtimeOffsetSeconds: 3,
+      runtimeSourceStartSeconds: 1,
+      runtimeSourceEndSeconds: 9,
+      runtimeFreezeFrameSeconds: 2.5,
+      runtimeLoop: { enabled: true, endSeconds: 10 },
+    });
     expect(derived.activeTimeline.durationSeconds).toBe(20);
   });
 

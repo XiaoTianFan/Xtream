@@ -676,19 +676,22 @@ function updateVisualPreviewTime(runtime: VisualPreviewRuntime): void {
 
 function sourceTimeMsForVisualPreview(runtime: VisualPreviewRuntime, mediaDurationMs: number | undefined): number {
   const playbackRate = runtime.payload.playbackRate && runtime.payload.playbackRate > 0 ? runtime.payload.playbackRate : 1;
-  const naturalLocalDurationMs = mediaDurationMs !== undefined && mediaDurationMs > 0 ? mediaDurationMs / playbackRate : undefined;
+  const sourceStartMs = Math.max(0, runtime.payload.sourceStartMs ?? 0);
+  const sourceEndMs = Math.max(sourceStartMs, runtime.payload.sourceEndMs ?? mediaDurationMs ?? sourceStartMs);
+  const selectedDurationMs = Math.max(0, sourceEndMs - sourceStartMs);
+  const naturalLocalDurationMs = selectedDurationMs > 0 ? selectedDurationMs / playbackRate : mediaDurationMs !== undefined && mediaDurationMs > 0 ? mediaDurationMs / playbackRate : undefined;
   if (naturalLocalDurationMs === undefined || !runtime.payload.loop?.enabled) {
-    return Math.max(0, runtime.localTimeMs * playbackRate);
+    return Math.max(sourceStartMs, Math.min(sourceEndMs || Number.POSITIVE_INFINITY, sourceStartMs + runtime.localTimeMs * playbackRate));
   }
   const timing = resolveLoopTiming(runtime.payload.loop, naturalLocalDurationMs);
   if (timing.loopDurationMs <= 0) {
-    return timing.loopStartMs * playbackRate;
+    return sourceStartMs + timing.loopStartMs * playbackRate;
   }
   const phaseMs =
     timing.totalDurationMs !== undefined && runtime.localTimeMs >= timing.totalDurationMs
       ? timing.loopEndMs
       : mapElapsedToLoopPhase(runtime.localTimeMs, timing);
-  return Math.max(0, phaseMs * playbackRate);
+  return Math.max(sourceStartMs, Math.min(sourceEndMs || Number.POSITIVE_INFINITY, sourceStartMs + phaseMs * playbackRate));
 }
 
 function effectiveVisualPreviewDurationMs(payload: VisualSubCuePreviewPayload): number | undefined {
@@ -1275,16 +1278,18 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visual = visualId ? state.visuals[visualId] : undefined;
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
-    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState; runtimeFreezeFrameSeconds?: number }) | undefined;
+    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeSourceStartSeconds?: number; runtimeSourceEndSeconds?: number; runtimeLoop?: LoopState; runtimeFreezeFrameSeconds?: number }) | undefined;
     const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
-    const rawMediaTarget = (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1);
+    const runtimeSourceStartSeconds = runtime?.runtimeSourceStartSeconds ?? 0;
+    const runtimeSourceEndSeconds = runtime?.runtimeSourceEndSeconds;
+    const rawMediaTarget = runtimeSourceStartSeconds + (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1);
     const freezeSeconds = runtime?.runtimeFreezeFrameSeconds;
     const frozen = freezeSeconds !== undefined && Number.isFinite(freezeSeconds) && rawMediaTarget >= freezeSeconds;
     const effectiveTarget = frozen
       ? clampFreezeTargetSeconds(freezeSeconds, visualDuration)
       : getMediaEffectiveTime(
           rawMediaTarget,
-          visualDuration,
+          runtimeSourceEndSeconds ?? visualDuration,
           runtime?.runtimeLoop ?? state.loop,
         );
     const syncStateBefore = getMediaSyncState(video);
@@ -1528,11 +1533,12 @@ driftTimer = window.setInterval(() => {
           const visualId = video.dataset.visualId;
           const state = currentState!;
           const visual = visualId ? state.visuals[visualId] : undefined;
-          const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState }) | undefined;
+          const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeSourceStartSeconds?: number; runtimeSourceEndSeconds?: number; runtimeLoop?: LoopState }) | undefined;
           const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
+          const runtimeSourceStartSeconds = runtime?.runtimeSourceStartSeconds ?? 0;
           const targetSeconds = getMediaEffectiveTime(
-            (directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
-            visual?.durationSeconds,
+            runtimeSourceStartSeconds + (directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
+            runtime?.runtimeSourceEndSeconds ?? visual?.durationSeconds,
             runtime?.runtimeLoop ?? state.loop,
           );
           const drift = video.currentTime - targetSeconds;

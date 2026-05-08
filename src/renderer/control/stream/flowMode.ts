@@ -210,10 +210,22 @@ function applyRectToCard(root: HTMLElement, sceneId: SceneId, rect: FlowRect): v
   if (!node) {
     return;
   }
-  node.style.left = `${rect.x}px`;
-  node.style.top = `${rect.y}px`;
-  node.style.width = `${rect.width}px`;
-  node.style.height = `${rect.height}px`;
+  const left = `${rect.x}px`;
+  const top = `${rect.y}px`;
+  const width = `${rect.width}px`;
+  const height = `${rect.height}px`;
+  if (node.style.left !== left) {
+    node.style.left = left;
+  }
+  if (node.style.top !== top) {
+    node.style.top = top;
+  }
+  if (node.style.width !== width) {
+    node.style.width = width;
+  }
+  if (node.style.height !== height) {
+    node.style.height = height;
+  }
 }
 
 function currentCardRect(root: HTMLElement, sceneId: SceneId, fallback: FlowRect): FlowRect {

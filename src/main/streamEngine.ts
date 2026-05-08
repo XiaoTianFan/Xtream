@@ -2690,6 +2690,8 @@ export class StreamEngine extends EventEmitter {
             streamStartMs: scenePhase.phaseZeroStreamMs,
             localStartMs,
             localEndMs,
+            sourceStartMs: sub.sourceStartMs,
+            sourceEndMs: sub.sourceEndMs,
             playbackRate: sub.playbackRate ?? 1,
             fadeIn: sub.fadeIn,
             fadeOut: sub.fadeOut,
@@ -3003,6 +3005,8 @@ export class StreamEngine extends EventEmitter {
             sourceStartMs: sub.sourceStartMs,
             sourceEndMs: sub.sourceEndMs,
           }).startMs
+        : sub.kind === 'visual'
+          ? Math.max(0, sub.sourceStartMs ?? 0)
         : 0;
     const loopStartMs = Math.max(0, sub.loop.range?.startMs ?? 0);
     const loopEndMs = Math.max(loopStartMs, sub.loop.range?.endMs ?? baseDurationMs);

@@ -43,6 +43,15 @@ describe('visualPreviewLaneGeometry', () => {
     expect(hitTestVisualPreviewLane({ durationMs: 10_000 }, rect, 260, 80)).toEqual({ type: 'seek' });
   });
 
+  it('hit tests editable video source range edges', () => {
+    expect(hitTestVisualPreviewLane({ durationMs: 10_000, sourceStartMs: 1000, sourceEndMs: 9000, rangeEditable: true }, rect, 50, 90)).toEqual({
+      type: 'range-start',
+    });
+    expect(hitTestVisualPreviewLane({ durationMs: 10_000, sourceStartMs: 1000, sourceEndMs: 9000, rangeEditable: true }, rect, 370, 90)).toEqual({
+      type: 'range-end',
+    });
+  });
+
   it('disables fade-out hit testing for infinite renders', () => {
     expect(hitTestVisualPreviewLane({ durationMs: 10_000, fadeOutDisabled: true }, rect, 405, 30)).toEqual({ type: 'seek' });
   });

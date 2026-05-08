@@ -55,6 +55,8 @@ describe('stream surface signatures', () => {
     const base = streamPublic(visualStream());
     const edited = streamPublic(visualStream({
       startOffsetMs: 1500,
+      sourceStartMs: 2000,
+      sourceEndMs: 9000,
       durationOverrideMs: 8000,
       loop: { enabled: true, iterations: { type: 'count', count: 3 } },
       fadeIn: { durationMs: 1200, curve: 'equal-power' },

@@ -9,7 +9,9 @@ import type {
 import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
 import {
+  clampVisualSourceRange,
   getVisualSubCueBaseDurationMs,
+  normalizeVisualSourceRange,
   normalizeVisualFreezeFrameMs,
 } from '../../../../shared/visualSubCueTiming';
 import { decorateRailButton } from '../../shared/icons';
@@ -49,6 +51,7 @@ type DragState = {
 const VISUAL_LANE_HEIGHT = 164;
 const SNAPSHOT_COUNT = 12;
 const DEFAULT_IMAGE_OR_LIVE_LANE_MS = 10_000;
+const VISUAL_LANE_EDGE_STROKE_PX = 2;
 
 export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLaneEditorDeps): HTMLElement {
   const { currentState, patchSubCue } = deps;
@@ -260,6 +263,23 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   }
 
   function laneDurationMs(): number {
+    if (mediaMode() === 'video-file') {
+      return normalizeVisualDurationForLane(mediaDurationMs(), DEFAULT_IMAGE_OR_LIVE_LANE_MS);
+    }
+    const visual = selectedVisual();
+    const base = getVisualSubCueBaseDurationMs(draftSub, visual);
+    return normalizeVisualDurationForLane(base, DEFAULT_IMAGE_OR_LIVE_LANE_MS);
+  }
+
+  function selectedSourceRange(): { startMs: number; endMs: number; durationMs: number } {
+    const durationMs = laneDurationMs();
+    const range = normalizeVisualSourceRange(draftSub, selectedVisual());
+    const startMs = Math.min(durationMs, Math.max(0, range.startMs));
+    const endMs = Math.max(startMs, Math.min(durationMs, range.endMs ?? durationMs));
+    return { startMs, endMs, durationMs: Math.max(0, endMs - startMs) };
+  }
+
+  function selectedLocalDurationMs(): number {
     const visual = selectedVisual();
     const base = getVisualSubCueBaseDurationMs(draftSub, visual);
     return normalizeVisualDurationForLane(base, DEFAULT_IMAGE_OR_LIVE_LANE_MS);
@@ -277,14 +297,14 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     if (draftSub.freezeFrameMs === undefined || !supportsFreeze()) {
       return undefined;
     }
-    return mediaMode() === 'video-file' ? draftSub.freezeFrameMs / playbackRate() : draftSub.freezeFrameMs;
+    return mediaMode() === 'video-file' ? draftSub.freezeFrameMs : draftSub.freezeFrameMs;
   }
 
   function freezeFrameFromLocalTimeMs(localTimeMs: number): number | undefined {
     if (!supportsFreeze()) {
       return undefined;
     }
-    const raw = mediaMode() === 'video-file' ? localTimeMs * playbackRate() : localTimeMs;
+    const raw = mediaMode() === 'video-file' ? localTimeMs : localTimeMs;
     return clampFreezeFrameMs(raw, mediaMode() === 'video-file' ? mediaDurationMs() : undefined);
   }
 
@@ -298,6 +318,9 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         durationMs: laneDurationMs(),
         fadeIn: draftSub.fadeIn,
         fadeOut: draftSub.fadeOut,
+        sourceStartMs: mediaMode() === 'video-file' ? selectedSourceRange().startMs : undefined,
+        sourceEndMs: mediaMode() === 'video-file' ? selectedSourceRange().endMs : undefined,
+        rangeEditable: mediaMode() === 'video-file',
         freezeFrameMs: supportsFreeze() ? draftSub.freezeFrameMs : undefined,
         freezeLocalTimeMs: freezeLocalTimeMs(),
         freezePinMode: freezePinMode && supportsFreeze(),
@@ -313,11 +336,31 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     if (!drag) {
       return;
     }
+    if (drag.target.type === 'range-start' || drag.target.type === 'range-end') {
+      if (mediaMode() !== 'video-file') {
+        return;
+      }
+      const durationMs = laneDurationMs();
+      const range = selectedSourceRange();
+      const mediaMs = laneXToMs(x, durationMs, laneRect());
+      const next = clampVisualSourceRange({
+        startMs: drag.target.type === 'range-start' ? mediaMs : range.startMs,
+        endMs: drag.target.type === 'range-end' ? mediaMs : range.endMs,
+        durationMs,
+      });
+      stageLanePatch({
+        sourceStartMs: next.sourceStartMs,
+        sourceEndMs: next.sourceEndMs,
+      });
+      return;
+    }
     if (drag.target.type === 'fade-in') {
       const durationMs = laneDurationMs();
+      const range = mediaMode() === 'video-file' ? selectedSourceRange() : { startMs: 0, endMs: durationMs, durationMs };
+      const rate = mediaMode() === 'video-file' ? playbackRate() : 1;
       stageLanePatch({
         fadeIn: {
-          durationMs: clampVisualFadeDurationMs(laneXToMs(x, durationMs, laneRect()), durationMs),
+          durationMs: clampVisualFadeDurationMs((laneXToMs(x, durationMs, laneRect()) - range.startMs) / rate, range.durationMs / rate),
           curve: draftSub.fadeIn?.curve ?? 'linear',
         },
       });
@@ -328,9 +371,11 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
         return;
       }
       const durationMs = laneDurationMs();
+      const range = mediaMode() === 'video-file' ? selectedSourceRange() : { startMs: 0, endMs: durationMs, durationMs };
+      const rate = mediaMode() === 'video-file' ? playbackRate() : 1;
       stageLanePatch({
         fadeOut: {
-          durationMs: clampVisualFadeDurationMs(durationMs - laneXToMs(x, durationMs, laneRect()), durationMs),
+          durationMs: clampVisualFadeDurationMs((range.endMs - laneXToMs(x, durationMs, laneRect())) / rate, range.durationMs / rate),
           curve: draftSub.fadeOut?.curve ?? 'linear',
         },
       });
@@ -403,14 +448,24 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   function renderOverlay(): void {
     const durationMs = laneDurationMs();
     const rect = laneRect();
-    const fadeInX = msToLaneX(draftSub.fadeIn?.durationMs ?? 0, durationMs, rect);
-    const fadeOutX = msToLaneX(durationMs - (draftSub.fadeOut?.durationMs ?? 0), durationMs, rect);
-    const playheadX = msToLaneX(getPreviewCursorMs(), durationMs, rect) - rect.left;
+    const range = mediaMode() === 'video-file' ? selectedSourceRange() : { startMs: 0, endMs: durationMs, durationMs };
+    const rate = mediaMode() === 'video-file' ? playbackRate() : 1;
+    const rangeStartX = msToLaneX(range.startMs, durationMs, rect);
+    const rangeEndX = msToLaneX(range.endMs, durationMs, rect);
+    const fadeInX = clampLaneX(msToLaneX(range.startMs + (draftSub.fadeIn?.durationMs ?? 0) * rate, durationMs, rect), rangeStartX, rangeEndX);
+    const fadeOutX = clampLaneX(msToLaneX(range.endMs - (draftSub.fadeOut?.durationMs ?? 0) * rate, durationMs, rect), rangeStartX, rangeEndX);
+    const rangeEndLocalX = laneOverlayX(rangeEndX, rect, 'end');
+    const rangeStartLocalX = Math.min(laneOverlayX(rangeStartX, rect, 'start'), rangeEndLocalX);
+    const fadeInLocalX = clampLaneX(laneOverlayX(fadeInX, rect, 'handle'), rangeStartLocalX, rangeEndLocalX);
+    const fadeOutLocalX = clampLaneX(laneOverlayX(fadeOutX, rect, 'handle'), rangeStartLocalX, rangeEndLocalX);
+    const playheadX = msToLaneX(getPreviewLaneCursorMs(), durationMs, rect) - rect.left;
     const markerLocalMs = freezeLocalTimeMs();
     const markerX = markerLocalMs === undefined ? undefined : msToLaneX(markerLocalMs, durationMs, rect) - rect.left;
     overlay.replaceChildren(
-      createOverlayRegion('stream-visual-preview-lane-fade in', 0, Math.max(0, fadeInX - rect.left)),
-      createOverlayRegion('stream-visual-preview-lane-fade out', Math.max(0, fadeOutX - rect.left), Math.max(0, rect.left + rect.width - fadeOutX), isInfiniteRender()),
+      ...(mediaMode() === 'video-file' ? [createOverlayRegion('stream-visual-preview-lane-range', rangeStartLocalX, Math.max(0, rangeEndLocalX - rangeStartLocalX))] : []),
+      ...(mediaMode() === 'video-file' ? [createOverlayRangeEdge('start', rangeStartLocalX), createOverlayRangeEdge('end', rangeEndLocalX)] : []),
+      createOverlayRegion('stream-visual-preview-lane-fade in', rangeStartLocalX, Math.max(0, fadeInLocalX - rangeStartLocalX)),
+      createOverlayRegion('stream-visual-preview-lane-fade out', fadeOutLocalX, Math.max(0, rangeEndLocalX - fadeOutLocalX), isInfiniteRender()),
       createOverlayFadeCurve(durationMs, rect),
       ...(markerX !== undefined ? [createOverlayMarker(markerX)] : []),
       createOverlayPlayhead(playheadX),
@@ -467,6 +522,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     return playhead;
   }
 
+  function createOverlayRangeEdge(edge: 'start' | 'end', leftPx: number): HTMLElement {
+    const marker = document.createElement('div');
+    marker.className = `stream-visual-preview-lane-range-edge ${edge}`;
+    marker.style.left = `${leftPx}px`;
+    return marker;
+  }
+
   function createOverlayFadeCurve(durationMs: number, rect: VisualPreviewLaneRect): SVGSVGElement {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'stream-visual-preview-lane-fade-curve');
@@ -483,17 +545,21 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     if (!draftSub.fadeIn?.durationMs && !fadeOut?.durationMs) {
       return '';
     }
+    const range = mediaMode() === 'video-file' ? selectedSourceRange() : { startMs: 0, endMs: durationMs, durationMs };
+    const rate = mediaMode() === 'video-file' ? playbackRate() : 1;
+    const localDurationMs = Math.max(1, range.durationMs / rate);
     const sampleCount = Math.max(24, Math.min(160, Math.round(rect.width / 8)));
     const parts: string[] = [];
     for (let i = 0; i <= sampleCount; i += 1) {
-      const localMs = (durationMs * i) / sampleCount;
+      const localMs = (localDurationMs * i) / sampleCount;
+      const mediaMs = range.startMs + localMs * rate;
       const gain = evaluateFadeGain({
         timeMs: localMs,
-        durationMs,
+        durationMs: localDurationMs,
         fadeIn: draftSub.fadeIn,
         fadeOut,
       });
-      const x = msToLaneX(localMs, durationMs, rect) - rect.left;
+      const x = msToLaneX(mediaMs, durationMs, rect) - rect.left;
       const y = fadeGainToY(gain, rect);
       parts.push(`${i === 0 ? 'M' : 'L'} ${roundPathNumber(x)} ${roundPathNumber(y)}`);
     }
@@ -613,6 +679,13 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     return previewPausedAtMs > 0 || previewPlaying ? getPreviewElapsedMs() : 0;
   }
 
+  function getPreviewLaneCursorMs(): number {
+    if (mediaMode() !== 'video-file') {
+      return getPreviewCursorMs();
+    }
+    return previewSourceTimeMs ?? sourceMsForPreviewLocalMs(getPreviewCursorMs()) ?? selectedSourceRange().startMs;
+  }
+
   function startPreview(payload: VisualSubCuePreviewPayload): void {
     disconnectObserver.markConnected();
     previewDispatchMessage = undefined;
@@ -676,10 +749,12 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
   }
 
   function seekPreviewTo(x: number): void {
-    const localTimeMs = laneXToMs(x, laneDurationMs(), laneRect());
+    const laneMs = laneXToMs(x, laneDurationMs(), laneRect());
+    const range = mediaMode() === 'video-file' ? selectedSourceRange() : undefined;
+    const localTimeMs = range ? Math.max(0, (Math.min(range.endMs, Math.max(range.startMs, laneMs)) - range.startMs) / playbackRate()) : laneMs;
     previewPausedAtMs = localTimeMs;
     previewStartedAtMs = previewPlaying ? performance.now() - localTimeMs : undefined;
-    previewSourceTimeMs = sourceMsForPreviewLocalMs(localTimeMs);
+    previewSourceTimeMs = range ? Math.min(range.endMs, Math.max(range.startMs, laneMs)) : sourceMsForPreviewLocalMs(localTimeMs);
     if (window.xtream.visualRuntime?.preview && previewActive) {
       void window.xtream.visualRuntime.preview({
         type: 'seek-visual-subcue-preview',
@@ -702,10 +777,11 @@ export function createVisualSubCuePreviewLaneEditor(deps: VisualSubCuePreviewLan
     if (mode === 'live' || durationMs === undefined) {
       return Math.max(0, localTimeMs * rate);
     }
-    const baseDurationMs = durationMs / rate;
+    const range = selectedSourceRange();
+    const baseDurationMs = range.durationMs / rate;
     const timing = resolveLoopTiming(draftSub.loop, baseDurationMs);
     const phaseMs = Math.min(baseDurationMs, mapElapsedToLoopPhase(Math.max(0, localTimeMs), timing));
-    return Math.min(durationMs, Math.max(0, phaseMs * rate));
+    return Math.min(range.endMs, Math.max(range.startMs, range.startMs + phaseMs * rate));
   }
 
   function startPreviewTicker(): void {
@@ -826,6 +902,16 @@ function positionContextMenu(menu: HTMLElement, clientX: number, clientY: number
   const bounds = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(clientX, window.innerWidth - bounds.width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(clientY, window.innerHeight - bounds.height - 4))}px`;
+}
+
+function clampLaneX(x: number, minX: number, maxX: number): number {
+  return Math.max(minX, Math.min(maxX, x));
+}
+
+function laneOverlayX(x: number, rect: VisualPreviewLaneRect, edge: 'start' | 'end' | 'handle'): number {
+  const localX = x - rect.left;
+  const max = Math.max(0, rect.width - (edge === 'start' ? 0 : VISUAL_LANE_EDGE_STROKE_PX));
+  return Math.max(0, Math.min(max, localX));
 }
 
 function createRailButton(label: string, onClick: () => void): HTMLButtonElement {
@@ -961,6 +1047,8 @@ export function buildVisualSubCuePreviewPayload(
     visualId: sub.visualId,
     targets,
     visual,
+    sourceStartMs: visual.kind === 'file' && visual.type === 'video' ? sub.sourceStartMs : undefined,
+    sourceEndMs: visual.kind === 'file' && visual.type === 'video' ? sub.sourceEndMs : undefined,
     playTimeMs: visual.kind === 'file' && visual.type === 'video' ? durationMs : undefined,
     durationMs: visual.kind === 'live' || visual.type === 'image' ? durationMs : undefined,
     playbackRate,

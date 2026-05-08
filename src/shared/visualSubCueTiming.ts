@@ -19,7 +19,7 @@ export function isImageOrLiveVisual(media: VisualSubCueMediaInfo | undefined): b
 }
 
 export function getVisualSubCueBaseDurationMs(
-  sub: Pick<PersistedVisualSubCueConfig, 'visualId' | 'durationOverrideMs' | 'playbackRate' | 'loop'>,
+  sub: Pick<PersistedVisualSubCueConfig, 'visualId' | 'sourceStartMs' | 'sourceEndMs' | 'durationOverrideMs' | 'playbackRate' | 'loop'>,
   media: VisualSubCueMediaInfo | undefined,
   knownDurationSeconds?: number,
 ): number | undefined {
@@ -36,8 +36,49 @@ export function getVisualSubCueBaseDurationMs(
     return durationOverrideMs !== undefined ? Math.max(0, durationOverrideMs) : undefined;
   }
   const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
-  const mediaDurationMs = (durationSeconds * 1000) / rate;
+  const sourceRange = normalizeVisualSourceRange(sub, media, knownDurationSeconds);
+  const mediaDurationMs = (sourceRange.durationMs ?? durationSeconds * 1000) / rate;
   return durationOverrideMs !== undefined ? Math.min(mediaDurationMs, Math.max(0, durationOverrideMs)) : mediaDurationMs;
+}
+
+export function normalizeVisualSourceRange(
+  sub: Pick<PersistedVisualSubCueConfig, 'sourceStartMs' | 'sourceEndMs'>,
+  media: VisualSubCueMediaInfo | undefined,
+  knownDurationSeconds?: number,
+): { startMs: number; endMs?: number; durationMs?: number } {
+  const durationSeconds = finiteNumber(media?.durationSeconds) ?? finiteNumber(knownDurationSeconds);
+  const sourceDurationMs = durationSeconds !== undefined ? Math.max(0, durationSeconds * 1000) : undefined;
+  const maxEnd = sourceDurationMs;
+  const rawStart = Math.max(0, finiteNumber(sub.sourceStartMs) ?? 0);
+  const startMs = maxEnd !== undefined ? Math.min(rawStart, maxEnd) : rawStart;
+  const rawEnd = finiteNumber(sub.sourceEndMs);
+  const endMs =
+    rawEnd !== undefined
+      ? Math.max(startMs, maxEnd !== undefined ? Math.min(Math.max(0, rawEnd), maxEnd) : Math.max(0, rawEnd))
+      : maxEnd;
+  return {
+    startMs,
+    endMs,
+    durationMs: endMs !== undefined ? Math.max(0, endMs - startMs) : undefined,
+  };
+}
+
+export function clampVisualSourceRange(args: {
+  startMs: number;
+  endMs: number | undefined;
+  durationMs: number | undefined;
+  minSpanMs?: number;
+}): { sourceStartMs?: number; sourceEndMs?: number; selectedDurationMs?: number } {
+  const durationMs = args.durationMs !== undefined && Number.isFinite(args.durationMs) ? Math.max(0, args.durationMs) : undefined;
+  const minSpanMs = args.minSpanMs ?? 1;
+  const maxEnd = durationMs ?? Math.max(args.startMs, args.endMs ?? args.startMs + minSpanMs);
+  const startMs = clampNumber(args.startMs, 0, Math.max(0, maxEnd - minSpanMs));
+  const endMs = clampNumber(args.endMs ?? maxEnd, startMs + minSpanMs, maxEnd);
+  return {
+    sourceStartMs: startMs > 0 ? Math.round(startMs) : undefined,
+    sourceEndMs: durationMs !== undefined && Math.abs(endMs - durationMs) < 1 ? undefined : Math.round(endMs),
+    selectedDurationMs: Math.max(0, endMs - startMs),
+  };
 }
 
 export function evaluateVisualSubCueOpacity(args: {

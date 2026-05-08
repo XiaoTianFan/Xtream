@@ -3,6 +3,7 @@ import {
   evaluateVisualSubCueOpacity,
   getVisualSubCueBaseDurationMs,
   normalizeVisualFreezeFrameMs,
+  normalizeVisualSourceRange,
   type VisualSubCueMediaInfo,
 } from './visualSubCueTiming';
 
@@ -14,6 +15,15 @@ describe('visualSubCueTiming', () => {
   it('uses natural video duration with playback rate and legacy duration cap', () => {
     expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 2 }, video)).toBe(5000);
     expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 1, durationOverrideMs: 4000 }, video)).toBe(4000);
+    expect(getVisualSubCueBaseDurationMs({ visualId: 'video', playbackRate: 2, sourceStartMs: 2000, sourceEndMs: 8000 }, video)).toBe(3000);
+  });
+
+  it('normalizes selected video source ranges', () => {
+    expect(normalizeVisualSourceRange({ sourceStartMs: 2000, sourceEndMs: 12_000 }, video)).toEqual({
+      startMs: 2000,
+      endMs: 10_000,
+      durationMs: 8000,
+    });
   });
 
   it('requires explicit duration for image and live visual media', () => {
