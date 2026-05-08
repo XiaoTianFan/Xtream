@@ -30,6 +30,7 @@ import {
   normalizeAudioSourceRange,
 } from './audioSubCueAutomation';
 import { normalizeSceneTimingLinks } from './subCueTimingLink';
+import { normalizeSubCuePassLoopPolicies } from './subCuePassLoopTiming';
 import { normalizeVisualFadeSpec, normalizeVisualFreezeFrameMs } from './visualSubCueTiming';
 
 export const STREAM_MAIN_ID: StreamId = 'stream-main';
@@ -130,6 +131,14 @@ export function normalizeStreamPersistence(stream: PersistedStreamConfig): Persi
       for (const subCueId of Object.keys(scene.subCues)) {
         const subCue = scene.subCues[subCueId];
         if (subCue?.kind === 'visual') {
+          const normalized = normalizeSubCuePassLoopPolicies({
+            pass: subCue.pass,
+            innerLoop: subCue.innerLoop,
+            legacyLoop: subCue.loop,
+          });
+          subCue.pass = normalized.pass;
+          subCue.innerLoop = normalized.innerLoop;
+          delete subCue.loop;
           subCue.fadeIn = normalizeVisualFadeSpec(subCue.fadeIn, undefined);
           subCue.fadeOut = normalizeVisualFadeSpec(subCue.fadeOut, undefined);
           subCue.freezeFrameMs = normalizeVisualFreezeFrameMs(subCue.freezeFrameMs, undefined);
@@ -150,6 +159,14 @@ export function normalizeStreamPersistence(stream: PersistedStreamConfig): Persi
           const pitch = clampPitchShiftSemitones(subCue.pitchShiftSemitones);
           subCue.pitchShiftSemitones = pitch === 0 ? undefined : pitch;
         }
+        const normalized = normalizeSubCuePassLoopPolicies({
+          pass: subCue.pass,
+          innerLoop: subCue.innerLoop,
+          legacyLoop: subCue.loop,
+        });
+        subCue.pass = normalized.pass;
+        subCue.innerLoop = normalized.innerLoop;
+        delete subCue.loop;
         subCue.fadeIn = normalizeFadeSpec(subCue.fadeIn, undefined);
         subCue.fadeOut = normalizeFadeSpec(subCue.fadeOut, undefined);
         subCue.levelAutomation = clampAudioAutomationPoints(

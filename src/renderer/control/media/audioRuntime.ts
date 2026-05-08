@@ -1,6 +1,12 @@
 import { getAudioEffectiveTime, getDirectorSeconds } from '../../../shared/timeline';
 import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../../../shared/streamLoopTiming';
 import {
+  isElapsedWithinSubCueTotal,
+  mapElapsedToSubCuePassPhase,
+  mapPassElapsedToMediaElapsed,
+  resolveSubCuePassLoopTiming,
+} from '../../../shared/subCuePassLoopTiming';
+import {
   clampPitchShiftSemitones,
   evaluateAudioSubCueLevelDb,
   evaluateAudioSubCuePan,
@@ -13,6 +19,7 @@ import type {
   DirectorState,
   LoopState,
   MeterLaneState,
+  RuntimeSubCueTiming,
   VirtualOutputSourceSelection,
   VirtualOutputState,
 } from '../../../shared/types';
@@ -421,11 +428,18 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
       if (!selection || !source) {
         continue;
       }
-      const runtimeSource = source as AudioSourceState & { runtimeOffsetSeconds?: number; runtimeLoop?: LoopState };
+      const runtimeSource = source as AudioSourceState & {
+        runtimeOffsetSeconds?: number;
+        runtimeLoop?: LoopState;
+        runtimeSubCueTiming?: RuntimeSubCueTiming;
+      };
       const target = getRuntimeAudioTarget(source, directorSeconds, state.loop);
       const localMs = Math.max(0, (directorSeconds - (runtimeSource.runtimeOffsetSeconds ?? 0)) * 1000);
+      const automationMs = runtimeSource.runtimeSubCueTiming
+        ? mapRuntimeSubCueLocalMs(localMs, runtimeSource.runtimeSubCueTiming).mediaElapsedMs
+        : localMs;
       const sourceMuted = selection.muted || (hasSoloedSource && !selection.solo);
-      const automatedLevelDb = evaluateAudioSubCueLevelDb(selection.levelDb, selection.runtimeLevelAutomation, localMs);
+      const automatedLevelDb = evaluateAudioSubCueLevelDb(selection.levelDb, selection.runtimeLevelAutomation, automationMs);
       const fadeGain = evaluateFadeGain({
         timeMs: localMs,
         durationMs: source.durationSeconds !== undefined ? source.durationSeconds * 1000 : undefined,
@@ -437,7 +451,7 @@ export function syncAudioRuntimeToDirector(state: DirectorState): void {
         sourceRuntime,
         sourceMuted || !target.audible ? 0 : dbToGain(automatedLevelDb) * dbToGain(source.levelDb ?? 0) * fadeGain,
       );
-      sourceRuntime.sourcePanner.pan.value = clampAudioPan(evaluateAudioSubCuePan(selection.pan, selection.runtimePanAutomation, localMs));
+      sourceRuntime.sourcePanner.pan.value = clampAudioPan(evaluateAudioSubCuePan(selection.pan, selection.runtimePanAutomation, automationMs));
       sourceRuntime.element.playbackRate = state.rate * (source.playbackRate ?? 1);
       sourceRuntime.element.loop = canUseNativeAudioLoop(source);
       updatePitchShiftNode(sourceRuntime.pitchNode, source.runtimePitchShiftSemitones);
@@ -762,7 +776,7 @@ function seekAudioSubCuePreview(previewId: string, command: Extract<AudioSubCueP
   const sourceTimeMs =
     command.sourceTimeMs !== undefined
       ? Math.min(maxSourceMs, Math.max(sourceStartMs, command.sourceTimeMs))
-      : sourceStartMs + Math.max(0, command.localTimeMs ?? 0) * rate;
+      : getPreviewSourceMsForLocalMs(runtime, Math.max(0, command.localTimeMs ?? 0)) ?? sourceStartMs + Math.max(0, command.localTimeMs ?? 0) * rate;
   const localTimeMs = command.localTimeMs ?? Math.max(0, (sourceTimeMs - sourceStartMs) / rate);
   runtime.element.currentTime = Math.max(0, sourceTimeMs / 1000);
   runtime.pausedAtMs = localTimeMs;
@@ -919,17 +933,50 @@ function getAudioSourceUrl(audioSourceId: string, state: DirectorState): string 
   return state.visuals[source.visualId]?.url ?? '';
 }
 
+function resolveRuntimeSubCueTiming(timing: RuntimeSubCueTiming) {
+  return resolveSubCuePassLoopTiming({
+    baseDurationMs: timing.baseDurationMs,
+    pass: timing.pass,
+    innerLoop: timing.innerLoop,
+  });
+}
+
+function mapRuntimeSubCueLocalMs(
+  localMs: number,
+  timing: RuntimeSubCueTiming,
+): { mediaElapsedMs: number; audible: boolean } {
+  const resolved = resolveRuntimeSubCueTiming(timing);
+  const passLocalMs = Math.max(0, localMs);
+  const mapped = mapPassElapsedToMediaElapsed(passLocalMs, resolved);
+  const passAudible = resolved.passDurationMs === undefined || passLocalMs < resolved.passDurationMs;
+  return {
+    mediaElapsedMs: mapped.mediaElapsedMs,
+    audible: passAudible,
+  };
+}
+
 export function getRuntimeAudioTarget(source: AudioSourceState, directorSeconds: number, fallbackLoop: LoopState): { seconds: number; audible: boolean } {
   const runtimeSource = source as AudioSourceState & {
     runtimeOffsetSeconds?: number;
     runtimeLoop?: LoopState;
     runtimeSourceStartSeconds?: number;
     runtimeSourceEndSeconds?: number;
+    runtimeSubCueTiming?: RuntimeSubCueTiming;
   };
   const runtimeOffsetSeconds = runtimeSource.runtimeOffsetSeconds ?? 0;
   const localSeconds = Math.max(0, directorSeconds - runtimeOffsetSeconds);
   const rate = source.playbackRate ?? 1;
   const sourceStartSeconds = runtimeSource.runtimeSourceStartSeconds ?? 0;
+  if (runtimeSource.runtimeSubCueTiming) {
+    const mapped = mapRuntimeSubCueLocalMs(localSeconds * 1000, runtimeSource.runtimeSubCueTiming);
+    const seconds = sourceStartSeconds + (mapped.mediaElapsedMs * rate) / 1000;
+    const sourceEndSeconds = runtimeSource.runtimeSourceEndSeconds;
+    const rangeAudible = sourceEndSeconds === undefined || seconds < sourceEndSeconds;
+    return {
+      seconds: Math.max(sourceStartSeconds, sourceEndSeconds === undefined ? seconds : Math.min(seconds, sourceEndSeconds)),
+      audible: mapped.audible && rangeAudible,
+    };
+  }
   if (runtimeSource.runtimeSourceStartSeconds === undefined && runtimeSource.runtimeSourceEndSeconds === undefined) {
     return getAudioEffectiveTime(localSeconds * rate, source.durationSeconds, runtimeSource.runtimeLoop ?? fallbackLoop);
   }
@@ -1275,33 +1322,44 @@ function syncPreviewAutomation(runtime: AudioSubCuePreviewRuntime): void {
     stopAudioSubCuePreview(runtime.payload.previewId);
     return;
   }
+  const phase = getPreviewPassPhase(runtime, localMs);
   const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
   const sourceEndMs = runtime.payload.sourceEndMs;
   const durationMs =
+    phase?.durationMs ??
     runtime.payload.playTimeMs ??
     (sourceEndMs !== undefined ? Math.max(0, sourceEndMs - sourceStartMs) / Math.max(0.01, runtime.payload.playbackRate ?? 1) : undefined);
   const fadeGain = evaluateFadeGain({
-    timeMs: localMs,
+    timeMs: phase?.passElapsedMs ?? localMs,
     durationMs,
     fadeIn: runtime.payload.fadeIn,
     fadeOut: runtime.payload.fadeOut,
   });
-  const levelDb = evaluateAudioSubCueLevelDb(runtime.payload.levelDb, runtime.payload.levelAutomation, localMs);
+  const automationMs = phase?.mediaElapsedMs ?? localMs;
+  const levelDb = evaluateAudioSubCueLevelDb(runtime.payload.levelDb, runtime.payload.levelAutomation, automationMs);
   // Preview mirrors live playback: fade gain is applied after the main level automation.
   const gain = dbToGain(levelDb) * dbToGain(runtime.payload.sourceLevelDb ?? 0) * fadeGain;
   const now = runtime.context.currentTime;
   runtime.gainNode.gain.setTargetAtTime(gain, now, SOURCE_GAIN_SMOOTH_SECONDS);
-  runtime.panner.pan.setTargetAtTime(clampAudioPan(evaluateAudioSubCuePan(runtime.payload.pan, runtime.payload.panAutomation, localMs)), now, SOURCE_GAIN_SMOOTH_SECONDS);
+  runtime.panner.pan.setTargetAtTime(clampAudioPan(evaluateAudioSubCuePan(runtime.payload.pan, runtime.payload.panAutomation, automationMs)), now, SOURCE_GAIN_SMOOTH_SECONDS);
   updatePitchShiftNode(runtime.pitchNode, runtime.payload.pitchShiftSemitones);
   reportPreviewPosition(runtime);
 }
 
 function isInfinitePreviewLoop(payload: AudioSubCuePreviewPayload): boolean {
-  return Boolean(payload.loop?.enabled && payload.loop.iterations.type === 'infinite');
+  return Boolean(
+    payload.subCueTiming?.pass.iterations.type === 'infinite' ||
+      payload.subCueTiming?.innerLoop?.enabled && payload.subCueTiming.innerLoop.iterations.type === 'infinite' ||
+      payload.loop?.enabled && payload.loop.iterations.type === 'infinite',
+  );
 }
 
 function previewLoopSignature(loop: AudioSubCuePreviewPayload['loop']): string {
   return JSON.stringify(loop ?? { enabled: false });
+}
+
+function previewTimingSignature(timing: AudioSubCuePreviewPayload['subCueTiming']): string {
+  return JSON.stringify(timing ?? {});
 }
 
 function getPreviewNaturalDurationMs(runtime: AudioSubCuePreviewRuntime): number | undefined {
@@ -1315,12 +1373,44 @@ function getPreviewNaturalDurationMs(runtime: AudioSubCuePreviewRuntime): number
   return Math.max(0, sourceEndMs - sourceStartMs) / Math.max(0.01, runtime.payload.playbackRate ?? 1);
 }
 
+function resolvePreviewSubCueTiming(runtime: AudioSubCuePreviewRuntime) {
+  const timing = runtime.payload.subCueTiming;
+  if (!timing) {
+    return undefined;
+  }
+  return resolveSubCuePassLoopTiming({
+    baseDurationMs: timing.baseDurationMs,
+    pass: timing.pass,
+    innerLoop: timing.innerLoop,
+  });
+}
+
+function getPreviewPassPhase(
+  runtime: AudioSubCuePreviewRuntime,
+  localMs: number,
+): { passElapsedMs: number; mediaElapsedMs: number; durationMs?: number } | undefined {
+  const timing = resolvePreviewSubCueTiming(runtime);
+  if (!timing) {
+    return undefined;
+  }
+  const phase = mapElapsedToSubCuePassPhase(localMs, timing);
+  return {
+    passElapsedMs: phase.passElapsedMs,
+    mediaElapsedMs: phase.mediaElapsedMs,
+    durationMs: timing.passDurationMs,
+  };
+}
+
 function getPreviewSourceMsForLocalMs(runtime: AudioSubCuePreviewRuntime, localMs: number): number | undefined {
   const naturalDurationMs = getPreviewNaturalDurationMs(runtime);
   if (naturalDurationMs === undefined) {
     return undefined;
   }
   const sourceStartMs = runtime.payload.sourceStartMs ?? 0;
+  const phase = getPreviewPassPhase(runtime, localMs);
+  if (phase) {
+    return sourceStartMs + phase.mediaElapsedMs * Math.max(0.01, runtime.payload.playbackRate ?? 1);
+  }
   const timing = resolveLoopTiming(runtime.payload.loop, naturalDurationMs);
   const phaseMs = Math.min(naturalDurationMs, mapElapsedToLoopPhase(localMs, timing));
   return sourceStartMs + phaseMs * Math.max(0.01, runtime.payload.playbackRate ?? 1);
@@ -1339,6 +1429,10 @@ function shouldResyncPreviewSource(runtime: AudioSubCuePreviewRuntime, sourceMs:
 }
 
 function isElapsedWithinPreviewTotal(runtime: AudioSubCuePreviewRuntime, localMs: number): boolean {
+  const subCueTiming = resolvePreviewSubCueTiming(runtime);
+  if (subCueTiming) {
+    return isElapsedWithinSubCueTotal(localMs, subCueTiming);
+  }
   if (runtime.payload.playTimeMs !== undefined) {
     return localMs < runtime.payload.playTimeMs;
   }
@@ -1357,7 +1451,8 @@ function canResumePreviewRuntime(runtime: AudioSubCuePreviewRuntime, payload: Au
     runtime.payload.sourceEndMs === payload.sourceEndMs &&
     runtime.payload.channelMode === payload.channelMode &&
     runtime.payload.channelCount === payload.channelCount &&
-    previewLoopSignature(runtime.payload.loop) === previewLoopSignature(payload.loop)
+    previewLoopSignature(runtime.payload.loop) === previewLoopSignature(payload.loop) &&
+    previewTimingSignature(runtime.payload.subCueTiming) === previewTimingSignature(payload.subCueTiming)
   );
 }
 

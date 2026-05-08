@@ -3,12 +3,17 @@ import './display.css';
 import { describeLayout, getLayoutVisualIds } from '../shared/layouts';
 import { getDirectorSeconds, getMediaEffectiveTime } from '../shared/timeline';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
+import {
+  mapElapsedToSubCuePassPhase,
+  mapPassElapsedToMediaElapsed,
+  resolveSubCuePassLoopTiming,
+} from '../shared/subCuePassLoopTiming';
 import type {
   DirectorState,
   DisplayWindowState,
   DisplayZoneId,
   LoopState,
-  SceneLoopPolicy,
+  RuntimeSubCueTiming,
   StreamEnginePublicState,
   VisualId,
   VisualLayoutProfile,
@@ -596,15 +601,58 @@ function previewVisualForRuntime(runtime: VisualPreviewRuntime): VisualState {
 }
 
 function applyVisualPreviewLayerState(layer: HTMLElement, runtime: VisualPreviewRuntime): void {
+  const phase = getVisualPreviewPassPhase(runtime.payload, runtime.localTimeMs);
   layer.style.opacity = String(
     evaluateVisualSubCueOpacity({
-      localTimeMs: runtime.localTimeMs,
-      durationMs: effectiveVisualPreviewDurationMs(runtime.payload),
+      localTimeMs: phase?.passElapsedMs ?? runtime.localTimeMs,
+      durationMs: phase?.durationMs ?? effectiveVisualPreviewDurationMs(runtime.payload),
       baseOpacity: runtime.payload.visual.opacity ?? 1,
       fadeIn: runtime.payload.fadeIn,
       fadeOut: runtime.payload.fadeOut,
     }),
   );
+}
+
+function resolveRuntimeSubCueTiming(timing: RuntimeSubCueTiming) {
+  return resolveSubCuePassLoopTiming({
+    baseDurationMs: timing.baseDurationMs,
+    pass: timing.pass,
+    innerLoop: timing.innerLoop,
+  });
+}
+
+function mapRuntimeSubCueMediaElapsedMs(localMs: number, timing: RuntimeSubCueTiming): { mediaElapsedMs: number; audible: boolean } {
+  const resolved = resolveRuntimeSubCueTiming(timing);
+  const passLocalMs = Math.max(0, localMs);
+  const mapped = mapPassElapsedToMediaElapsed(passLocalMs, resolved);
+  return {
+    mediaElapsedMs: mapped.mediaElapsedMs,
+    audible: resolved.passDurationMs === undefined || passLocalMs < resolved.passDurationMs,
+  };
+}
+
+function resolveVisualPreviewSubCueTiming(payload: VisualSubCuePreviewPayload) {
+  const timing = payload.subCueTiming;
+  if (!timing) {
+    return undefined;
+  }
+  return resolveRuntimeSubCueTiming(timing);
+}
+
+function getVisualPreviewPassPhase(
+  payload: VisualSubCuePreviewPayload,
+  localMs: number,
+): { passElapsedMs: number; mediaElapsedMs: number; durationMs?: number } | undefined {
+  const timing = resolveVisualPreviewSubCueTiming(payload);
+  if (!timing) {
+    return undefined;
+  }
+  const phase = mapElapsedToSubCuePassPhase(localMs, timing);
+  return {
+    passElapsedMs: phase.passElapsedMs,
+    mediaElapsedMs: phase.mediaElapsedMs,
+    durationMs: timing.passDurationMs,
+  };
 }
 
 function syncVisualPreviewRuntime(runtime: VisualPreviewRuntime, forceReport: boolean): void {
@@ -664,7 +712,7 @@ function updateVisualPreviewTime(runtime: VisualPreviewRuntime): void {
   runtime.localTimeMs = Math.max(0, runtime.anchorLocalTimeMs + performance.now() - runtime.anchorWallTimeMs);
   runtime.sourceTimeMs = undefined;
   const durationMs = effectiveVisualPreviewDurationMs(runtime.payload);
-  const infinite = isInfiniteSceneLoop(runtime.payload.loop);
+  const infinite = isInfiniteVisualPreview(runtime.payload);
   if (!infinite && durationMs !== undefined && runtime.localTimeMs >= durationMs) {
     runtime.localTimeMs = durationMs;
     runtime.playing = false;
@@ -680,6 +728,10 @@ function sourceTimeMsForVisualPreview(runtime: VisualPreviewRuntime, mediaDurati
   const sourceEndMs = Math.max(sourceStartMs, runtime.payload.sourceEndMs ?? mediaDurationMs ?? sourceStartMs);
   const selectedDurationMs = Math.max(0, sourceEndMs - sourceStartMs);
   const naturalLocalDurationMs = selectedDurationMs > 0 ? selectedDurationMs / playbackRate : mediaDurationMs !== undefined && mediaDurationMs > 0 ? mediaDurationMs / playbackRate : undefined;
+  const phase = getVisualPreviewPassPhase(runtime.payload, runtime.localTimeMs);
+  if (phase) {
+    return Math.max(sourceStartMs, Math.min(sourceEndMs || Number.POSITIVE_INFINITY, sourceStartMs + phase.mediaElapsedMs * playbackRate));
+  }
   if (naturalLocalDurationMs === undefined || !runtime.payload.loop?.enabled) {
     return Math.max(sourceStartMs, Math.min(sourceEndMs || Number.POSITIVE_INFINITY, sourceStartMs + runtime.localTimeMs * playbackRate));
   }
@@ -695,6 +747,10 @@ function sourceTimeMsForVisualPreview(runtime: VisualPreviewRuntime, mediaDurati
 }
 
 function effectiveVisualPreviewDurationMs(payload: VisualSubCuePreviewPayload): number | undefined {
+  const timing = resolveVisualPreviewSubCueTiming(payload);
+  if (timing) {
+    return timing.totalDurationMs;
+  }
   const explicitMs =
     payload.playTimeMs !== undefined && Number.isFinite(payload.playTimeMs) && payload.playTimeMs > 0
       ? payload.playTimeMs
@@ -713,8 +769,12 @@ function effectiveVisualPreviewDurationMs(payload: VisualSubCuePreviewPayload): 
   return resolveLoopTiming(payload.loop, baseMs).totalDurationMs;
 }
 
-function isInfiniteSceneLoop(loop: SceneLoopPolicy | undefined): boolean {
-  return loop?.enabled === true && loop.iterations.type === 'infinite';
+function isInfiniteVisualPreview(payload: VisualSubCuePreviewPayload): boolean {
+  const timing = resolveVisualPreviewSubCueTiming(payload);
+  return Boolean(
+    timing?.totalDurationMs === undefined && timing !== undefined ||
+      payload.loop?.enabled === true && payload.loop.iterations.type === 'infinite',
+  );
 }
 
 function reportVisualPreviewPosition(runtime: VisualPreviewRuntime, force: boolean): void {
@@ -1278,20 +1338,37 @@ function syncVideoElements(display: DisplayWindowState, state: DirectorState): v
     const visual = visualId ? state.visuals[visualId] : undefined;
     const visualDuration = visual?.durationSeconds;
     const baseTarget = shouldApplyCorrection ? correction.targetSeconds! : targetSeconds;
-    const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeSourceStartSeconds?: number; runtimeSourceEndSeconds?: number; runtimeLoop?: LoopState; runtimeFreezeFrameSeconds?: number }) | undefined;
+    const runtime = visual as
+      | (VisualState & {
+          runtimeOffsetSeconds?: number;
+          runtimeSourceStartSeconds?: number;
+          runtimeSourceEndSeconds?: number;
+          runtimeLoop?: LoopState;
+          runtimeFreezeFrameSeconds?: number;
+          runtimeSubCueTiming?: RuntimeSubCueTiming;
+        })
+      | undefined;
     const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
     const runtimeSourceStartSeconds = runtime?.runtimeSourceStartSeconds ?? 0;
     const runtimeSourceEndSeconds = runtime?.runtimeSourceEndSeconds;
-    const rawMediaTarget = runtimeSourceStartSeconds + (baseTarget - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1);
+    const localSeconds = Math.max(0, baseTarget - runtimeOffsetSeconds);
+    const runtimeMapped = runtime?.runtimeSubCueTiming
+      ? mapRuntimeSubCueMediaElapsedMs(localSeconds * 1000, runtime.runtimeSubCueTiming)
+      : undefined;
+    const rawMediaTarget =
+      runtimeSourceStartSeconds +
+      (runtimeMapped ? runtimeMapped.mediaElapsedMs / 1000 : localSeconds) * (visual?.playbackRate ?? 1);
     const freezeSeconds = runtime?.runtimeFreezeFrameSeconds;
     const frozen = freezeSeconds !== undefined && Number.isFinite(freezeSeconds) && rawMediaTarget >= freezeSeconds;
     const effectiveTarget = frozen
       ? clampFreezeTargetSeconds(freezeSeconds, visualDuration)
-      : getMediaEffectiveTime(
-          rawMediaTarget,
-          runtimeSourceEndSeconds ?? visualDuration,
-          runtime?.runtimeLoop ?? state.loop,
-        );
+      : runtimeMapped
+        ? Math.max(runtimeSourceStartSeconds, Math.min(rawMediaTarget, runtimeSourceEndSeconds ?? visualDuration ?? Number.POSITIVE_INFINITY))
+        : getMediaEffectiveTime(
+            rawMediaTarget,
+            runtimeSourceEndSeconds ?? visualDuration,
+            runtime?.runtimeLoop ?? state.loop,
+          );
     const syncStateBefore = getMediaSyncState(video);
     const syncKeyChanged = syncStateBefore.lastSyncKey !== syncKey;
     const driftBeforeSeconds = video.currentTime - effectiveTarget;
@@ -1533,14 +1610,31 @@ driftTimer = window.setInterval(() => {
           const visualId = video.dataset.visualId;
           const state = currentState!;
           const visual = visualId ? state.visuals[visualId] : undefined;
-          const runtime = visual as (VisualState & { runtimeOffsetSeconds?: number; runtimeSourceStartSeconds?: number; runtimeSourceEndSeconds?: number; runtimeLoop?: LoopState }) | undefined;
+          const runtime = visual as
+            | (VisualState & {
+                runtimeOffsetSeconds?: number;
+                runtimeSourceStartSeconds?: number;
+                runtimeSourceEndSeconds?: number;
+                runtimeLoop?: LoopState;
+                runtimeSubCueTiming?: RuntimeSubCueTiming;
+              })
+            | undefined;
           const runtimeOffsetSeconds = runtime?.runtimeOffsetSeconds ?? 0;
           const runtimeSourceStartSeconds = runtime?.runtimeSourceStartSeconds ?? 0;
-          const targetSeconds = getMediaEffectiveTime(
-            runtimeSourceStartSeconds + (directorSeconds - runtimeOffsetSeconds) * (visual?.playbackRate ?? 1),
-            runtime?.runtimeSourceEndSeconds ?? visual?.durationSeconds,
-            runtime?.runtimeLoop ?? state.loop,
-          );
+          const localSeconds = Math.max(0, directorSeconds - runtimeOffsetSeconds);
+          const runtimeMapped = runtime?.runtimeSubCueTiming
+            ? mapRuntimeSubCueMediaElapsedMs(localSeconds * 1000, runtime.runtimeSubCueTiming)
+            : undefined;
+          const rawTargetSeconds =
+            runtimeSourceStartSeconds +
+            (runtimeMapped ? runtimeMapped.mediaElapsedMs / 1000 : localSeconds) * (visual?.playbackRate ?? 1);
+          const targetSeconds = runtimeMapped
+            ? Math.max(runtimeSourceStartSeconds, Math.min(rawTargetSeconds, runtime?.runtimeSourceEndSeconds ?? visual?.durationSeconds ?? Number.POSITIVE_INFINITY))
+            : getMediaEffectiveTime(
+                rawTargetSeconds,
+                runtime?.runtimeSourceEndSeconds ?? visual?.durationSeconds,
+                runtime?.runtimeLoop ?? state.loop,
+              );
           const drift = video.currentTime - targetSeconds;
           return Math.abs(drift) > Math.abs(max) ? drift : max;
         }, 0)

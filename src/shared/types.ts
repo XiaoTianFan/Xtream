@@ -211,6 +211,12 @@ export type VirtualOutputSourceSelection = {
   runtimePanAutomation?: CurvePoint[];
 };
 
+export type RuntimeSubCueTiming = {
+  baseDurationMs: number;
+  pass: SubCuePassPolicy;
+  innerLoop?: SubCueInnerLoopPolicy;
+};
+
 export type AudioSubCuePreviewPayload = {
   previewId: string;
   audioSourceId: AudioSourceId;
@@ -230,6 +236,9 @@ export type AudioSubCuePreviewPayload = {
   panAutomation?: CurvePoint[];
   playbackRate?: number;
   pitchShiftSemitones?: number;
+  pass?: SubCuePassPolicy;
+  innerLoop?: SubCueInnerLoopPolicy;
+  subCueTiming?: RuntimeSubCueTiming;
   loop?: SceneLoopPolicy;
   playTimeMs?: number;
   channelMode?: AudioChannelMode;
@@ -263,6 +272,9 @@ export type VisualSubCuePreviewPayload = {
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
   freezeFrameMs?: number;
+  pass?: SubCuePassPolicy;
+  innerLoop?: SubCueInnerLoopPolicy;
+  subCueTiming?: RuntimeSubCueTiming;
   loop?: SceneLoopPolicy;
   startedAtLocalMs?: number;
 };
@@ -533,6 +545,22 @@ export type SceneLoopPolicy =
       iterations: { type: 'count'; count: number } | { type: 'infinite' };
     };
 
+export type PassIterations = { type: 'count'; count: number } | { type: 'infinite' };
+export type LoopIterations = { type: 'count'; count: number } | { type: 'infinite' };
+
+export type SubCuePassPolicy = {
+  iterations: PassIterations;
+};
+
+export type SubCueInnerLoopPolicy =
+  | { enabled: false; range?: { startMs: number; endMs?: number } }
+  | {
+      enabled: true;
+      range: { startMs: number; endMs?: number };
+      /** Counted values are extra repeats after the first natural traversal of the range. */
+      iterations: LoopIterations;
+    };
+
 export type CurvePoint = {
   timeMs: number;
   value: number;
@@ -568,6 +596,9 @@ export type PersistedAudioSubCueConfig = {
   /** Source-media out point in milliseconds. Omitted means source duration when known. */
   sourceEndMs?: number;
   durationOverrideMs?: number;
+  pass?: SubCuePassPolicy;
+  innerLoop?: SubCueInnerLoopPolicy;
+  /** @deprecated Legacy v9 sub-cue pass/infinite-loop field. Use pass and innerLoop. */
   loop?: SceneLoopPolicy;
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
@@ -597,6 +628,9 @@ export type PersistedVisualSubCueConfig = {
   /** Source-media out point in milliseconds for finite video visuals. Omitted means source duration when known. */
   sourceEndMs?: number;
   durationOverrideMs?: number;
+  pass?: SubCuePassPolicy;
+  innerLoop?: SubCueInnerLoopPolicy;
+  /** @deprecated Legacy v9 sub-cue pass/infinite-loop field. Use pass and innerLoop. */
   loop?: SceneLoopPolicy;
   fadeIn?: FadeSpec;
   fadeOut?: FadeSpec;
@@ -628,6 +662,13 @@ export type PersistedControlSubCueConfig = {
 };
 
 export type PersistedSubCueConfig = PersistedAudioSubCueConfig | PersistedVisualSubCueConfig | PersistedControlSubCueConfig;
+
+export type PersistedAudioSubCueConfigV10 = Omit<PersistedAudioSubCueConfig, 'loop'>;
+export type PersistedVisualSubCueConfigV10 = Omit<PersistedVisualSubCueConfig, 'loop'>;
+export type PersistedSubCueConfigV10 =
+  | PersistedAudioSubCueConfigV10
+  | PersistedVisualSubCueConfigV10
+  | PersistedControlSubCueConfig;
 
 export type PersistedSceneConfig = {
   id: SceneId;
@@ -663,6 +704,14 @@ export type PersistedStreamConfig = {
   };
 };
 
+export type PersistedSceneConfigV10 = Omit<PersistedSceneConfig, 'subCues'> & {
+  subCues: Record<SubCueId, PersistedSubCueConfigV10>;
+};
+
+export type PersistedStreamConfigV10 = Omit<PersistedStreamConfig, 'scenes'> & {
+  scenes: Record<SceneId, PersistedSceneConfigV10>;
+};
+
 export type StreamPausedPlayBehavior = 'selection-aware' | 'preserve-paused-cursor';
 export type StreamMultiTimelineResumeBehavior = 'resume-all-clocks' | 'launch-focused-cue-only';
 export type StreamParallelTimelineSeekBehavior = 'leave-running' | 'follow-relative-seek' | 'pause-parallel' | 'clear-parallel';
@@ -681,6 +730,10 @@ export type PersistedPatchSceneProjection = {
   /** Hidden manual Scene used only by the Patch workspace compatibility projection. */
   scene: PersistedSceneConfig;
   migratedFromSchemaVersion?: 7;
+};
+
+export type PersistedPatchSceneProjectionV10 = Omit<PersistedPatchSceneProjection, 'scene'> & {
+  scene: PersistedSceneConfigV10;
 };
 
 export type PersistedShowConfigV3 = {
@@ -741,8 +794,15 @@ export type PersistedShowConfigV9 = Omit<
   schemaVersion: 9;
 };
 
+/** v10: sub-cue pass count and inner loop are persisted separately from scene loop policy. */
+export type PersistedShowConfigV10 = Omit<PersistedShowConfigV9, 'schemaVersion' | 'stream' | 'patchCompatibility'> & {
+  schemaVersion: 10;
+  stream: PersistedStreamConfigV10;
+  patchCompatibility: PersistedPatchSceneProjectionV10;
+};
+
 /** On disk and after migration; v7 kept for migration input only. */
-export type PersistedShowConfig = PersistedShowConfigV9;
+export type PersistedShowConfig = PersistedShowConfigV10;
 
 export type SceneRuntimeState = {
   sceneId: SceneId;
@@ -855,6 +915,8 @@ export type StreamRuntimeAudioSubCue = {
   panAutomation?: CurvePoint[];
   pitchShiftSemitones?: number;
   mediaLoop?: LoopState;
+  passIndex?: number;
+  subCueTiming?: RuntimeSubCueTiming;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;
   fadeOutDurationMs?: number;
@@ -876,6 +938,8 @@ export type StreamRuntimeVisualSubCue = {
   fadeOut?: FadeSpec;
   freezeFrameMs?: number;
   mediaLoop?: LoopState;
+  passIndex?: number;
+  subCueTiming?: RuntimeSubCueTiming;
   orphaned?: boolean;
   fadeOutStartedWallTimeMs?: number;
   fadeOutDurationMs?: number;

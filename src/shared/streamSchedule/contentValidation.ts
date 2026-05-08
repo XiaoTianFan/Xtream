@@ -1,5 +1,6 @@
 import type { CalculatedStreamTimeline, DirectorState, PersistedStreamConfig, SubCueId } from '../types';
 import { createLoopValidationMessages } from '../streamLoopTiming';
+import { createSubCuePassLoopValidationMessages } from '../subCuePassLoopTiming';
 import { PATCH_COMPAT_SCENE_ID } from '../streamWorkspace';
 import {
   AUDIO_SUBCUE_LEVEL_MAX_DB,
@@ -9,6 +10,7 @@ import {
   AUDIO_SUBCUE_PITCH_MAX_SEMITONES,
   AUDIO_SUBCUE_PITCH_MIN_SEMITONES,
 } from '../audioSubCueAutomation';
+import { getAudioSubCueBaseDurationMs } from '../audioSubCueAutomation';
 import {
   audioSubCueValidationLabel,
   scenePrimaryLabel,
@@ -20,7 +22,7 @@ import {
   validateStreamStructureIssues,
   validateTriggerReferencesIssues,
 } from './structureValidation';
-import { isImageOrLiveVisual } from '../visualSubCueTiming';
+import { getVisualSubCueBaseDurationMs, isImageOrLiveVisual } from '../visualSubCueTiming';
 
 function pushLoopIssues(out: StreamScheduleIssue[], messages: string[], sceneId: string, subCueId?: SubCueId): void {
   for (const message of messages) {
@@ -216,9 +218,16 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
       }
       if (subCue.kind === 'audio') {
         const ordLabel = subCueOrdinalKind(stream, sceneId, subCueId, 'audio');
+        const sourceDurationSeconds = context.audioDurations?.get(subCue.audioSourceId);
         pushLoopIssues(
           out,
-          createLoopValidationMessages({ policy: subCue.loop, label: `${sceneLabel} · ${ordLabel}` }),
+          createSubCuePassLoopValidationMessages({
+            pass: subCue.pass,
+            innerLoop: subCue.innerLoop,
+            legacyLoop: subCue.loop,
+            baseDurationMs: getAudioSubCueBaseDurationMs(subCue, sourceDurationSeconds),
+            label: `${sceneLabel} · ${ordLabel}`,
+          }),
           sceneId,
           subCueId,
         );
@@ -260,7 +269,6 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
             message: `${sceneLabel} · ${ordLabel} source end must be after source start`,
           });
         }
-        const sourceDurationSeconds = context.audioDurations?.get(subCue.audioSourceId);
         const sourceDurationMs = sourceDurationSeconds === undefined ? undefined : sourceDurationSeconds * 1000;
         if (sourceDurationMs !== undefined) {
           if (subCue.sourceStartMs !== undefined && Number.isFinite(subCue.sourceStartMs) && subCue.sourceStartMs > sourceDurationMs) {
@@ -353,7 +361,13 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
         const visualDurationMs = visualMedia?.durationSeconds !== undefined ? visualMedia.durationSeconds * 1000 : undefined;
         pushLoopIssues(
           out,
-          createLoopValidationMessages({ policy: subCue.loop, label: `${sceneLabel} · ${ordLabel}` }),
+          createSubCuePassLoopValidationMessages({
+            pass: subCue.pass,
+            innerLoop: subCue.innerLoop,
+            legacyLoop: subCue.loop,
+            baseDurationMs: getVisualSubCueBaseDurationMs(subCue, visualMedia),
+            label: `${sceneLabel} · ${ordLabel}`,
+          }),
           sceneId,
           subCueId,
         );
@@ -368,7 +382,10 @@ export function validateStreamContentIssues(stream: PersistedStreamConfig, conte
         if (
           isImageOrLiveVisual(visualMedia) &&
           subCue.durationOverrideMs === undefined &&
-          !(subCue.loop?.enabled && subCue.loop.iterations.type === 'infinite')
+          !(
+            subCue.pass?.iterations.type === 'infinite' ||
+            (!subCue.pass && subCue.loop?.enabled && subCue.loop.iterations.type === 'infinite')
+          )
         ) {
           out.push({
             severity: 'error',

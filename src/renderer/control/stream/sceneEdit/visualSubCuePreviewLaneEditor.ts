@@ -2,6 +2,7 @@ import type {
   DirectorState,
   PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
+  RuntimeSubCueTiming,
   SceneLoopPolicy,
   VisualState,
   VisualSubCuePreviewPayload,
@@ -9,6 +10,7 @@ import type {
 } from '../../../../shared/types';
 import { evaluateFadeGain } from '../../../../shared/audioSubCueAutomation';
 import { mapElapsedToLoopPhase, resolveLoopTiming } from '../../../../shared/streamLoopTiming';
+import { resolveSubCuePassLoopTiming } from '../../../../shared/subCuePassLoopTiming';
 import { pickLinkedTimingFields, visualTimingPatchToAudio } from '../../../../shared/subCueTimingLink';
 import {
   clampVisualSourceRange,
@@ -1141,6 +1143,15 @@ export function buildVisualSubCuePreviewPayload(
   }));
   const playbackRate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
   const durationMs = getVisualSubCueBaseDurationMs(sub, visual);
+  const timing =
+    visual.kind === 'file' && visual.type === 'video' && durationMs !== undefined
+      ? resolveSubCuePassLoopTiming({
+          pass: sub.pass,
+          innerLoop: sub.innerLoop,
+          legacyLoop: sub.loop,
+          baseDurationMs: durationMs,
+        })
+      : undefined;
   return {
     previewId,
     visualId: sub.visualId,
@@ -1148,13 +1159,35 @@ export function buildVisualSubCuePreviewPayload(
     visual,
     sourceStartMs: visual.kind === 'file' && visual.type === 'video' ? sub.sourceStartMs : undefined,
     sourceEndMs: visual.kind === 'file' && visual.type === 'video' ? sub.sourceEndMs : undefined,
-    playTimeMs: visual.kind === 'file' && visual.type === 'video' ? durationMs : undefined,
+    playTimeMs: visual.kind === 'file' && visual.type === 'video' ? timing?.totalDurationMs ?? durationMs : undefined,
     durationMs: visual.kind === 'live' || visual.type === 'image' ? durationMs : undefined,
     playbackRate,
     fadeIn: sub.fadeIn,
     fadeOut: sub.fadeOut,
     freezeFrameMs: sub.freezeFrameMs,
+    pass: timing?.pass ?? sub.pass,
+    innerLoop: timing?.innerLoop ?? sub.innerLoop,
+    subCueTiming: timing ? toRuntimeSubCueTiming(timing) : undefined,
     loop: sub.loop,
     startedAtLocalMs: Math.max(0, startedAtLocalMs),
+  };
+}
+
+function toRuntimeSubCueTiming(timing: ReturnType<typeof resolveSubCuePassLoopTiming>): RuntimeSubCueTiming {
+  return {
+    baseDurationMs: timing.baseDurationMs,
+    pass: timing.pass,
+    innerLoop: timing.innerLoop.enabled
+      ? {
+          enabled: true,
+          range: { ...timing.innerLoop.range },
+          iterations:
+            timing.innerLoop.iterations.type === 'infinite'
+              ? { type: 'infinite' }
+              : { type: 'count', count: timing.innerLoop.iterations.count },
+        }
+      : timing.innerLoop.range
+        ? { enabled: false, range: { ...timing.innerLoop.range } }
+        : { enabled: false },
   };
 }

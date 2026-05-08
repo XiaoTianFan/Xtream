@@ -1,5 +1,6 @@
 import type { AudioSourceId, PersistedSceneConfig, PersistedStreamConfig, VisualId } from '../types';
 import { resolveLoopTiming } from '../streamLoopTiming';
+import { resolveSubCuePassLoopTiming } from '../subCuePassLoopTiming';
 import { getAudioSubCueBaseDurationMs } from '../audioSubCueAutomation';
 import { getVisualSubCueBaseDurationMs, type VisualSubCueMediaInfo } from '../visualSubCueTiming';
 
@@ -51,13 +52,21 @@ function classifySubCueEffectiveDurationMs(
   if (base === undefined) {
     return { classification: 'unknown-error' };
   }
-  if (sub.kind !== 'control' && isInfiniteLoop(sub.loop)) {
-    return { classification: 'indefinite-loop' };
+  if (sub.kind === 'control') {
+    const loopTiming = resolveLoopTiming(undefined, base);
+    return loopTiming.totalDurationMs === undefined
+      ? { classification: 'unknown-error' }
+      : { classification: 'finite', durationMs: (sub.startOffsetMs ?? 0) + loopTiming.totalDurationMs };
   }
-  const loopTiming = sub.kind === 'control' ? resolveLoopTiming(undefined, base) : resolveLoopTiming(sub.loop, base);
-  return loopTiming.totalDurationMs === undefined
-    ? { classification: 'unknown-error' }
-    : { classification: 'finite', durationMs: (sub.startOffsetMs ?? 0) + loopTiming.totalDurationMs };
+  const timing = resolveSubCuePassLoopTiming({
+    pass: sub.pass,
+    innerLoop: sub.innerLoop,
+    legacyLoop: sub.loop,
+    baseDurationMs: base,
+  });
+  return timing.totalDurationMs === undefined
+    ? { classification: 'indefinite-loop' }
+    : { classification: 'finite', durationMs: (sub.startOffsetMs ?? 0) + timing.totalDurationMs };
 }
 
 /** Classifies scene duration without turning infinite loops into timeline errors. */

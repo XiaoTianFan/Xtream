@@ -313,6 +313,45 @@ describe('getRuntimeAudioTarget', () => {
 
     expect(getRuntimeAudioTarget(source, 13, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 3, audible: true });
   });
+
+  it('maps counted inner-loop runtime audio through explicit pass timing', () => {
+    const source = {
+      ...graphTestState().audioSources.s1,
+      durationSeconds: 40,
+      playbackRate: 1,
+      runtimeOffsetSeconds: 0,
+      runtimeSourceStartSeconds: 10,
+      runtimeSourceEndSeconds: 40,
+      runtimeSubCueTiming: {
+        baseDurationMs: 30_000,
+        pass: { iterations: { type: 'count', count: 1 } },
+        innerLoop: { enabled: true, range: { startMs: 10_000, endMs: 20_000 }, iterations: { type: 'count', count: 1 } },
+      },
+    };
+
+    expect(getRuntimeAudioTarget(source, 19.999, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 29.999, audible: true });
+    expect(getRuntimeAudioTarget(source, 20, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 20, audible: true });
+    expect(getRuntimeAudioTarget(source, 30, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 30, audible: true });
+    expect(getRuntimeAudioTarget(source, 40, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 40, audible: false });
+  });
+
+  it('keeps infinite inner-loop runtime audio inside the loop body', () => {
+    const source = {
+      ...graphTestState().audioSources.s1,
+      durationSeconds: undefined,
+      playbackRate: 1,
+      runtimeOffsetSeconds: 0,
+      runtimeSourceStartSeconds: 10,
+      runtimeSourceEndSeconds: 40,
+      runtimeSubCueTiming: {
+        baseDurationMs: 30_000,
+        pass: { iterations: { type: 'count', count: 1 } },
+        innerLoop: { enabled: true, range: { startMs: 10_000, endMs: 20_000 }, iterations: { type: 'infinite' } },
+      },
+    };
+
+    expect(getRuntimeAudioTarget(source, 35, { enabled: false, startSeconds: 0 })).toEqual({ seconds: 25, audible: true });
+  });
 });
 
 describe('audio sub-cue preview runtime', () => {

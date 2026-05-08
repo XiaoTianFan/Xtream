@@ -848,7 +848,7 @@ export class Director extends EventEmitter {
       ),
     );
     return {
-      schemaVersion: 9,
+      schemaVersion: 10,
       savedAt,
       rate: this.state.rate,
       globalAudioMuteFadeOutSeconds: this.state.globalAudioMuteFadeOutSeconds,

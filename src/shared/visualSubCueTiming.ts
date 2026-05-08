@@ -19,13 +19,16 @@ export function isImageOrLiveVisual(media: VisualSubCueMediaInfo | undefined): b
 }
 
 export function getVisualSubCueBaseDurationMs(
-  sub: Pick<PersistedVisualSubCueConfig, 'visualId' | 'sourceStartMs' | 'sourceEndMs' | 'durationOverrideMs' | 'playbackRate' | 'loop'>,
+  sub: Pick<PersistedVisualSubCueConfig, 'visualId' | 'sourceStartMs' | 'sourceEndMs' | 'durationOverrideMs' | 'playbackRate' | 'loop' | 'pass'>,
   media: VisualSubCueMediaInfo | undefined,
   knownDurationSeconds?: number,
 ): number | undefined {
   const durationOverrideMs = finiteNumber(sub.durationOverrideMs);
   if (isImageOrLiveVisual(media)) {
-    if (durationOverrideMs === undefined && sub.loop?.enabled && sub.loop.iterations.type === 'infinite') {
+    const hasInfiniteRender =
+      sub.pass?.iterations.type === 'infinite' ||
+      (!sub.pass && sub.loop?.enabled && sub.loop.iterations.type === 'infinite');
+    if (durationOverrideMs === undefined && hasInfiniteRender) {
       return 0;
     }
     return durationOverrideMs !== undefined ? Math.max(0, durationOverrideMs) : undefined;

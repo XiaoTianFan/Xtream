@@ -5,6 +5,7 @@ import type {
   DirectorState,
   LoopState,
   PersistedDisplayConfigV8,
+  RuntimeSubCueTiming,
   SceneId,
   StreamRuntimeVisualSubCue,
   StreamEnginePublicState,
@@ -26,6 +27,7 @@ type RuntimeOffset = {
   runtimeSourceEndSeconds?: number;
   runtimeFreezeFrameSeconds?: number;
   runtimeLoop?: LoopState;
+  runtimeSubCueTiming?: RuntimeSubCueTiming;
 };
 
 export type StreamDisplayLayer = {
@@ -184,9 +186,10 @@ function createStreamVisualLayer(args: {
     cue.runtimeInstanceId && cue.orphaned !== true
       ? ''
       : `:${cue.streamStartMs}:${cue.localStartMs}${cue.orphaned ? `:${cue.fadeOutStartedWallTimeMs ?? 'orphan'}` : ''}`;
+  const passSuffix = cue.passIndex !== undefined ? `:pass-${cue.passIndex}` : '';
   const layerId = `stream-visual:${timelineSort.timelineId ?? 'canonical'}:${cue.runtimeInstanceId ?? 'canonical'}:${cue.sceneId}:${cue.subCueId}:${
     cue.target.displayId
-  }:${zoneId}${temporalSuffix}`;
+  }:${zoneId}${passSuffix}${temporalSuffix}`;
   const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
   const localTimeMs = Math.max(0, currentMs - absoluteStartMs);
   const authoredOpacity = evaluateVisualSubCueOpacity({
@@ -207,6 +210,7 @@ function createStreamVisualLayer(args: {
     runtimeSourceEndSeconds: cue.sourceEndMs !== undefined ? cue.sourceEndMs / 1000 : undefined,
     runtimeFreezeFrameSeconds: cue.freezeFrameMs !== undefined ? cue.freezeFrameMs / 1000 : undefined,
     runtimeLoop: cue.mediaLoop,
+    runtimeSubCueTiming: cue.subCueTiming,
   } as VisualState & RuntimeOffset;
   return {
     layerId,
@@ -382,7 +386,9 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       continue;
     }
     const fadeFactor = cueFadeFactor(cue, nowWallTimeMs);
-    const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}${cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''}`;
+    const cloneId = `stream-audio:${cue.sceneId}:${cue.subCueId}:${cue.outputId}${cue.runtimeInstanceId ? `:${cue.runtimeInstanceId}` : ''}${
+      cue.passIndex !== undefined ? `:pass-${cue.passIndex}` : ''
+    }`;
     const sourceRange = normalizeAudioSourceRange({
       sourceStartMs: cue.sourceStartMs,
       sourceEndMs: cue.sourceEndMs,
@@ -401,6 +407,7 @@ export function deriveDirectorStateForStream(state: DirectorState, streamState: 
       runtimeSourceEndSeconds: sourceRange.endMs !== undefined ? sourceRange.endMs / 1000 : undefined,
       runtimePitchShiftSemitones: clampPitchShiftSemitones(cue.pitchShiftSemitones),
       runtimeLoop: cue.mediaLoop,
+      runtimeSubCueTiming: cue.subCueTiming,
     } as AudioSourceState & RuntimeOffset;
     const selection: VirtualOutputSourceSelection = {
       id: cloneId,

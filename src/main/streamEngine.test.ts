@@ -358,7 +358,12 @@ describe('StreamEngine', () => {
 
     expect(state.runtime?.expectedDurationMs).toBe(180_000);
     expect(state.runtime?.activeVisualSubCues?.map((cue) => cue.visualId)).toEqual(['short']);
-    expect(state.runtime?.activeVisualSubCues?.[0]?.mediaLoop).toMatchObject({ enabled: true, startSeconds: 0, endSeconds: 60 });
+    expect(state.runtime?.activeVisualSubCues?.[0]).toMatchObject({
+      streamStartMs: 120_000,
+      localEndMs: 60_000,
+      passIndex: 2,
+      mediaLoop: undefined,
+    });
   });
 
   it('surfaces timeline calculation errors in validation state', () => {
@@ -453,6 +458,33 @@ describe('StreamEngine', () => {
     expect(invalid.playbackTimeline.status).toBe('valid');
     expect(invalid.runtime?.status).toBe('running');
     expect(invalid.runtime?.activeVisualSubCues).toMatchObject([{ visualId: 'v1' }]);
+  });
+
+  it('translates legacy sub-cue loop edit patches into pass and inner-loop fields', () => {
+    const director = createDirector({
+      visuals: { v1: { id: 'v1', durationSeconds: 5 } } as DirectorState['visuals'],
+    });
+    const engine = new StreamEngine(director);
+    const { stream } = getDefaultStreamPersistence();
+    stream.scenes['scene-1'].subCueOrder = ['vis'];
+    stream.scenes['scene-1'].subCues = {
+      vis: { id: 'vis', kind: 'visual', visualId: 'v1', targets: [{ displayId: 'd1' }] },
+    };
+    engine.loadFromShow({ stream });
+
+    const updated = engine.applyEdit({
+      type: 'update-subcue',
+      sceneId: 'scene-1',
+      subCueId: 'vis',
+      update: { loop: { enabled: true, iterations: { type: 'count', count: 3 } } },
+    });
+
+    expect(updated.stream.scenes['scene-1'].subCues.vis).toMatchObject({
+      pass: { iterations: { type: 'count', count: 3 } },
+      innerLoop: { enabled: false },
+    });
+    expect('loop' in updated.stream.scenes['scene-1'].subCues.vis).toBe(false);
+    expect(updated.editTimeline.entries['scene-1']?.durationMs).toBe(15_000);
   });
 
   it('promotes a valid edit timeline and recomputes runtime from the existing cursor', () => {

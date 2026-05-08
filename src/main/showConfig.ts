@@ -19,6 +19,7 @@ import type {
   PersistedShowConfigV7,
   PersistedShowConfigV8,
   PersistedShowConfigV9,
+  PersistedShowConfigV10,
   RecentShowEntry,
 } from '../shared/types';
 
@@ -271,7 +272,7 @@ function assertV8Fields(candidate: Partial<PersistedShowConfigV8>): void {
   }
 }
 
-function assertV9Fields(candidate: Partial<PersistedShowConfigV9>): void {
+function assertV9Fields(candidate: Partial<Omit<PersistedShowConfigV9, 'schemaVersion'>>): void {
   assertCommonShowFields(candidate);
   if (!candidate.stream && (!('streams' in candidate) || typeof (candidate as { streams?: unknown }).streams !== 'object')) {
     throw new Error('Show config is missing stream.');
@@ -325,7 +326,7 @@ export function migrateV7ToV8(config: PersistedShowConfigV7): PersistedShowConfi
     stream,
     patchCompatibility: { scene: patchScene, migratedFromSchemaVersion: 7 },
   };
-  return migrateV8ToV9(v8);
+  return migrateV9ToV10(migrateV8ToV9(v8));
 }
 
 export function migrateV8ToV9(config: PersistedShowConfigV8): PersistedShowConfigV9 {
@@ -334,6 +335,24 @@ export function migrateV8ToV9(config: PersistedShowConfigV8): PersistedShowConfi
     ...rest,
     schemaVersion: 9,
     stream: normalizeStreamPersistence(config.stream),
+  };
+}
+
+export function migrateV9ToV10(config: PersistedShowConfigV9): PersistedShowConfigV10 {
+  const { schemaVersion: _s, ...rest } = config;
+  return {
+    ...rest,
+    schemaVersion: 10,
+    stream: normalizeStreamPersistence(config.stream),
+    patchCompatibility: {
+      ...config.patchCompatibility,
+      scene: normalizeStreamPersistence({
+        id: 'patch-compat-normalize',
+        label: 'Patch compatibility normalization',
+        sceneOrder: [config.patchCompatibility.scene.id],
+        scenes: { [config.patchCompatibility.scene.id]: config.patchCompatibility.scene },
+      }).scenes[config.patchCompatibility.scene.id] ?? config.patchCompatibility.scene,
+    },
   };
 }
 
@@ -349,7 +368,38 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     | PersistedShowConfigV7
     | PersistedShowConfigV8
     | PersistedShowConfigV9
+    | PersistedShowConfigV10
   >;
+
+  if (candidate.schemaVersion === 10) {
+    assertV9Fields(candidate as Partial<PersistedShowConfigV10>);
+    const legacyStreams = (candidate as Partial<PersistedShowConfigV10> & { streams?: Record<string, PersistedShowConfigV10['stream']>; activeStreamId?: string }).streams;
+    if (!candidate.stream && legacyStreams) {
+      const active = (candidate as { activeStreamId?: string }).activeStreamId;
+      const stream = (active ? legacyStreams[active] : undefined) ?? Object.values(legacyStreams)[0] ?? getDefaultStreamPersistence().stream;
+      const { streams: _streams, activeStreamId: _activeStreamId, ...rest } = candidate as typeof candidate & {
+        streams?: unknown;
+        activeStreamId?: unknown;
+      };
+      return {
+        ...(rest as PersistedShowConfigV10),
+        stream: normalizeStreamPersistence(stream),
+      };
+    }
+    return {
+      ...(candidate as PersistedShowConfigV10),
+      stream: normalizeStreamPersistence((candidate as PersistedShowConfigV10).stream),
+      patchCompatibility: {
+        ...(candidate as PersistedShowConfigV10).patchCompatibility,
+        scene: normalizeStreamPersistence({
+          id: 'patch-compat-normalize',
+          label: 'Patch compatibility normalization',
+          sceneOrder: [(candidate as PersistedShowConfigV10).patchCompatibility.scene.id],
+          scenes: { [(candidate as PersistedShowConfigV10).patchCompatibility.scene.id]: (candidate as PersistedShowConfigV10).patchCompatibility.scene },
+        }).scenes[(candidate as PersistedShowConfigV10).patchCompatibility.scene.id] ?? (candidate as PersistedShowConfigV10).patchCompatibility.scene,
+      },
+    };
+  }
 
   if (candidate.schemaVersion === 9) {
     assertV9Fields(candidate as Partial<PersistedShowConfigV9>);
@@ -361,12 +411,12 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
         streams?: unknown;
         activeStreamId?: unknown;
       };
-      return { ...rest, stream: normalizeStreamPersistence(stream) } as PersistedShowConfigV9;
+      return migrateV9ToV10({ ...rest, schemaVersion: 9, stream: normalizeStreamPersistence(stream) } as PersistedShowConfigV9);
     }
-    return {
+    return migrateV9ToV10({
       ...(candidate as PersistedShowConfigV9),
       stream: normalizeStreamPersistence((candidate as PersistedShowConfigV9).stream),
-    };
+    });
   }
 
   if (candidate.schemaVersion === 8) {
@@ -380,13 +430,13 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
         activeStreamId?: unknown;
       };
       const v8: PersistedShowConfigV8 = { ...(rest as PersistedShowConfigV8), stream: normalizeStreamPersistence(stream) };
-      return migrateV8ToV9(v8);
+      return migrateV9ToV10(migrateV8ToV9(v8));
     }
     const v8Normalized: PersistedShowConfigV8 = {
       ...(candidate as PersistedShowConfigV8),
       stream: normalizeStreamPersistence((candidate as PersistedShowConfigV8).stream),
     };
-    return migrateV8ToV9(v8Normalized);
+    return migrateV9ToV10(migrateV8ToV9(v8Normalized));
   }
   if (
     candidate.schemaVersion !== 3 &&
@@ -395,7 +445,7 @@ export function assertShowConfig(value: unknown): PersistedShowConfig {
     candidate.schemaVersion !== 6 &&
     candidate.schemaVersion !== 7
   ) {
-    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 9 only.');
+    throw new Error('Unsupported show config schema version. This build supports schema versions 3 through 10 only.');
   }
   return migrateV7ToV8(migrateDiskConfigToV7(candidate));
 }

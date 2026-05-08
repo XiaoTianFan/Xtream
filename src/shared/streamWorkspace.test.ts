@@ -48,8 +48,8 @@ describe('Patch compatibility projection', () => {
         },
       },
     );
-    const v9: PersistedShowConfig = {
-      schemaVersion: 9,
+    const v10: PersistedShowConfig = {
+      schemaVersion: 10,
       savedAt: '2026-01-01T00:00:00.000Z',
       visuals: {},
       audioSources: {},
@@ -66,7 +66,7 @@ describe('Patch compatibility projection', () => {
       stream: { id: 'stream-main', label: 'Main Stream', sceneOrder: [], scenes: {} },
       patchCompatibility: { scene },
     };
-    const merged = mergeShowConfigPatchRouting(v9);
+    const merged = mergeShowConfigPatchRouting(v10);
     expect(merged.displays[0]?.layout).toEqual({ type: 'single', visualId: 'correct' });
     expect(merged.outputs['output-main']?.sources[0]?.audioSourceId).toBe('snd-ok');
   });
@@ -229,5 +229,68 @@ describe('Trigger migration', () => {
       runningEditOrphanPolicy: 'let-finish',
       runningEditOrphanFadeOutMs: 50,
     });
+  });
+
+  it('normalizes legacy sub-cue loops into idempotent pass and inner-loop fields', () => {
+    const raw = {
+      id: STREAM_MAIN_ID,
+      label: 'Main',
+      sceneOrder: ['a'],
+      scenes: {
+        a: {
+          ...createEmptyUserScene('a', 'A'),
+          subCueOrder: ['v1'],
+          subCues: {
+            v1: {
+              id: 'v1',
+              kind: 'visual',
+              visualId: 'vid',
+              targets: [{ displayId: 'd1' }],
+              loop: { enabled: true, range: { startMs: 1000, endMs: 3000 }, iterations: { type: 'count', count: 3 } },
+            },
+          },
+        },
+      },
+    } as unknown as PersistedStreamConfig;
+
+    const once = normalizeStreamPersistence(raw);
+    const twice = normalizeStreamPersistence(once);
+
+    expect(once.scenes.a.subCues.v1).toMatchObject({
+      pass: { iterations: { type: 'count', count: 1 } },
+      innerLoop: { enabled: true, range: { startMs: 1000, endMs: 3000 }, iterations: { type: 'count', count: 2 } },
+    });
+    expect('loop' in once.scenes.a.subCues.v1).toBe(false);
+    expect(twice).toEqual(once);
+  });
+
+  it('keeps legacy custom loop ranges with omitted ends open for runtime clamping', () => {
+    const raw = {
+      id: STREAM_MAIN_ID,
+      label: 'Main',
+      sceneOrder: ['a'],
+      scenes: {
+        a: {
+          ...createEmptyUserScene('a', 'A'),
+          subCueOrder: ['v1'],
+          subCues: {
+            v1: {
+              id: 'v1',
+              kind: 'visual',
+              visualId: 'vid',
+              targets: [{ displayId: 'd1' }],
+              loop: { enabled: true, range: { startMs: 1000 }, iterations: { type: 'count', count: 2 } },
+            },
+          },
+        },
+      },
+    } as unknown as PersistedStreamConfig;
+
+    const once = normalizeStreamPersistence(raw);
+    expect(once.scenes.a.subCues.v1).toMatchObject({
+      pass: { iterations: { type: 'count', count: 1 } },
+      innerLoop: { enabled: true, range: { startMs: 1000 }, iterations: { type: 'count', count: 1 } },
+    });
+    expect(normalizeStreamPersistence(once)).toEqual(once);
   });
 });

@@ -22,9 +22,11 @@ import type {
   StreamRuntimeVisualSubCue,
   StreamThreadId,
   SubCueId,
+  RuntimeSubCueTiming,
 } from '../shared/types';
 import { createEmptyUserScene, getDefaultStreamPersistence, normalizeStreamPlaybackSettings, normalizeStreamPersistence } from '../shared/streamWorkspace';
-import { isElapsedWithinLoopTotal, mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
+import { mapElapsedToLoopPhase, resolveLoopTiming } from '../shared/streamLoopTiming';
+import { isElapsedWithinSubCueTotal, mapElapsedToSubCuePassPhase, migrateLegacySubCueLoopPolicy, resolveSubCuePassLoopTiming } from '../shared/subCuePassLoopTiming';
 import { getAudioSubCueBaseDurationMs, normalizeAudioSourceRange } from '../shared/audioSubCueAutomation';
 import { getVisualSubCueBaseDurationMs, type VisualSubCueMediaInfo } from '../shared/visualSubCueTiming';
 import {
@@ -269,7 +271,16 @@ export class StreamEngine extends EventEmitter {
         if (!scene || !sub) {
           break;
         }
-        Object.assign(sub, command.update);
+        const update = { ...command.update };
+        if (sub.kind !== 'control' && 'loop' in update) {
+          const migrated = migrateLegacySubCueLoopPolicy(update.loop);
+          Object.assign(update, migrated);
+          delete update.loop;
+        }
+        Object.assign(sub, update);
+        if (sub.kind !== 'control' && 'loop' in command.update) {
+          delete sub.loop;
+        }
         break;
       }
       default:
@@ -2613,6 +2624,51 @@ export class StreamEngine extends EventEmitter {
     return `${cue.sceneId}:${cue.subCueId}:${cue.target.displayId}:${cue.target.zoneId ?? 'single'}:${cue.streamStartMs}:${cue.localStartMs}`;
   }
 
+  private isSameCanonicalAudioCueAtSameStart(left: StreamRuntimeAudioSubCue, right: StreamRuntimeAudioSubCue): boolean {
+    return (
+      left.runtimeInstanceId === undefined &&
+      left.sceneId === right.sceneId &&
+      left.subCueId === right.subCueId &&
+      left.audioSourceId === right.audioSourceId &&
+      left.outputId === right.outputId &&
+      Math.abs(left.streamStartMs + left.localStartMs - (right.streamStartMs + right.localStartMs)) <= 2
+    );
+  }
+
+  private isSameCanonicalVisualCueAtSameStart(left: StreamRuntimeVisualSubCue, right: StreamRuntimeVisualSubCue): boolean {
+    return (
+      left.runtimeInstanceId === undefined &&
+      left.sceneId === right.sceneId &&
+      left.subCueId === right.subCueId &&
+      left.visualId === right.visualId &&
+      left.target.displayId === right.target.displayId &&
+      (left.target.zoneId ?? 'single') === (right.target.zoneId ?? 'single') &&
+      Math.abs(left.streamStartMs + left.localStartMs - (right.streamStartMs + right.localStartMs)) <= 2
+    );
+  }
+
+  private createRuntimeSubCueTiming(subTiming: ReturnType<typeof resolveSubCuePassLoopTiming>): RuntimeSubCueTiming {
+    return {
+      baseDurationMs: subTiming.baseDurationMs,
+      pass:
+        subTiming.pass.iterations.type === 'infinite'
+          ? { iterations: { type: 'infinite' } }
+          : { iterations: { type: 'count', count: subTiming.pass.iterations.count } },
+      innerLoop: subTiming.innerLoop.enabled
+        ? {
+            enabled: true,
+            range: { ...subTiming.innerLoop.range },
+            iterations:
+              subTiming.innerLoop.iterations.type === 'infinite'
+                ? { type: 'infinite' }
+                : { type: 'count', count: subTiming.innerLoop.iterations.count },
+          }
+        : subTiming.innerLoop.range
+          ? { enabled: false, range: { ...subTiming.innerLoop.range } }
+          : { enabled: false },
+    };
+  }
+
   private collectActiveSubCues(
     scene: PersistedSceneConfig,
     sceneStartMs: number,
@@ -2637,22 +2693,36 @@ export class StreamEngine extends EventEmitter {
       if (baseDurationMs === undefined) {
         continue;
       }
-      const subTiming = resolveLoopTiming(sub.loop, baseDurationMs);
+      const subTiming = resolveSubCuePassLoopTiming({
+        pass: sub.pass,
+        innerLoop: sub.innerLoop,
+        legacyLoop: sub.loop,
+        baseDurationMs,
+      });
       const subElapsedMs = scenePhase.phaseMs - localStartMs;
-      if (!isElapsedWithinLoopTotal(subElapsedMs, subTiming)) {
+      if (!isElapsedWithinSubCueTotal(subElapsedMs, subTiming)) {
         continue;
       }
-      const localEndMs = subTiming.totalDurationMs;
+      const phase = mapElapsedToSubCuePassPhase(subElapsedMs, subTiming);
+      const localEndMs = subTiming.passDurationMs;
       const sceneLoopAudio =
         sub.kind === 'audio' &&
         sceneLoopTiming?.enabled === true &&
         sceneLoopTiming.loopStartMs === 0 &&
         scenePassDurationMs !== undefined &&
         localStartMs === 0 &&
-        localEndMs !== undefined &&
-        Math.abs(localEndMs - sceneLoopTiming.loopEndMs) < 1;
-      const cueStreamStartMs = sceneLoopAudio ? sceneStartMs : scenePhase.phaseZeroStreamMs;
-      const mediaLoop = this.createSubCueMediaLoop(sub, baseDurationMs) ?? (sceneLoopAudio ? this.createFullAudioSubCueMediaLoop(sub, localEndMs) : undefined);
+        subTiming.totalDurationMs !== undefined &&
+        subTiming.pass.iterations.type === 'count' &&
+        subTiming.pass.iterations.count === 1 &&
+        !subTiming.innerLoop.enabled &&
+        Math.abs(subTiming.totalDurationMs - sceneLoopTiming.loopEndMs) < 1;
+      const cueStreamStartMs = sceneLoopAudio ? sceneStartMs : scenePhase.phaseZeroStreamMs + phase.phaseZeroElapsedMs;
+      const mediaLoop =
+        this.createSubCueMediaLoop(sub, baseDurationMs) ??
+        (sceneLoopAudio && subTiming.totalDurationMs !== undefined ? this.createFullAudioSubCueMediaLoop(sub, subTiming.totalDurationMs) : undefined);
+      const runtimeTiming = subTiming.innerLoop.enabled ? this.createRuntimeSubCueTiming(subTiming) : undefined;
+      const repeatsPasses = subTiming.pass.iterations.type === 'infinite' || subTiming.pass.iterations.count > 1;
+      const passIndex = repeatsPasses ? phase.passIndex : undefined;
       if (sub.kind === 'audio') {
         for (const outputId of sub.outputIds) {
           activeAudio.push({
@@ -2677,6 +2747,8 @@ export class StreamEngine extends EventEmitter {
             panAutomation: sub.panAutomation,
             pitchShiftSemitones: sub.pitchShiftSemitones,
             mediaLoop,
+            passIndex,
+            subCueTiming: runtimeTiming,
           });
         }
       } else {
@@ -2687,7 +2759,7 @@ export class StreamEngine extends EventEmitter {
             subCueId,
             visualId: sub.visualId,
             target,
-            streamStartMs: scenePhase.phaseZeroStreamMs,
+            streamStartMs: cueStreamStartMs,
             localStartMs,
             localEndMs,
             sourceStartMs: sub.sourceStartMs,
@@ -2697,6 +2769,8 @@ export class StreamEngine extends EventEmitter {
             fadeOut: sub.fadeOut,
             freezeFrameMs: sub.freezeFrameMs,
             mediaLoop,
+            passIndex,
+            subCueTiming: runtimeTiming,
           });
         }
       }
@@ -2755,7 +2829,11 @@ export class StreamEngine extends EventEmitter {
           const nextAudio: StreamRuntimeAudioSubCue[] = [];
           const nextVisual: StreamRuntimeVisualSubCue[] = [];
           this.collectActiveSubCues(scene, timelineGlobalZeroMs + instance.timelineStartMs + localStartMs, currentMs, nextAudio, nextVisual, instance.id);
+          const suppressMainDuplicate = timeline.kind === 'main' && instance.copiedFromThreadInstanceId === undefined;
           for (const cue of nextAudio) {
+            if (suppressMainDuplicate && activeAudio.some((existing) => this.isSameCanonicalAudioCueAtSameStart(existing, cue))) {
+              continue;
+            }
             const key = this.audioProjectionKey(cue);
             const canonicalKey = this.canonicalAudioProjectionKey(cue);
             const canonicalIndex = canonicalAudioKeys.get(canonicalKey);
@@ -2772,6 +2850,9 @@ export class StreamEngine extends EventEmitter {
             }
           }
           for (const cue of nextVisual) {
+            if (suppressMainDuplicate && activeVisual.some((existing) => this.isSameCanonicalVisualCueAtSameStart(existing, cue))) {
+              continue;
+            }
             const key = this.visualProjectionKey(cue);
             const canonicalKey = this.canonicalVisualProjectionKey(cue);
             const canonicalIndex = canonicalVisualKeys.get(canonicalKey);
@@ -2951,7 +3032,15 @@ export class StreamEngine extends EventEmitter {
     if (base === undefined) {
       return undefined;
     }
-    const timing = sub.kind === 'control' ? resolveLoopTiming(undefined, base) : resolveLoopTiming(sub.loop, base);
+    const timing =
+      sub.kind === 'control'
+        ? resolveLoopTiming(undefined, base)
+        : resolveSubCuePassLoopTiming({
+            pass: sub.pass,
+            innerLoop: sub.innerLoop,
+            legacyLoop: sub.loop,
+            baseDurationMs: base,
+          });
     return timing.totalDurationMs;
   }
 
@@ -2995,7 +3084,7 @@ export class StreamEngine extends EventEmitter {
   }
 
   private createSubCueMediaLoop(sub: PersistedSubCueConfig, baseDurationMs: number): LoopState | undefined {
-    if (sub.kind === 'control' || !sub.loop?.enabled) {
+    if (sub.kind === 'control') {
       return undefined;
     }
     const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
@@ -3008,8 +3097,26 @@ export class StreamEngine extends EventEmitter {
         : sub.kind === 'visual'
           ? Math.max(0, sub.sourceStartMs ?? 0)
         : 0;
-    const loopStartMs = Math.max(0, sub.loop.range?.startMs ?? 0);
-    const loopEndMs = Math.max(loopStartMs, sub.loop.range?.endMs ?? baseDurationMs);
+    const timing = resolveSubCuePassLoopTiming({
+      pass: sub.pass,
+      innerLoop: sub.innerLoop,
+      legacyLoop: sub.loop,
+      baseDurationMs,
+    });
+    const canUseFullPassLoop = timing.pass.iterations.type === 'infinite' && !timing.innerLoop.enabled;
+    const canUseInnerLoop = timing.innerLoop.enabled && timing.innerLoop.iterations.type === 'infinite';
+    if (!sub.loop?.enabled && !canUseFullPassLoop && !canUseInnerLoop) {
+      return undefined;
+    }
+    if (timing.innerLoop.enabled && timing.innerLoop.iterations.type === 'count') {
+      return undefined;
+    }
+    const legacyRange = sub.loop?.enabled ? sub.loop.range : undefined;
+    const loopStartMs = canUseInnerLoop && timing.innerLoop.enabled ? timing.innerLoop.range.startMs : Math.max(0, legacyRange?.startMs ?? 0);
+    const loopEndMs =
+      canUseInnerLoop && timing.innerLoop.enabled
+        ? timing.innerLoop.range.endMs
+        : Math.max(loopStartMs, legacyRange?.endMs ?? baseDurationMs);
     if (loopEndMs <= loopStartMs) {
       return undefined;
     }

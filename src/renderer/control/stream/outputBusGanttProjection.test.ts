@@ -219,6 +219,28 @@ describe('deriveOutputBusGanttProjection', () => {
     expect(projection.rows.some((row) => row.subCueId === 'aud-other')).toBe(false);
   });
 
+  it('projects expanded finite pass and inner-loop audio durations in planned rows', () => {
+    const s = stream();
+    const sub = s.scenes.a.subCues['aud-a'];
+    if (sub?.kind === 'audio') {
+      sub.pass = { iterations: { type: 'count', count: 2 } };
+      sub.innerLoop = {
+        enabled: true,
+        range: { startMs: 1000, endMs: 2000 },
+        iterations: { type: 'count', count: 1 },
+      };
+    }
+    const projection = deriveOutputBusGanttProjection({ streamState: publicState(null), directorState: director(), outputId: 'out-main' });
+    const patchedProjection = deriveOutputBusGanttProjection({
+      streamState: { ...publicState(null), stream: s, playbackStream: s },
+      directorState: director(),
+      outputId: 'out-main',
+    });
+
+    expect(projection.rows.find((row) => row.subCueId === 'aud-a')?.durationMs).toBe(4000);
+    expect(patchedProjection.rows.find((row) => row.subCueId === 'aud-a')?.durationMs).toBe(10_000);
+  });
+
   it('uses source labels, time labels, and level state metadata', () => {
     const projection = deriveOutputBusGanttProjection({ streamState: publicState(), directorState: director(), outputId: 'out-main' });
     const beta = projection.rows.find((row) => row.sceneId === 'b')!;

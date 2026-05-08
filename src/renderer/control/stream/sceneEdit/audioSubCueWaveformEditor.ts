@@ -1013,7 +1013,11 @@ function createClearAutomationButton(onClick: () => void): HTMLButtonElement {
 }
 
 function isInfinitePreviewLoop(payload: AudioSubCuePreviewPayload): boolean {
-  return Boolean(payload.loop?.enabled && payload.loop.iterations.type === 'infinite');
+  return Boolean(
+    payload.subCueTiming?.pass.iterations.type === 'infinite' ||
+      payload.subCueTiming?.innerLoop?.enabled && payload.subCueTiming.innerLoop.iterations.type === 'infinite' ||
+      payload.loop?.enabled && payload.loop.iterations.type === 'infinite',
+  );
 }
 
 function getPlayTimes(sub: PersistedAudioSubCueConfig): number {

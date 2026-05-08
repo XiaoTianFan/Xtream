@@ -1,6 +1,7 @@
 import { formatTimecode } from '../../../shared/timeline';
 import { deriveStreamThreadColorMaps, type StreamThreadColor } from '../../../shared/streamThreadColors';
-import { resolveLoopTiming } from '../../../shared/streamLoopTiming';
+import { getAudioSubCueBaseDurationMs } from '../../../shared/audioSubCueAutomation';
+import { resolveSubCuePassLoopTiming } from '../../../shared/subCuePassLoopTiming';
 import type {
   AudioSourceId,
   CalculatedStreamTimeline,
@@ -131,18 +132,16 @@ function orderedTimelineIds(runtime: NonNullable<StreamEnginePublicState['runtim
 
 function audioSubCueDurationMs(sub: PersistedAudioSubCueConfig, state: DirectorState): number | undefined {
   const source = state.audioSources[sub.audioSourceId];
-  const rate = sub.playbackRate && sub.playbackRate > 0 ? sub.playbackRate : 1;
-  let base = source?.durationSeconds !== undefined ? (source.durationSeconds * 1000) / rate : undefined;
-  if (base === undefined && sub.durationOverrideMs !== undefined) {
-    base = sub.durationOverrideMs;
-  }
+  const base = getAudioSubCueBaseDurationMs(sub, source?.durationSeconds);
   if (base === undefined) {
     return undefined;
   }
-  if (sub.durationOverrideMs !== undefined) {
-    base = Math.min(base, sub.durationOverrideMs);
-  }
-  return resolveLoopTiming(sub.loop, base).totalDurationMs;
+  return resolveSubCuePassLoopTiming({
+    pass: sub.pass,
+    innerLoop: sub.innerLoop,
+    legacyLoop: sub.loop,
+    baseDurationMs: base,
+  }).totalDurationMs;
 }
 
 function runtimeCursorMs(runtime: StreamEnginePublicState['runtime']): number {

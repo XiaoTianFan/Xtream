@@ -230,6 +230,99 @@ describe('streamSchedule', () => {
     expect(estimateSceneDurationMs(scene, { 'long-vid': 120, 'short-vid': 60 }, {})).toBe(360_000);
   });
 
+  it('uses finite sub-cue pass repeats for scene duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          pass: { iterations: { type: 'count' as const, count: 3 } },
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBe(30_000);
+  });
+
+  it('uses finite sub-cue inner-loop extra repeats for scene duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          sourceStartMs: 10_000,
+          sourceEndMs: 40_000,
+          pass: { iterations: { type: 'count' as const, count: 2 } },
+          innerLoop: {
+            enabled: true as const,
+            range: { startMs: 10_000, endMs: 20_000 },
+            iterations: { type: 'count' as const, count: 3 },
+          },
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 60 }, {})).toBe(120_000);
+  });
+
+  it('applies scene-level loops around expanded sub-cue pass/inner-loop duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'S'),
+      loop: { enabled: true as const, iterations: { type: 'count' as const, count: 2 } },
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          pass: { iterations: { type: 'count' as const, count: 2 } },
+          innerLoop: {
+            enabled: true as const,
+            range: { startMs: 2000, endMs: 4000 },
+            iterations: { type: 'count' as const, count: 1 },
+          },
+        },
+      },
+    };
+    expect(estimateSceneDurationMs(scene, { vid: 10 }, {})).toBe(48_000);
+  });
+
+  it('includes finite pass and finite inner-loop expansion in main stream expected duration', () => {
+    const scene = {
+      ...createEmptyUserScene('s1', 'Expanded'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          pass: { iterations: { type: 'count' as const, count: 2 } },
+          innerLoop: {
+            enabled: true as const,
+            range: { startMs: 2000, endMs: 4000 },
+            iterations: { type: 'count' as const, count: 1 },
+          },
+        },
+      },
+    };
+    const stream = streamWithScenes({ s1: scene }, ['s1']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: { vid: 10 }, audioDurations: {} });
+
+    expect(schedule.status).toBe('valid');
+    expect(schedule.expectedDurationMs).toBe(24_000);
+    expect(schedule.mainSegments).toEqual([
+      { threadId: 'thread:s1', rootSceneId: 's1', startMs: 0, durationMs: 24_000, endMs: 24_000, proportion: 1 },
+    ]);
+  });
+
   it('sums manual scenes for linear stream duration estimate', () => {
     const s1 = {
       ...createEmptyUserScene('s1', 'A'),
@@ -501,6 +594,50 @@ describe('streamSchedule', () => {
     expect(schedule.mainSegments?.map((segment) => segment.rootSceneId)).toEqual(['main']);
   });
 
+  it('excludes threads with infinite sub-cue pass or inner loop from the default main timeline', () => {
+    const passLoop = {
+      ...createEmptyUserScene('pass-loop', 'Pass loop'),
+      subCueOrder: ['a1'],
+      subCues: {
+        a1: {
+          id: 'a1',
+          kind: 'audio' as const,
+          audioSourceId: 'aud',
+          outputIds: ['output-main'],
+          pass: { iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    const innerLoop = {
+      ...createEmptyUserScene('inner-loop', 'Inner loop'),
+      subCueOrder: ['v1'],
+      subCues: {
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          innerLoop: { enabled: true as const, range: { startMs: 1000, endMs: 2000 }, iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    const main = {
+      ...createEmptyUserScene('main', 'Main'),
+      subCueOrder: ['v2'],
+      subCues: { v2: { id: 'v2', kind: 'visual' as const, visualId: 'vid', targets: [{ displayId: 'd0' }], durationOverrideMs: 1000 } },
+    };
+    const stream = streamWithScenes({ 'pass-loop': passLoop, 'inner-loop': innerLoop, main }, ['pass-loop', 'inner-loop', 'main']);
+    const schedule = buildStreamSchedule(stream, { visualDurations: { vid: 5 }, audioDurations: { aud: 5 } });
+
+    expect(schedule.status).toBe('valid');
+    expect(schedule.expectedDurationMs).toBe(1000);
+    expect(schedule.threadPlan?.threads.filter((thread) => thread.detachedReason === 'infinite-loop').map((thread) => thread.rootSceneId)).toEqual([
+      'pass-loop',
+      'inner-loop',
+    ]);
+    expect(schedule.mainSegments?.map((segment) => segment.rootSceneId)).toEqual(['main']);
+  });
+
   it('detaches the owning thread when an auto-follow child has an infinite loop', () => {
     const root = {
       ...createEmptyUserScene('root', 'Root'),
@@ -666,6 +803,48 @@ describe('streamSchedule', () => {
         expect.stringContaining('invalid level automation point 1 time'),
         expect.stringContaining('invalid level automation point 1 value'),
         expect.stringContaining('invalid pan automation point 1 value'),
+      ]),
+    );
+  });
+
+  it('validates sub-cue pass and inner-loop timing fields', () => {
+    const scene = {
+      ...createEmptyUserScene('scene-user', 'User'),
+      subCueOrder: ['a1', 'v1'],
+      subCues: {
+        a1: {
+          id: 'a1',
+          kind: 'audio' as const,
+          audioSourceId: 'aud',
+          outputIds: ['output-main'],
+          pass: { iterations: { type: 'count' as const, count: 0 } },
+          innerLoop: { enabled: true as const, range: { startMs: 1000, endMs: 2000 }, iterations: { type: 'count' as const, count: -1 } },
+        },
+        v1: {
+          id: 'v1',
+          kind: 'visual' as const,
+          visualId: 'vid',
+          targets: [{ displayId: 'd0' }],
+          pass: { iterations: { type: 'infinite' as const } },
+          innerLoop: { enabled: true as const, range: { startMs: 1000, endMs: 6000 }, iterations: { type: 'infinite' as const } },
+        },
+      },
+    };
+    const stream = streamWithScenes({ 'scene-user': scene }, ['scene-user']);
+    const msgs = validateStreamContent(stream, {
+      audioSources: new Set(['aud']),
+      outputs: new Set(['output-main']),
+      visuals: new Set(['vid']),
+      audioDurations: new Map([['aud', 5]]),
+      visualMedia: new Map([['vid', { id: 'vid', kind: 'file', type: 'video', durationSeconds: 5 }]]),
+    });
+
+    expect(msgs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('invalid pass count'),
+        expect.stringContaining('invalid loop count'),
+        expect.stringContaining('inner loop range is outside the selected pass range'),
+        expect.stringContaining('cannot use infinite pass and infinite inner loop together'),
       ]),
     );
   });
