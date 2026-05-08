@@ -1,6 +1,6 @@
 import type { DirectorState, PersistedSceneConfig, PersistedStreamConfig, SceneId } from '../../../shared/types';
 import type { StreamEnginePublicState } from '../../../shared/types';
-import { readMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
+import { isCustomMediaPoolDragEvent, readCustomMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { deriveStreamThreadColorMaps } from '../../../shared/streamThreadColors';
 import type { BottomTab } from './streamTypes';
@@ -377,8 +377,7 @@ function createSceneRowWrap(
   });
 
   wrap.addEventListener('dragover', (event) => {
-    const mediaPayload = readMediaPoolDragPayload(event.dataTransfer);
-    if (mediaPayload) {
+    if (isCustomMediaPoolDragEvent(event)) {
       event.preventDefault();
       event.dataTransfer!.dropEffect = 'copy';
       wrap.classList.add('media-drop-over');
@@ -394,7 +393,7 @@ function createSceneRowWrap(
     }
   });
   wrap.addEventListener('drop', (event) => {
-    const mediaPayload = readMediaPoolDragPayload(event.dataTransfer);
+    const mediaPayload = readCustomMediaPoolDragPayload(event.dataTransfer);
     if (mediaPayload) {
       event.preventDefault();
       wrap.classList.remove('media-drop-over');
@@ -402,6 +401,12 @@ function createSceneRowWrap(
       void Promise.resolve(ctx.addMediaPoolItemToScene(scene.id, mediaPayload)).catch((err) => {
         console.error('addMediaPoolItemToScene failed.', err);
       });
+      return;
+    }
+    if (isCustomMediaPoolDragEvent(event)) {
+      event.preventDefault();
+      wrap.classList.remove('media-drop-over');
+      dragUi.hideDropIndicator();
       return;
     }
     event.preventDefault();

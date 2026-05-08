@@ -38,6 +38,37 @@ export function readMediaPoolDragPayload(dataTransfer: DataTransfer | null): Med
   return readTextMediaPoolDragPayload(dataTransfer.getData('text/plain'));
 }
 
+export function readCustomMediaPoolDragPayload(dataTransfer: DataTransfer | null): MediaPoolDragPayload | undefined {
+  if (!dataTransfer || !dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME)) {
+    return undefined;
+  }
+  return readSerializedMediaPoolDragPayload(dataTransfer.getData(XTREAM_MEDIA_POOL_ITEM_MIME));
+}
+
+export function isCustomMediaPoolDragEvent(event: DragEvent): boolean {
+  if (!event.dataTransfer) {
+    return false;
+  }
+  return (
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_ITEM_MIME) ||
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_VISUAL_MIME) ||
+    dataTransferHasType(event.dataTransfer, XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME)
+  );
+}
+
+export function getCustomMediaPoolDragPayloadType(dataTransfer: DataTransfer | null): MediaPoolDragPayloadType | undefined {
+  if (!dataTransfer) {
+    return undefined;
+  }
+  if (dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_VISUAL_MIME)) {
+    return 'visual';
+  }
+  if (dataTransferHasType(dataTransfer, XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME)) {
+    return 'audio-source';
+  }
+  return readCustomMediaPoolDragPayload(dataTransfer)?.type;
+}
+
 export function getMediaPoolDragPayloadType(dataTransfer: DataTransfer | null): MediaPoolDragPayloadType | undefined {
   if (!dataTransfer) {
     return undefined;

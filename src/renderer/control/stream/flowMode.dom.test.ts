@@ -11,8 +11,9 @@ vi.mock('../shell/shellModalPresenter', () => ({
   shellShowConfirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-function createDataTransferStub(): DataTransfer {
+function createDataTransferStub(options: { protectReads?: boolean } = {}): DataTransfer & { allowReads: () => void } {
   const store = new Map<string, string>();
+  let protectedReads = options.protectReads === true;
   return {
     effectAllowed: 'all',
     dropEffect: 'none',
@@ -22,8 +23,11 @@ function createDataTransferStub(): DataTransfer {
     setData: (type: string, value: string) => {
       store.set(type, value);
     },
-    getData: (type: string) => store.get(type) ?? '',
-  } as unknown as DataTransfer;
+    getData: (type: string) => (protectedReads ? '' : store.get(type) ?? ''),
+    allowReads: () => {
+      protectedReads = false;
+    },
+  } as unknown as DataTransfer & { allowReads: () => void };
 }
 
 function createDragEvent(type: string, dataTransfer: DataTransfer): DragEvent {
@@ -336,6 +340,82 @@ describe('createStreamFlowMode', () => {
 
     expect(dataTransfer.dropEffect).toBe('copy');
     expect(addMediaPoolItemToScene).toHaveBeenCalledWith('scene-a', { type: 'visual', id: 'visual-a' });
+  });
+
+  it('accepts Flow card media dragover from custom MIME markers before payload reads are available', async () => {
+    const streamState = runningStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+    const addMediaPoolItemToScene = vi.fn();
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene,
+    });
+    document.body.append(root);
+    await Promise.resolve();
+    const card = root.querySelector<HTMLElement>('.stream-flow-card')!;
+    const dataTransfer = createDataTransferStub({ protectReads: true });
+    writeMediaPoolDragPayload(dataTransfer, { type: 'audio-source', id: 'audio-a' });
+
+    card.dispatchEvent(createDragEvent('dragover', dataTransfer));
+
+    expect(dataTransfer.dropEffect).toBe('copy');
+    expect(card.classList.contains('media-drop-over')).toBe(true);
+    expect(addMediaPoolItemToScene).not.toHaveBeenCalled();
+
+    dataTransfer.allowReads();
+    card.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(addMediaPoolItemToScene).toHaveBeenCalledWith('scene-a', { type: 'audio-source', id: 'audio-a' });
+  });
+
+  it('does not accept text/plain fallback payloads as Flow card media drops', async () => {
+    const streamState = runningStreamPublic();
+    window.xtream = {
+      stream: {
+        edit: vi.fn(() => Promise.resolve(streamState)),
+        transport: vi.fn(() => Promise.resolve(streamState)),
+      },
+    } as unknown as typeof window.xtream;
+    const addMediaPoolItemToScene = vi.fn();
+    const root = createStreamFlowMode(streamState.stream, {
+      playbackFocusSceneId: 'scene-a',
+      sceneEditSceneId: 'scene-a',
+      currentState: director(),
+      streamState,
+      setSceneEditFocus: vi.fn(),
+      setPlaybackAndEditFocus: vi.fn(),
+      setBottomTab: vi.fn(),
+      clearDetailPane: vi.fn(),
+      requestRender: vi.fn(),
+      refreshSceneSelectionUi: vi.fn(),
+      addMediaPoolItemToScene,
+    });
+    document.body.append(root);
+    await Promise.resolve();
+    const card = root.querySelector<HTMLElement>('.stream-flow-card')!;
+    const dataTransfer = createDataTransferStub();
+    dataTransfer.setData('text/plain', 'audio-source:audio-a');
+
+    card.dispatchEvent(createDragEvent('dragover', dataTransfer));
+    card.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(dataTransfer.dropEffect).toBe('none');
+    expect(card.classList.contains('media-drop-over')).toBe(false);
+    expect(addMediaPoolItemToScene).not.toHaveBeenCalled();
   });
 
   it('keeps the main curve cursor fixed when runtime only has a parallel timeline', async () => {

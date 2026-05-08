@@ -1,5 +1,5 @@
 import type { DirectorState, PersistedStreamConfig, SceneId, StreamEnginePublicState } from '../../../shared/types';
-import { readMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
+import { isCustomMediaPoolDragEvent, readCustomMediaPoolDragPayload, type MediaPoolDragPayload } from '../patch/mediaPool/dragDrop';
 import { getStreamAuthoringErrorHighlights, validateStreamContextFromDirector } from '../../../shared/streamSchedule';
 import { createButton } from '../shared/dom';
 import { decorateIconButton } from '../shared/icons';
@@ -542,9 +542,9 @@ function renderCards(args: {
           showContextMenu: (event, id) => showSceneContextMenu(event, stream, id, ctx),
           beginDrag,
           beginResize,
-          canAcceptMediaDrop: (event) => Boolean(readMediaPoolDragPayload(event.dataTransfer)),
+          canAcceptMediaDrop: (event) => isCustomMediaPoolDragEvent(event),
           dropMedia: (event, id) => {
-            const payload = readMediaPoolDragPayload(event.dataTransfer);
+            const payload = readCustomMediaPoolDragPayload(event.dataTransfer);
             if (!payload) {
               return;
             }

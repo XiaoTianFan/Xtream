@@ -93,19 +93,54 @@ vi.mock('./workspacePaneSignature', () => ({
 
 vi.mock('./bottomPane', () => ({
   renderStreamBottomPane: vi.fn((panel, ctx) => {
-    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}`;
+    const selection = ctx.sceneEditSelection.kind === 'subcue' ? ` ${ctx.sceneEditSelection.subCueId}` : '';
+    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}${selection}`;
   }),
   syncStreamSceneEditPaneContent: vi.fn((panel, ctx) => {
     if (ctx.detailPane || ctx.bottomTab !== 'scene') {
       return false;
     }
-    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}`;
+    const selection = ctx.sceneEditSelection.kind === 'subcue' ? ` ${ctx.sceneEditSelection.subCueId}` : '';
+    panel.textContent = `STREAM BOTTOM ${ctx.selectedSceneId ?? ''}${selection}`;
     return true;
   }),
 }));
 
 vi.mock('./streamMixerBottomRedrawDefer', () => ({
   shouldDeferStreamMixerBottomPaneRedraw: vi.fn(() => false),
+}));
+
+vi.mock('./sceneEdit/addMediaSubCueFromPool', () => ({
+  addMediaSubCueFromPool: vi.fn(async ({ stream, sceneId, payload }) => {
+    const subCueId = 'subcue-drop';
+    const scene = stream.scenes[sceneId];
+    const subCue =
+      payload.type === 'audio-source'
+        ? { id: subCueId, kind: 'audio', audioSourceId: payload.id, outputIds: [], playbackRate: 1 }
+        : { id: subCueId, kind: 'visual', visualId: payload.id, targets: [], playbackRate: 1 };
+    const nextStream = {
+      ...stream,
+      scenes: {
+        ...stream.scenes,
+        [sceneId]: {
+          ...scene,
+          subCueOrder: [...scene.subCueOrder, subCueId],
+          subCues: { ...scene.subCues, [subCueId]: subCue },
+        },
+      },
+    };
+    return {
+      streamState: {
+        stream: nextStream,
+        playbackStream: nextStream,
+        editTimeline: { status: 'valid', entries: {}, revision: 1, calculatedAtWallTimeMs: 0, issues: [] },
+        playbackTimeline: { status: 'valid', entries: {}, revision: 1, calculatedAtWallTimeMs: 0, issues: [] },
+        validationMessages: [],
+        runtime: null,
+      },
+      subCueId,
+    };
+  }),
 }));
 
 vi.mock('./listMode', () => ({
@@ -171,6 +206,30 @@ function director(): DirectorState {
     displays: {},
     previews: {},
     readiness: { ready: true, checkedAtWallTimeMs: 0, issues: [] },
+  } as unknown as DirectorState;
+}
+
+function directorWithMedia(): DirectorState {
+  return {
+    ...director(),
+    visuals: {
+      'visual-a': {
+        id: 'visual-a',
+        kind: 'file',
+        type: 'image',
+        label: 'Logo Loop',
+        url: 'file:///logo.png',
+        ready: true,
+      },
+    },
+    audioSources: {
+      'audio-a': {
+        id: 'audio-a',
+        label: 'Kick Loop',
+        url: 'file:///kick.wav',
+        ready: true,
+      },
+    },
   } as unknown as DirectorState;
 }
 
@@ -246,6 +305,39 @@ function runningStreamPublic(cursorMs = 0): StreamEnginePublicState {
       expectedDurationMs: 1000,
     },
   } as unknown as StreamEnginePublicState;
+}
+
+function preloadingStreamPublic(): StreamEnginePublicState {
+  const pub = streamPublic();
+  return {
+    ...pub,
+    runtime: {
+      status: 'preloading',
+      sceneStates: {
+        'scene-a': {
+          sceneId: 'scene-a',
+          status: 'preloading',
+          scheduledStartMs: 0,
+        },
+      },
+      currentStreamMs: 0,
+      expectedDurationMs: 1000,
+    },
+  } as unknown as StreamEnginePublicState;
+}
+
+function disabledStreamPublic(): StreamEnginePublicState {
+  const pub = streamPublic();
+  const stream = structuredClone(pub.stream);
+  stream.scenes['scene-a'] = {
+    ...stream.scenes['scene-a']!,
+    disabled: true,
+  };
+  return {
+    ...pub,
+    stream,
+    playbackStream: stream,
+  };
 }
 
 function runningTwoSceneStreamPublic(runtimeFocusSceneId = 'scene-a', cursorMs = 0): StreamEnginePublicState {
@@ -624,6 +716,96 @@ describe('createStreamSurfaceController state hydration', () => {
     controller.applyStreamState(runningStreamPublic(500));
 
     expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+  });
+
+  it('orchestrates media-pool scene drops by authoring, selecting, expanding, and reporting the new sub-cue', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { addMediaSubCueFromPool } = await import('./sceneEdit/addMediaSubCueFromPool');
+    const setShowStatus = vi.fn();
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => streamPublic(),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus,
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(directorWithMedia());
+    const workspaceCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    vi.mocked(renderStreamWorkspacePane).mockClear();
+    await workspaceCtx?.addMediaPoolItemToScene('scene-a', { type: 'audio-source', id: 'audio-a' });
+
+    expect(addMediaSubCueFromPool).toHaveBeenCalledWith(expect.objectContaining({
+      sceneId: 'scene-a',
+      payload: { type: 'audio-source', id: 'audio-a' },
+    }));
+    expect(setShowStatus).toHaveBeenCalledWith('Added audio sub-cue from Kick Loop to Scene A.');
+    expect(renderStreamWorkspacePane).toHaveBeenCalledTimes(1);
+    const nextWorkspaceCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    expect(nextWorkspaceCtx?.sceneEditSceneId).toBe('scene-a');
+    expect(nextWorkspaceCtx?.expandedListSceneIds.has('scene-a')).toBe(true);
+  });
+
+  it('rejects media-pool scene drops while the target scene is running or preloading', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { addMediaSubCueFromPool } = await import('./sceneEdit/addMediaSubCueFromPool');
+    const setShowStatus = vi.fn();
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => runningStreamPublic(100),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus,
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(directorWithMedia());
+    const runningCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    await runningCtx?.addMediaPoolItemToScene('scene-a', { type: 'visual', id: 'visual-a' });
+    controller.applyStreamState(preloadingStreamPublic());
+    const preloadingCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    await preloadingCtx?.addMediaPoolItemToScene('scene-a', { type: 'audio-source', id: 'audio-a' });
+
+    expect(addMediaSubCueFromPool).not.toHaveBeenCalled();
+    expect(setShowStatus).toHaveBeenCalledWith('Scene A is running. Stop it before editing sub-cues.');
+    expect(setShowStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows media-pool scene drops onto disabled scenes', async () => {
+    const { createStreamSurfaceController } = await import('./streamSurface');
+    const { renderStreamWorkspacePane } = await import('./workspacePane');
+    const { addMediaSubCueFromPool } = await import('./sceneEdit/addMediaSubCueFromPool');
+    const setShowStatus = vi.fn();
+    const controller = createStreamSurfaceController({
+      getAudioDevices: () => [],
+      getDisplayMonitors: () => [],
+      getPresentationState: () => undefined,
+      getLatestStreamState: () => disabledStreamPublic(),
+      getEngineSoloOutputIds: () => [],
+      renderState: vi.fn(),
+      setShowStatus,
+      showActions: {} as never,
+      getShowConfigPath: () => undefined,
+    });
+
+    controller.render(directorWithMedia());
+    const workspaceCtx = vi.mocked(renderStreamWorkspacePane).mock.calls.at(-1)?.[2] as StreamWorkspacePaneContext | undefined;
+    await workspaceCtx?.addMediaPoolItemToScene('scene-a', { type: 'visual', id: 'visual-a' });
+
+    expect(addMediaSubCueFromPool).toHaveBeenCalledWith(expect.objectContaining({
+      sceneId: 'scene-a',
+      payload: { type: 'visual', id: 'visual-a' },
+    }));
+    expect(setShowStatus).toHaveBeenCalledWith('Added visual sub-cue from Logo Loop to Scene A.');
   });
 
   it('keeps the workspace invalidated if Flow rendering is interrupted during running playback', async () => {

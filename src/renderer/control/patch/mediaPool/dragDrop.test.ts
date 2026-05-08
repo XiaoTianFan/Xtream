@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileUriToPath,
+  getCustomMediaPoolDragPayloadType,
   getMediaPoolDragPayloadType,
   getDroppedFilePaths,
+  isCustomMediaPoolDragEvent,
   isMediaPoolDragEvent,
   parseDroppedFileUriList,
+  readCustomMediaPoolDragPayload,
   readMediaPoolDragPayload,
   writeMediaPoolDragPayload,
   XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME,
@@ -61,9 +64,12 @@ describe('mediaPool dragDrop', () => {
     const visualTransfer = createDataTransferStub({ [XTREAM_MEDIA_POOL_VISUAL_MIME]: '' });
     const audioTransfer = createDataTransferStub({ [XTREAM_MEDIA_POOL_AUDIO_SOURCE_MIME]: '' });
 
+    expect(getCustomMediaPoolDragPayloadType(visualTransfer)).toBe('visual');
+    expect(getCustomMediaPoolDragPayloadType(audioTransfer)).toBe('audio-source');
     expect(getMediaPoolDragPayloadType(visualTransfer)).toBe('visual');
     expect(getMediaPoolDragPayloadType(audioTransfer)).toBe('audio-source');
     expect(readMediaPoolDragPayload(visualTransfer)).toBeUndefined();
+    expect(isCustomMediaPoolDragEvent(createDragEvent(visualTransfer))).toBe(true);
     expect(isMediaPoolDragEvent(createDragEvent(visualTransfer))).toBe(true);
   });
 
@@ -73,6 +79,8 @@ describe('mediaPool dragDrop', () => {
     const textOnly = createDataTransferStub({ 'text/plain': dataTransfer.getData('text/plain') });
 
     expect(isMediaPoolDragEvent(createDragEvent(textOnly))).toBe(true);
+    expect(isCustomMediaPoolDragEvent(createDragEvent(textOnly))).toBe(false);
+    expect(readCustomMediaPoolDragPayload(textOnly)).toBeUndefined();
     expect(readMediaPoolDragPayload(textOnly)).toEqual({ type: 'visual', id: 'visual-1' });
   });
 

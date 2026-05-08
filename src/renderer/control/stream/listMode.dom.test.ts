@@ -10,8 +10,9 @@ vi.mock('../shell/shellModalPresenter', () => ({
   shellShowConfirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-function createDataTransferStub(): DataTransfer {
+function createDataTransferStub(options: { protectReads?: boolean } = {}): DataTransfer & { allowReads: () => void } {
   const store = new Map<string, string>();
+  let protectedReads = options.protectReads === true;
   return {
     effectAllowed: 'all',
     dropEffect: 'none',
@@ -21,8 +22,11 @@ function createDataTransferStub(): DataTransfer {
     setData: (type: string, value: string) => {
       store.set(type, value);
     },
-    getData: (type: string) => store.get(type) ?? '',
-  } as unknown as DataTransfer;
+    getData: (type: string) => (protectedReads ? '' : store.get(type) ?? ''),
+    allowReads: () => {
+      protectedReads = false;
+    },
+  } as unknown as DataTransfer & { allowReads: () => void };
 }
 
 function createDragEvent(type: string, dataTransfer: DataTransfer, init: { clientY?: number } = {}): DragEvent {
@@ -98,6 +102,40 @@ describe('createStreamListMode media drops', () => {
 
     expect(addMediaPoolItemToScene).toHaveBeenCalledWith('scene-a', { type: 'audio-source', id: 'audio-a' });
     expect(rowWrap.classList.contains('media-drop-over')).toBe(false);
+  });
+
+  it('accepts custom media drags during protected dragover reads, then reads the payload on drop', () => {
+    const addMediaPoolItemToScene = vi.fn();
+    const root = createStreamListMode(stream(), ctx({ addMediaPoolItemToScene }));
+    const rowWrap = root.querySelector<HTMLElement>('.stream-scene-row-wrap[data-scene-id="scene-a"]')!;
+    const dataTransfer = createDataTransferStub({ protectReads: true });
+    writeMediaPoolDragPayload(dataTransfer, { type: 'visual', id: 'visual-a' });
+
+    rowWrap.dispatchEvent(createDragEvent('dragover', dataTransfer));
+
+    expect(dataTransfer.dropEffect).toBe('copy');
+    expect(rowWrap.classList.contains('media-drop-over')).toBe(true);
+    expect(addMediaPoolItemToScene).not.toHaveBeenCalled();
+
+    dataTransfer.allowReads();
+    rowWrap.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(addMediaPoolItemToScene).toHaveBeenCalledWith('scene-a', { type: 'visual', id: 'visual-a' });
+  });
+
+  it('does not treat text/plain fallbacks as stream media assignment drops', () => {
+    const addMediaPoolItemToScene = vi.fn();
+    const root = createStreamListMode(stream(), ctx({ addMediaPoolItemToScene }));
+    const rowWrap = root.querySelector<HTMLElement>('.stream-scene-row-wrap[data-scene-id="scene-a"]')!;
+    const dataTransfer = createDataTransferStub();
+    dataTransfer.setData('text/plain', 'visual:visual-a');
+
+    rowWrap.dispatchEvent(createDragEvent('dragover', dataTransfer));
+    rowWrap.dispatchEvent(createDragEvent('drop', dataTransfer));
+
+    expect(dataTransfer.dropEffect).toBe('none');
+    expect(rowWrap.classList.contains('media-drop-over')).toBe(false);
+    expect(addMediaPoolItemToScene).not.toHaveBeenCalled();
   });
 
   it('keeps scene reorder drops on non-media drags', () => {
