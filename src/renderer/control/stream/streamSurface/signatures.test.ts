@@ -108,6 +108,36 @@ describe('stream surface signatures', () => {
       selectedSceneRunning: false,
     })));
   });
+
+  it('ignores scene playback-control edits in the scene edit render signature', () => {
+    const base = streamPublic(audioStream());
+    const edited = streamPublic(audioStream());
+    edited.stream = {
+      ...edited.stream,
+      scenes: {
+        ...edited.stream.scenes,
+        'scene-a': {
+          ...edited.stream.scenes['scene-a'],
+          loop: { enabled: true, iterations: { type: 'infinite' } },
+          preload: { enabled: true, leadTimeMs: 750 },
+        },
+      },
+    } as PersistedStreamConfig;
+
+    expect(JSON.stringify(createSceneEditRenderModel({
+      streamState: base,
+      sceneEditSceneId: 'scene-a',
+      sceneEditSelection: { kind: 'scene' },
+      currentState: directorState(),
+      selectedSceneRunning: false,
+    }))).toBe(JSON.stringify(createSceneEditRenderModel({
+      streamState: edited,
+      sceneEditSceneId: 'scene-a',
+      sceneEditSelection: { kind: 'scene' },
+      currentState: directorState(),
+      selectedSceneRunning: false,
+    })));
+  });
 });
 
 function audioStream(audioOverrides: Record<string, unknown> = {}): PersistedStreamConfig {

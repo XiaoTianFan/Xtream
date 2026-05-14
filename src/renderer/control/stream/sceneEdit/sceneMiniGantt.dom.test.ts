@@ -77,20 +77,34 @@ describe('createSceneMiniGantt', () => {
     expect(root.textContent).not.toContain('Scene Timeline');
     expect(root.querySelector<HTMLButtonElement>('.stream-subcue-toggle')?.textContent).toBe('Preload');
     expect(fieldControl(root, 'Loop iterations').disabled).toBe(false);
-    expect((fieldControl(root, 'Loop iterations') as HTMLInputElement).value).toBe('0');
-    expect(fieldControl(root, 'Loop range start').disabled).toBe(true);
-    expect(fieldControl(root, 'Preload lead time').disabled).toBe(true);
+    expect((fieldControl(root, 'Loop iterations') as HTMLInputElement).value).toBe('1');
+    expect((fieldControl(root, 'Loop iterations') as HTMLInputElement).min).toBe('1');
+    expect(root.querySelector<HTMLInputElement>('.stream-scene-loop-range-input[placeholder="start"]')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLInputElement>('.stream-scene-loop-range-input[placeholder="end"]')?.disabled).toBe(true);
+    expect(fieldControl(root, 'Lead time').disabled).toBe(true);
   });
 
   it('uses the compact infinity-number control for scene loop iterations', () => {
+    const requestRender = vi.fn();
     const root = createSceneMiniGantt({
       scene: scene(),
       currentState: director(),
       removeSubCue: vi.fn(),
-      requestRender: vi.fn(),
+      requestRender,
     });
 
     const loopInput = fieldControl(root, 'Loop iterations') as HTMLInputElement;
+    loopInput.value = '0';
+    loopInput.dispatchEvent(new Event('change'));
+
+    expect(loopInput.value).toBe('1');
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { loop: { enabled: false } },
+    });
+
+    vi.mocked(window.xtream.stream.edit).mockClear();
     loopInput.value = '3';
     loopInput.dispatchEvent(new Event('change'));
 
@@ -107,6 +121,87 @@ describe('createSceneMiniGantt', () => {
       type: 'update-scene',
       sceneId: 'scene-a',
       update: { loop: { enabled: true, iterations: { type: 'infinite' } } },
+    });
+    expect(root.querySelector<HTMLButtonElement>('[aria-label="Loop iterations infinity"]')?.classList.contains('active')).toBe(true);
+    expect(loopInput.disabled).toBe(true);
+    expect(root.querySelector<HTMLInputElement>('.stream-scene-loop-range-input[placeholder="start"]')?.disabled).toBe(false);
+    expect(requestRender).not.toHaveBeenCalled();
+  });
+
+  it('toggles preload locally without requesting a scene edit redraw', () => {
+    const requestRender = vi.fn();
+    const root = createSceneMiniGantt({
+      scene: scene(),
+      currentState: director(),
+      removeSubCue: vi.fn(),
+      requestRender,
+    });
+
+    const preload = root.querySelector<HTMLButtonElement>('.stream-scene-mini-gantt-preload-field .stream-subcue-toggle')!;
+    const lead = fieldControl(root, 'Lead time') as HTMLInputElement;
+    expect(preload.classList.contains('active')).toBe(false);
+    expect(lead.disabled).toBe(true);
+
+    preload.click();
+
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { preload: { enabled: true, leadTimeMs: undefined } },
+    });
+    expect(preload.classList.contains('active')).toBe(true);
+    expect(preload.getAttribute('aria-pressed')).toBe('true');
+    expect(lead.disabled).toBe(false);
+    expect(requestRender).not.toHaveBeenCalled();
+  });
+
+  it('renders compact loop range and preload lead controls', () => {
+    const root = createSceneMiniGantt({
+      scene: scene({
+        loop: { enabled: true, iterations: { type: 'count', count: 2 }, range: { startMs: 250, endMs: 1250 } },
+        preload: { enabled: true, leadTimeMs: 300 },
+      }),
+      currentState: director(),
+      removeSubCue: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const range = root.querySelector<HTMLElement>('.stream-scene-loop-range');
+    const start = root.querySelector<HTMLInputElement>('.stream-scene-loop-range-input[placeholder="start"]')!;
+    const end = root.querySelector<HTMLInputElement>('.stream-scene-loop-range-input[placeholder="end"]')!;
+    expect(range?.querySelector<HTMLElement>('.stream-scene-loop-range-label')?.textContent).toBe('Loop range');
+    expect(start.value).toBe('250');
+    expect(end.value).toBe('1250');
+    expect(start.disabled).toBe(false);
+    expect(end.disabled).toBe(false);
+
+    start.value = '500';
+    start.dispatchEvent(new Event('change'));
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { loop: { enabled: true, iterations: { type: 'count', count: 2 }, range: { startMs: 500, endMs: 1250 } } },
+    });
+
+    vi.mocked(window.xtream.stream.edit).mockClear();
+    end.value = '';
+    end.dispatchEvent(new Event('change'));
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { loop: { enabled: true, iterations: { type: 'count', count: 2 }, range: { startMs: 500 } } },
+    });
+
+    vi.mocked(window.xtream.stream.edit).mockClear();
+    const lead = fieldControl(root, 'Lead time') as HTMLInputElement;
+    expect(root.querySelector<HTMLElement>('.stream-draggable-number-grip')?.textContent).toBe('Lead time');
+    expect(lead.value).toBe('300');
+    lead.value = '450';
+    lead.dispatchEvent(new Event('change'));
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { preload: { enabled: true, leadTimeMs: 450 } },
     });
   });
 
@@ -192,13 +287,13 @@ describe('createSceneMiniGantt', () => {
   });
 });
 
-function scene(options: { linked?: boolean } = {}): PersistedSceneConfig {
+function scene(options: { linked?: boolean; loop?: PersistedSceneConfig['loop']; preload?: PersistedSceneConfig['preload'] } = {}): PersistedSceneConfig {
   return {
     id: 'scene-a',
     title: 'Scene',
     trigger: { type: 'manual' },
-    loop: { enabled: false },
-    preload: { enabled: false },
+    loop: options.loop ?? { enabled: false },
+    preload: options.preload ?? { enabled: false },
     subCueOrder: ['sub-v', 'sub-a'],
     subCues: {
       'sub-v': {

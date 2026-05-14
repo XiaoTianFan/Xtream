@@ -18,6 +18,7 @@ import { decorateIconButton } from '../shared/icons';
 import { shellShowConfirm } from '../shell/shellModalPresenter';
 import type { BottomTab, DetailPane, StreamSurfaceOptions } from './streamTypes';
 import { createStreamDetailField, createStreamDetailLine, createStreamTextInput } from './streamDom';
+import { createDisplayWindowGantt } from './displayWindowGantt';
 import { createOutputBusGantt } from './outputBusGantt';
 
 type StreamTempDetailActions = {
@@ -91,7 +92,7 @@ export function createStreamDetailOverlay(deps: StreamDetailOverlayDeps): HTMLEl
     const display = currentState.displays[detailPane.id];
     body.append(
       display
-        ? createStreamDisplayDetailCard(display, currentState, options, displayWorkspace, refreshDirector, tempDetailActions)
+        ? createStreamDisplayDetailCard(display, currentState, streamState, options, displayWorkspace, refreshDirector, tempDetailActions)
         : createHint('Display not found.'),
     );
   } else if (detailPane.type === 'output') {
@@ -161,6 +162,7 @@ function wireStreamMediaSliderLive(
 function createStreamDisplayDetailCard(
   display: DisplayWindowState,
   state: DirectorState,
+  streamState: StreamEnginePublicState | undefined,
   options: StreamSurfaceOptions,
   displayWorkspace: DisplayWorkspaceController | undefined,
   refreshDirector: () => Promise<void>,
@@ -305,6 +307,7 @@ function createStreamDisplayDetailCard(
     transWrap,
     createStreamDetailLine('Status', displayWorkspace?.getDisplayStatusLabel(display) ?? 'Display'),
     createStreamDetailLine('Telemetry', displayWorkspace?.getDisplayTelemetry(display) ?? display.id),
+    createDisplayWindowGantt(display.id, { streamState, directorState: state }),
   );
   return card;
 }

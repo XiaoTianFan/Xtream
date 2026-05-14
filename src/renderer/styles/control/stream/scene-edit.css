@@ -1224,6 +1224,15 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
   gap: 0.45rem;
 }
 
+.stream-scene-mini-gantt-controls .stream-subcue-field-grid > .detail-field {
+  display: block;
+  min-width: 0;
+}
+
+.stream-scene-mini-gantt-controls .stream-subcue-field-grid > .detail-field > span {
+  display: none;
+}
+
 .stream-scene-mini-gantt-preload-field {
   display: flex;
   align-items: end;
@@ -1236,6 +1245,54 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
   width: 100%;
   min-height: 2rem;
   justify-content: center;
+}
+
+.stream-scene-loop-range {
+  display: grid;
+  grid-template-columns: minmax(3.8rem, 0.9fr) minmax(2.8rem, 1fr) minmax(2.8rem, 1fr);
+  align-items: center;
+  min-width: 0;
+  height: 2rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-low) 76%, transparent);
+}
+
+.stream-scene-loop-range-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 2rem;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-scene-loop-range .label-input {
+  width: 100%;
+  min-width: 0;
+  height: 2rem;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  background: transparent;
+  font-family: var(--font-data);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.stream-scene-loop-range .label-input:last-child {
+  border-right: 0;
+}
+
+.stream-scene-loop-range .label-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .stream-subcue-fade-group {

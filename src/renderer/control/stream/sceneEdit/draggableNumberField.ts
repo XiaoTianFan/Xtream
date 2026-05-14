@@ -71,7 +71,7 @@ export function createDraggableNumberField(
   let moved = false;
 
   grip.addEventListener('pointerdown', (event) => {
-    if (options.disabled) {
+    if (grip.disabled || input.disabled) {
       return;
     }
     pointerId = event.pointerId;

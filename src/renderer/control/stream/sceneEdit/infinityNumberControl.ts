@@ -26,6 +26,7 @@ export function createInfinityNumberToggle(
   input.inputMode = 'numeric';
   input.className = 'label-input stream-infinity-number-input';
   input.setAttribute('aria-label', labelText);
+  input.min = String(options.min);
   input.step = String(options.step ?? 1);
 
   const normalizeCount = (raw: number | undefined): number => Math.max(options.min, Math.round(Number.isFinite(raw) ? (raw as number) : options.min));

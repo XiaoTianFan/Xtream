@@ -2,11 +2,9 @@ import type { DirectorState, PersistedSceneConfig, SceneLoopPolicy, SubCueId } f
 import { createButton } from '../../shared/dom';
 import { decorateIconButton } from '../../shared/icons';
 import { createStreamDetailField } from '../streamDom';
-import {
-  createSubCueFieldGrid,
-  createSubCueToggleButton,
-} from './subCueFormControls';
-import { createInfinityNumberToggle, type InfinityNumberValue } from './infinityNumberControl';
+import { createSubCueFieldGrid } from './subCueFormControls';
+import { createDraggableNumberField } from './draggableNumberField';
+import { createInfinityNumberToggle, type InfinityNumberControl, type InfinityNumberValue } from './infinityNumberControl';
 import { deriveSceneMiniGanttProjection, type SceneMiniGanttProjection, type SceneMiniGanttRowProjection } from './sceneMiniGanttProjection';
 
 export type SceneMiniGanttDeps = {
@@ -23,6 +21,14 @@ const MAX_SCENE_MINI_GANTT_ZOOM = 4;
 const SCENE_MINI_GANTT_WHEEL_ZOOM_FACTOR = 1.12;
 
 let activeSceneMiniGanttMenu: HTMLElement | undefined;
+
+type LoopRangeField = HTMLElement & {
+  sync: (loop: SceneLoopPolicy, disabled: boolean) => void;
+};
+
+type PreloadToggleField = HTMLElement & {
+  sync: (enabled: boolean, disabled: boolean) => void;
+};
 
 function dismissSceneMiniGanttMenu(): void {
   activeSceneMiniGanttMenu?.remove();
@@ -286,13 +292,9 @@ function renderBody(root: HTMLElement, deps: SceneMiniGanttDeps): void {
   setFitButtonEnabled(root);
 }
 
-function updateSceneLoop(scene: PersistedSceneConfig, loop: SceneLoopPolicy): void {
-  void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop } });
-}
-
 function sceneLoopIterationsValue(loop: SceneLoopPolicy): InfinityNumberValue {
   if (!loop.enabled) {
-    return { type: 'count', count: 0 };
+    return { type: 'count', count: 1 };
   }
   if (loop.iterations.type === 'infinite') {
     return { type: 'infinite' };
@@ -306,8 +308,8 @@ function sceneLoopPatchForIterations(scene: PersistedSceneConfig, value: Infinit
       ? { ...scene.loop, iterations: { type: 'infinite' } }
       : { enabled: true, iterations: { type: 'infinite' } };
   }
-  const count = Math.max(0, Math.round(value.count));
-  if (count <= 0) {
+  const count = Math.max(1, Math.round(Number.isFinite(value.count) ? value.count : 1));
+  if (count <= 1) {
     return { enabled: false };
   }
   return scene.loop.enabled
@@ -315,90 +317,157 @@ function sceneLoopPatchForIterations(scene: PersistedSceneConfig, value: Infinit
     : { enabled: true, iterations: { type: 'count', count } };
 }
 
-function createPreloadToggleField(scene: PersistedSceneConfig, preloadEnabled: boolean, editsDisabled: boolean): HTMLElement {
-  const field = document.createElement('div');
+function syncToggleButton(button: HTMLButtonElement, pressed: boolean, disabled: boolean): void {
+  button.classList.toggle('active', pressed);
+  button.setAttribute('aria-pressed', String(pressed));
+  button.disabled = disabled;
+}
+
+function createPreloadToggleField(preloadEnabled: boolean, onToggle: (enabled: boolean) => void, editsDisabled: boolean): PreloadToggleField {
+  const field = document.createElement('div') as unknown as PreloadToggleField;
   field.className = 'stream-scene-mini-gantt-preload-field';
-  const preloadToggle = createSubCueToggleButton('Preload', preloadEnabled, (enabled) => {
-    void window.xtream.stream.edit({
-      type: 'update-scene',
-      sceneId: scene.id,
-      update: { preload: { enabled, leadTimeMs: scene.preload.leadTimeMs } },
-    });
+
+  const preloadToggle = document.createElement('button');
+  preloadToggle.type = 'button';
+  preloadToggle.className = 'stream-subcue-toggle';
+  preloadToggle.textContent = 'Preload';
+  preloadToggle.addEventListener('click', () => {
+    onToggle(preloadToggle.getAttribute('aria-pressed') !== 'true');
   });
-  preloadToggle.disabled = editsDisabled;
+
+  field.sync = (enabled, disabled) => syncToggleButton(preloadToggle, enabled, disabled);
+  field.sync(preloadEnabled, editsDisabled);
   field.append(preloadToggle);
   return field;
 }
 
+function createLoopRangeField(loop: SceneLoopPolicy, onChange: (loop: SceneLoopPolicy) => void, editsDisabled: boolean): LoopRangeField {
+  let currentLoop = loop;
+  const wrap = document.createElement('div');
+  wrap.className = 'stream-scene-loop-range';
+
+  const label = document.createElement('span');
+  label.className = 'stream-scene-loop-range-label';
+  label.textContent = 'Loop range';
+
+  const start = document.createElement('input');
+  start.type = 'number';
+  start.inputMode = 'numeric';
+  start.min = '0';
+  start.step = '100';
+  start.className = 'label-input stream-scene-loop-range-input';
+  start.placeholder = 'start';
+  start.setAttribute('aria-label', 'Loop range start');
+  start.addEventListener('change', () => {
+    const loop = currentLoop;
+    if (!loop.enabled) {
+      return;
+    }
+    const startMs = Math.max(0, Math.round(Number(start.value) || 0));
+    start.value = String(startMs);
+    onChange({ ...loop, range: { startMs, endMs: loop.range?.endMs } });
+  });
+
+  const end = document.createElement('input');
+  end.type = 'number';
+  end.inputMode = 'numeric';
+  end.min = '0';
+  end.step = '100';
+  end.className = 'label-input stream-scene-loop-range-input';
+  end.placeholder = 'end';
+  end.setAttribute('aria-label', 'Loop range end');
+  end.addEventListener('change', () => {
+    const loop = currentLoop;
+    if (!loop.enabled) {
+      return;
+    }
+    const raw = end.value.trim();
+    const endMs = raw === '' ? undefined : Math.max(0, Math.round(Number(raw) || 0));
+    end.value = endMs === undefined ? '' : String(endMs);
+    const startMs = loop.range?.startMs ?? 0;
+    onChange({ ...loop, range: endMs !== undefined ? { startMs, endMs } : { startMs } });
+  });
+
+  wrap.append(label, start, end);
+  const field = createStreamDetailField('Loop range', wrap) as LoopRangeField;
+  field.sync = (nextLoop, disabled) => {
+    currentLoop = nextLoop;
+    const activeLoop = nextLoop.enabled ? nextLoop : undefined;
+    start.value = activeLoop ? String(activeLoop.range?.startMs ?? 0) : '';
+    end.value = activeLoop?.range?.endMs !== undefined ? String(activeLoop.range.endMs) : '';
+    start.disabled = disabled || !activeLoop;
+    end.disabled = disabled || !activeLoop;
+  };
+  field.sync(loop, editsDisabled);
+  return field;
+}
+
+function setDraggableNumberFieldDisabled(field: HTMLElement, disabled: boolean): void {
+  const input = field.querySelector<HTMLInputElement>('input');
+  const grip = field.querySelector<HTMLButtonElement>('.stream-draggable-number-grip');
+  if (input) {
+    input.disabled = disabled;
+  }
+  if (grip) {
+    grip.disabled = disabled;
+  }
+}
+
 function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
   const { scene, editsDisabled = false } = deps;
+  let draftScene = scene;
   const controls = document.createElement('div');
   controls.className = 'stream-scene-mini-gantt-controls';
 
-  const loopEnabled = scene.loop.enabled;
-  const preloadEnabled = scene.preload.enabled;
-  const iterations = createInfinityNumberToggle(
+  const patchScene = (update: Partial<PersistedSceneConfig>) => {
+    draftScene = { ...draftScene, ...update };
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: draftScene.id, update });
+  };
+
+  let iterations: InfinityNumberControl;
+  let rangeField: LoopRangeField;
+  const syncLoopControls = (loop: SceneLoopPolicy) => {
+    iterations.sync(sceneLoopIterationsValue(loop), { disabled: editsDisabled });
+    rangeField.sync(loop, editsDisabled);
+  };
+
+  iterations = createInfinityNumberToggle(
     'Loop iterations',
-    sceneLoopIterationsValue(scene.loop),
-    (value) => updateSceneLoop(scene, sceneLoopPatchForIterations(scene, value)),
-    { min: 0, step: 1, disabled: editsDisabled },
+    sceneLoopIterationsValue(draftScene.loop),
+    (value) => {
+      const loop = sceneLoopPatchForIterations(draftScene, value);
+      patchScene({ loop });
+      syncLoopControls(loop);
+    },
+    { min: 1, step: 1, disabled: editsDisabled },
   );
 
-  const rangeStart = document.createElement('input');
-  rangeStart.type = 'number';
-  rangeStart.min = '0';
-  rangeStart.step = '100';
-  rangeStart.className = 'label-input';
-  rangeStart.value = String(loopEnabled ? (scene.loop.range?.startMs ?? 0) : 0);
-  rangeStart.disabled = editsDisabled || !loopEnabled;
-  rangeStart.addEventListener('change', () => {
-    if (!scene.loop.enabled) {
-      return;
-    }
-    const startMs = Math.max(0, Number(rangeStart.value) || 0);
-    updateSceneLoop(scene, { ...scene.loop, range: { startMs, endMs: scene.loop.range?.endMs } });
-  });
-  const rangeStartField = createStreamDetailField('Loop range start (ms)', rangeStart);
+  rangeField = createLoopRangeField(draftScene.loop, (loop) => {
+    patchScene({ loop });
+    syncLoopControls(loop);
+  }, editsDisabled);
 
-  const rangeEnd = document.createElement('input');
-  rangeEnd.type = 'number';
-  rangeEnd.min = '0';
-  rangeEnd.step = '100';
-  rangeEnd.className = 'label-input';
-  rangeEnd.placeholder = 'optional end';
-  rangeEnd.value = loopEnabled && scene.loop.range?.endMs !== undefined ? String(scene.loop.range.endMs) : '';
-  rangeEnd.disabled = editsDisabled || !loopEnabled;
-  rangeEnd.addEventListener('change', () => {
-    if (!scene.loop.enabled) {
-      return;
-    }
-    const raw = rangeEnd.value.trim();
-    const endMs = raw === '' ? undefined : Math.max(0, Number(raw) || 0);
-    const startMs = scene.loop.range?.startMs ?? 0;
-    updateSceneLoop(scene, { ...scene.loop, range: endMs !== undefined ? { startMs, endMs } : { startMs } });
-  });
-  const rangeEndField = createStreamDetailField('Loop range end (ms)', rangeEnd);
+  let preloadField: PreloadToggleField;
+  let leadField: HTMLElement;
+  const syncPreloadControls = (preload: PersistedSceneConfig['preload']) => {
+    preloadField.sync(preload.enabled, editsDisabled);
+    setDraggableNumberFieldDisabled(leadField, editsDisabled || !preload.enabled);
+  };
 
-  const preloadField = createPreloadToggleField(scene, preloadEnabled, editsDisabled);
+  preloadField = createPreloadToggleField(draftScene.preload.enabled, (enabled) => {
+    const preload = { enabled, leadTimeMs: draftScene.preload.leadTimeMs };
+    patchScene({ preload });
+    syncPreloadControls(preload);
+  }, editsDisabled);
 
-  const leadInput = document.createElement('input');
-  leadInput.type = 'number';
-  leadInput.min = '0';
-  leadInput.step = '100';
-  leadInput.className = 'label-input';
-  leadInput.value = String(scene.preload.leadTimeMs ?? 0);
-  leadInput.disabled = editsDisabled || !preloadEnabled;
-  leadInput.addEventListener('change', () => {
-    const leadTimeMs = Math.max(0, Number(leadInput.value) || 0);
-    void window.xtream.stream.edit({
-      type: 'update-scene',
-      sceneId: scene.id,
-      update: { preload: { enabled: true, leadTimeMs } },
-    });
-  });
-  const leadField = createStreamDetailField('Preload lead time (ms)', leadInput);
+  leadField = createDraggableNumberField('Lead time', draftScene.preload.leadTimeMs ?? 0, (value) => {
+    const leadTimeMs = Math.max(0, Math.round(value ?? 0));
+    const preload = { enabled: true, leadTimeMs };
+    patchScene({ preload });
+    syncPreloadControls(preload);
+  }, { min: 0, step: 100, dragStep: 5, integer: true, disabled: editsDisabled || !draftScene.preload.enabled, placeholder: '0' });
 
-  const fields = createSubCueFieldGrid(iterations, rangeStartField, rangeEndField, preloadField, leadField);
+  const fields = createSubCueFieldGrid(iterations, rangeField, preloadField, leadField);
   controls.append(fields);
   return controls;
 }

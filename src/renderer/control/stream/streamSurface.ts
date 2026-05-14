@@ -36,6 +36,7 @@ import { createStreamDetailOverlay } from './streamDetailOverlay';
 import { createGlobalStreamPlayCommand, deriveStreamTransportUiState, renderStreamHeader, syncStreamHeaderRuntime } from './streamHeader';
 import { syncStreamFlowModeRuntimeChrome } from './flowMode';
 import { syncStreamGanttRuntimeChrome } from './ganttMode';
+import { syncDisplayWindowGanttRuntimeChrome } from './displayWindowGantt';
 import { syncOutputBusGanttRuntimeChrome } from './outputBusGantt';
 import type { SceneEditSelection, StreamSurfaceController, StreamSurfaceOptions, StreamSurfaceRefs } from './streamTypes';
 import { renderStreamWorkspacePane, type StreamWorkspacePaneContext } from './workspacePane';
@@ -268,6 +269,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     syncListRuntimeChrome(requireRef('workspace'), streamState, currentState);
     syncStreamFlowModeRuntimeChrome(requireRef('workspace'), streamState, currentState, playbackFocusSceneId, sceneEditSceneId);
     syncStreamGanttRuntimeChrome(requireRef('workspace'), streamState);
+    syncDisplayWindowGanttRuntimeChrome(requireRef('bottom'), { streamState, directorState: currentState });
     syncOutputBusGanttRuntimeChrome(requireRef('bottom'), { streamState, directorState: currentState });
     syncWorkspaceSceneSelection(requireRef('workspace'), playbackFocusSceneId, sceneEditSceneId);
     syncSceneEditRunningLock();
@@ -402,9 +404,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
       });
     });
     // Guard the scene-edit bottom pane against rebuilds briefly after a pointer gesture.
-    // This prevents the Loop toggle (and other buttons) from triggering a full form redraw
-    // mid-click: the async IPC stream-state update arrives within the guard window and is
-    // skipped; the form rebuilds once the panel is idle.
+    // This keeps async IPC stream-state updates from replacing focused controls mid-click.
     // 30 ms is imperceptible to the user but safely outlasts a local IPC round-trip (~5–15 ms).
     installInteractionLock(shell.bottom);
     shell.bottom.addEventListener('pointerup', () => {
@@ -802,6 +802,15 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
               degradationReason: d.degradationReason,
               layout: d.layout,
               visualMingle: state.displayVisualMingle?.[dp.id],
+              streamDisplayGantt: createStructuralStreamRenderModel(streamState),
+              streamDisplayGanttVisuals: Object.values(state.visuals).map((visual) => ({
+                id: visual.id,
+                label: visual.label,
+                kind: visual.kind,
+                type: visual.type,
+                durationSeconds: visual.durationSeconds,
+                playbackRate: visual.playbackRate,
+              })),
             }
           : null,
       });

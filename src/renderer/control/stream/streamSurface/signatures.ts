@@ -69,13 +69,18 @@ export function createStructuralStreamRenderModel(state: StreamEnginePublicState
   };
 }
 
+type StreamContentRenderOptions = {
+  omitAudioTimingEditorFields: boolean;
+  omitScenePlaybackControls?: boolean;
+};
+
 function createStreamContentRenderModel(stream: PersistedStreamConfig): unknown {
   return createStreamContentRenderModelWithOptions(stream, { omitAudioTimingEditorFields: false });
 }
 
 function createStreamContentRenderModelWithOptions(
   stream: PersistedStreamConfig,
-  options: { omitAudioTimingEditorFields: boolean },
+  options: StreamContentRenderOptions,
 ): unknown {
   const { flowViewport: _flowViewport, scenes, ...rest } = stream;
   return {
@@ -88,10 +93,13 @@ function createStreamContentRenderModelWithOptions(
   };
 }
 
-function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { omitAudioTimingEditorFields: boolean }): unknown {
+function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: StreamContentRenderOptions): unknown {
   const { flow: _flow, subCues, ...sceneWithoutFlow } = scene;
+  const sceneForSignature = options.omitScenePlaybackControls
+    ? stripScenePlaybackControls(sceneWithoutFlow)
+    : sceneWithoutFlow;
   return {
-    ...sceneWithoutFlow,
+    ...sceneForSignature,
     subCues: Object.fromEntries(
       Object.entries(subCues).map(([id, subCue]) => {
         if (subCue.kind === 'visual' && options.omitAudioTimingEditorFields) {
@@ -148,6 +156,11 @@ function stableSceneForRenderSignature(scene: PersistedSceneConfig, options: { o
       }),
     ),
   };
+}
+
+function stripScenePlaybackControls(scene: Omit<PersistedSceneConfig, 'flow' | 'subCues'>): Omit<PersistedSceneConfig, 'flow' | 'subCues' | 'loop' | 'preload'> {
+  const { loop: _loop, preload: _preload, ...rest } = scene;
+  return rest;
 }
 
 function createStableTimelineRenderModel(timeline: StreamEnginePublicState['playbackTimeline']): unknown {
@@ -233,7 +246,10 @@ export function createSceneEditRenderModel(params: {
   const scene = params.sceneEditSceneId ? stream.scenes[params.sceneEditSceneId] : undefined;
   const includeSceneMiniGanttTiming = params.sceneEditSelection?.kind === 'scene';
   return {
-    stream: createStreamContentRenderModelWithOptions(stream, { omitAudioTimingEditorFields: true }),
+    stream: createStreamContentRenderModelWithOptions(stream, {
+      omitAudioTimingEditorFields: true,
+      omitScenePlaybackControls: true,
+    }),
     validationMessages: params.streamState.validationMessages,
     selectedSceneRunning: params.selectedSceneRunning,
     selectedSceneMiniGantt: includeSceneMiniGanttTiming && scene ? createSceneMiniGanttRenderModel(scene, params.currentState) : undefined,

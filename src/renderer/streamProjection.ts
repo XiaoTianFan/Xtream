@@ -70,6 +70,16 @@ export type StreamDisplayFrame = {
   zones: StreamDisplayZoneFrame[];
 };
 
+export type StreamDisplayLayerOrder = {
+  layerId: string;
+  absoluteStartMs: number;
+  timelineOrderIndex: number;
+  threadOrderIndex: number;
+  runtimeInstanceId?: string;
+  sceneOrderIndex: number;
+  subCueOrderIndex: number;
+};
+
 const DEFAULT_VISUAL_MINGLE_SETTINGS: Required<VisualMingleSettings> = {
   mode: 'prioritize-latest',
   algorithm: 'latest',
@@ -157,7 +167,7 @@ function runtimeTimelineSort(streamState: StreamEnginePublicState, cue: StreamRu
   };
 }
 
-function compareDisplayLayers(left: StreamDisplayLayer, right: StreamDisplayLayer): number {
+export function compareStreamDisplayLayerOrder(left: StreamDisplayLayerOrder, right: StreamDisplayLayerOrder): number {
   return (
     left.absoluteStartMs - right.absoluteStartMs ||
     left.timelineOrderIndex - right.timelineOrderIndex ||
@@ -167,6 +177,31 @@ function compareDisplayLayers(left: StreamDisplayLayer, right: StreamDisplayLaye
     left.subCueOrderIndex - right.subCueOrderIndex ||
     left.layerId.localeCompare(right.layerId)
   );
+}
+
+function compareDisplayLayers(left: StreamDisplayLayer, right: StreamDisplayLayer): number {
+  return compareStreamDisplayLayerOrder(left, right);
+}
+
+export function selectRenderableStreamDisplayLayerIds<T extends StreamDisplayLayerOrder>(
+  layers: T[],
+  settings: Required<VisualMingleSettings>,
+  currentMs: number,
+): Set<string> {
+  if (settings.mode === 'layered') {
+    return new Set(layers.map((layer) => layer.layerId));
+  }
+  const latest = layers[layers.length - 1];
+  if (!latest) {
+    return new Set();
+  }
+  const transitionMs = settings.defaultTransitionMs;
+  if (transitionMs <= 0 || layers.length === 1) {
+    return new Set([latest.layerId]);
+  }
+  const previous = layers[layers.length - 2];
+  const progress = Math.max(0, Math.min(1, (currentMs - latest.absoluteStartMs) / transitionMs));
+  return new Set([latest.layerId, ...(previous && progress < 1 ? [previous.layerId] : [])]);
 }
 
 function createStreamVisualLayer(args: {
@@ -246,16 +281,18 @@ function selectZoneLayers(
   settings: Required<VisualMingleSettings>,
   currentMs: number,
 ): StreamDisplayLayer[] {
-  if (settings.mode === 'layered') {
-    return layers.map((layer) => ({ ...layer, selected: true }));
-  }
   const latest = layers[layers.length - 1];
-  if (!latest) {
-    return [];
-  }
+  const selectedLayerIds = selectRenderableStreamDisplayLayerIds(layers, settings, currentMs);
   const transitionMs = settings.defaultTransitionMs;
+  if (settings.mode === 'layered' || !latest) {
+    return layers.map((layer) => ({ ...layer, selected: selectedLayerIds.has(layer.layerId) }));
+  }
   if (transitionMs <= 0 || layers.length === 1) {
-    return layers.map((layer) => ({ ...layer, selected: layer.layerId === latest.layerId, opacity: layer.layerId === latest.layerId ? layer.opacity : 0 }));
+    return layers.map((layer) => ({
+      ...layer,
+      selected: selectedLayerIds.has(layer.layerId),
+      opacity: selectedLayerIds.has(layer.layerId) ? layer.opacity : 0,
+    }));
   }
   const previous = layers[layers.length - 2];
   const progress = Math.max(0, Math.min(1, (currentMs - latest.absoluteStartMs) / transitionMs));
