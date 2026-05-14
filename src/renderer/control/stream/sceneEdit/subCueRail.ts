@@ -9,7 +9,6 @@ import type {
   StreamEnginePublicState,
   SubCueId,
 } from '../../../../shared/types';
-import { clearTimingLinksForRemovedSubCue } from '../../../../shared/subCueTimingLink';
 import { createButton } from '../../shared/dom';
 import { decorateIconButton } from '../../shared/icons';
 import { formatSubCueLabel } from '../formatting';
@@ -17,6 +16,7 @@ import type { SceneEditSelection } from '../streamTypes';
 import { resolveEmbeddedAudioSourceForVideo } from './embeddedVisualAudio';
 import { buildDefaultAudioSubCue, buildDefaultControlSubCue, buildDefaultVisualSubCue } from './subCueDefaults';
 import { createNewSubCueId } from './subCueIds';
+import { createRemoveSubCuePatch } from './subCueRemoval';
 
 export type SubCueRailDeps = {
   stream: PersistedStreamConfig;
@@ -28,6 +28,7 @@ export type SubCueRailDeps = {
   getDirectorState: () => DirectorState | undefined;
   renderDirectorState: (state: DirectorState) => void;
   requestRender: () => void;
+  removeSubCue?: (subCueId: SubCueId) => void;
   authoringSceneHasError?: boolean;
   authoringSubCueIdsWithError?: ReadonlySet<SubCueId>;
 };
@@ -43,6 +44,7 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
     getDirectorState,
     renderDirectorState,
     requestRender,
+    removeSubCue: removeSubCueOverride,
     authoringSceneHasError = false,
     authoringSubCueIdsWithError,
   } = deps;
@@ -281,12 +283,15 @@ export function createSubCueRail(deps: SubCueRailDeps): HTMLElement {
   rail.append(railHeader, listEl, dropLine);
 
   function removeSubCue(id: SubCueId): void {
-    const order = scene.subCueOrder.filter((sid) => sid !== id);
-    const subCues = clearTimingLinksForRemovedSubCue(scene, id);
+    if (removeSubCueOverride) {
+      removeSubCueOverride(id);
+      return;
+    }
+    const update = createRemoveSubCuePatch(scene, id);
     if (sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === id) {
       setSceneEditSelection({ kind: 'scene' });
     }
-    void patchScene({ subCueOrder: order, subCues }).then(() => requestRender());
+    void patchScene(update).then(() => requestRender());
   }
 
   async function addCue(kind: 'audio' | 'visual' | 'control'): Promise<void> {

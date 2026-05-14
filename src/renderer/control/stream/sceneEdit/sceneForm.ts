@@ -1,29 +1,35 @@
 import { resolveFollowsSceneId } from '../../../../shared/streamSchedule';
 import type {
+  DirectorState,
   PersistedSceneConfig,
   PersistedStreamConfig,
   SceneId,
-  SceneLoopPolicy,
   SceneTrigger,
+  SubCueId,
 } from '../../../../shared/types';
 import { createButton, createHint, createSelect } from '../../shared/dom';
 import { createStreamDetailField, createStreamDetailLine } from '../streamDom';
 import {
   createSubCueFieldGrid,
   createSubCueSection,
-  createSubCueToggleButton,
-  createSubCueToggleRow,
 } from './subCueFormControls';
+import { createSceneMiniGantt } from './sceneMiniGantt';
 
 export type SceneFormDeps = {
   stream: PersistedStreamConfig;
   scene: PersistedSceneConfig;
+  currentState?: DirectorState;
+  removeSubCue?: (subCueId: SubCueId) => void;
+  requestRender?: () => void;
+  editsDisabled?: boolean;
   duplicateScene: (sceneId: SceneId) => void;
   removeScene: (sceneId: SceneId) => void;
 };
 
 export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
-  const { stream, scene, duplicateScene, removeScene } = deps;
+  const { stream, scene, currentState, duplicateScene, removeScene, editsDisabled = false } = deps;
+  const requestRender = deps.requestRender ?? (() => undefined);
+  const removeSubCue = deps.removeSubCue ?? (() => undefined);
   const form = document.createElement('div');
   form.className = 'detail-card stream-scene-form';
 
@@ -230,136 +236,16 @@ export function createStreamSceneForm(deps: SceneFormDeps): HTMLElement {
     ),
   );
 
-  const loopDetail = document.createElement('div');
-  loopDetail.className = 'stream-scene-form-row stream-scene-loop-detail';
-  loopDetail.hidden = !scene.loop.enabled;
-  if (scene.loop.enabled) {
-    const iterTypeSelect = createSelect(
-      'Loop iterations',
-      [
-        ['count', 'Count'],
-        ['infinite', 'Infinite'],
-      ],
-      scene.loop.iterations.type,
-      (value) => {
-        if (!scene.loop.enabled) {
-          return;
-        }
-        const iterations =
-          value === 'infinite' ? ({ type: 'infinite' } as const) : { type: 'count' as const, count: scene.loop.iterations.type === 'count' ? scene.loop.iterations.count : 1 };
-        void window.xtream.stream.edit({
-          type: 'update-scene',
-          sceneId: scene.id,
-          update: { loop: { ...scene.loop, iterations } },
-        });
-      },
-    );
-    loopDetail.append(iterTypeSelect);
-
-    if (scene.loop.iterations.type === 'count') {
-      const countInput = document.createElement('input');
-      countInput.type = 'number';
-      countInput.min = '1';
-      countInput.step = '1';
-      countInput.className = 'label-input';
-      countInput.value = String(scene.loop.iterations.count);
-      countInput.addEventListener('change', () => {
-        if (!scene.loop.enabled || scene.loop.iterations.type !== 'count') {
-          return;
-        }
-        const c = Math.max(1, Math.floor(Number(countInput.value) || 1));
-        void window.xtream.stream.edit({
-          type: 'update-scene',
-          sceneId: scene.id,
-          update: { loop: { ...scene.loop, iterations: { type: 'count', count: c } } },
-        });
-      });
-      loopDetail.append(createStreamDetailField('Loop count', countInput));
-    }
-
-    const rangeStart = document.createElement('input');
-    rangeStart.type = 'number';
-    rangeStart.min = '0';
-    rangeStart.step = '100';
-    rangeStart.className = 'label-input';
-    rangeStart.value = String(scene.loop.range?.startMs ?? 0);
-    rangeStart.addEventListener('change', () => {
-      if (!scene.loop.enabled) {
-        return;
-      }
-      const startMs = Math.max(0, Number(rangeStart.value) || 0);
-      const endMs = scene.loop.range?.endMs;
-      void window.xtream.stream.edit({
-        type: 'update-scene',
-        sceneId: scene.id,
-        update: { loop: { ...scene.loop, range: { startMs, endMs } } },
-      });
-    });
-    loopDetail.append(createStreamDetailField('Loop range start (ms)', rangeStart));
-
-    const rangeEnd = document.createElement('input');
-    rangeEnd.type = 'number';
-    rangeEnd.min = '0';
-    rangeEnd.step = '100';
-    rangeEnd.className = 'label-input';
-    rangeEnd.placeholder = 'optional end';
-    rangeEnd.value = scene.loop.range?.endMs !== undefined ? String(scene.loop.range.endMs) : '';
-    rangeEnd.addEventListener('change', () => {
-      if (!scene.loop.enabled) {
-        return;
-      }
-      const raw = rangeEnd.value.trim();
-      const endMs = raw === '' ? undefined : Math.max(0, Number(raw) || 0);
-      const startMs = scene.loop.range?.startMs ?? 0;
-      void window.xtream.stream.edit({
-        type: 'update-scene',
-        sceneId: scene.id,
-        update: { loop: { ...scene.loop, range: endMs !== undefined ? { startMs, endMs } : { startMs } } },
-      });
-    });
-    loopDetail.append(createStreamDetailField('Loop range end (ms)', rangeEnd));
-  }
-
-  const leadWrap = document.createElement('div');
-  leadWrap.className = 'stream-scene-form-row';
-  leadWrap.hidden = !scene.preload.enabled;
-  const leadInput = document.createElement('input');
-  leadInput.type = 'number';
-  leadInput.min = '0';
-  leadInput.step = '100';
-  leadInput.className = 'label-input';
-  leadInput.value = String(scene.preload.leadTimeMs ?? 0);
-  leadInput.addEventListener('change', () => {
-    const ms = Math.max(0, Number(leadInput.value) || 0);
-    void window.xtream.stream.edit({
-      type: 'update-scene',
-      sceneId: scene.id,
-      update: { preload: { enabled: true, leadTimeMs: ms } },
-    });
-  });
-  leadWrap.append(createStreamDetailField('Preload lead time (ms)', leadInput));
-
   form.append(
     createSubCueSection(
       'Playback',
-      createSubCueToggleRow(
-        createSubCueToggleButton('Scene loop', scene.loop.enabled, (enabled) => {
-          const next: SceneLoopPolicy = enabled
-            ? scene.loop.enabled
-              ? scene.loop
-              : { enabled: true, iterations: { type: 'count', count: 1 } }
-            : { enabled: false };
-          void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop: next } });
-        }),
-        createSubCueToggleButton('Preload', scene.preload.enabled, (enabled) =>
-          void window.xtream.stream.edit({
-            type: 'update-scene',
-            sceneId: scene.id,
-            update: { preload: { enabled, leadTimeMs: scene.preload.leadTimeMs } },
-          }),
-        ),
-      ),
-      createSubCueFieldGrid(loopDetail, leadWrap),
+      createSceneMiniGantt({
+        scene,
+        currentState,
+        removeSubCue,
+        requestRender,
+        editsDisabled,
+      }),
     ),
   );
 

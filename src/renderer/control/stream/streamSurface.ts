@@ -849,6 +849,7 @@ export function createStreamSurfaceController(options: StreamSurfaceOptions): St
     return createSceneEditRenderModelSignature({
       streamState: streamState!,
       sceneEditSceneId,
+      sceneEditSelection,
       currentState,
       selectedSceneRunning: isSelectedSceneRunning(),
     });

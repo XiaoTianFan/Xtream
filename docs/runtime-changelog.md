@@ -167,3 +167,4 @@
 - Added global audio mute and display blackout controls for live operation. These are session controls and are intentionally not saved into show files.
 - Added runtime-version reporting to diagnostics alongside the packaged app version.
 - Added automatic embedded-audio source creation when imported videos report an embedded audio track.
+

@@ -821,7 +821,6 @@ Add diagnostics for:
 - Unauthorized connection attempts.
 - Remote render target unavailable.
 - Stream-host renderer not ready.
-- Remote render target unavailable.
 - Display published but missing from the current show/session.
 - Client count over limit.
 
@@ -1198,7 +1197,7 @@ Acceptance:
 
 ## Risks and mitigations
 
-### Capture reliability
+### Remote render reliability
 
 Risk:
 

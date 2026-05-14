@@ -225,28 +225,101 @@ export function createStreamSurfaceRenderSignature(params: {
 export function createSceneEditRenderModel(params: {
   streamState: StreamEnginePublicState;
   sceneEditSceneId: SceneId | undefined;
+  sceneEditSelection?: SceneEditSelection;
   currentState: DirectorState | undefined;
   selectedSceneRunning: boolean;
 }): unknown {
   const stream = params.streamState.stream;
   const scene = params.sceneEditSceneId ? stream.scenes[params.sceneEditSceneId] : undefined;
+  const includeSceneMiniGanttTiming = params.sceneEditSelection?.kind === 'scene';
   return {
     stream: createStreamContentRenderModelWithOptions(stream, { omitAudioTimingEditorFields: true }),
     validationMessages: params.streamState.validationMessages,
     selectedSceneRunning: params.selectedSceneRunning,
+    selectedSceneMiniGantt: includeSceneMiniGanttTiming && scene ? createSceneMiniGanttRenderModel(scene, params.currentState) : undefined,
     media: params.currentState
       ? {
           visuals: Object.values(params.currentState.visuals)
             .filter((visual) => !isStreamRuntimeVisualId(visual.id))
-            .map((visual) => ({ id: visual.id, label: visual.label, kind: visual.kind, type: visual.type })),
+            .map((visual) => ({
+              id: visual.id,
+              label: visual.label,
+              kind: visual.kind,
+              type: visual.type,
+              durationSeconds: includeSceneMiniGanttTiming ? visual.durationSeconds : undefined,
+              playbackRate: includeSceneMiniGanttTiming ? visual.playbackRate : undefined,
+            })),
           audioSources: Object.values(params.currentState.audioSources)
             .filter((source) => !isStreamRuntimeAudioSourceId(source.id))
-            .map((source) => ({ id: source.id, label: source.label, type: source.type })),
+            .map((source) => ({
+              id: source.id,
+              label: source.label,
+              type: source.type,
+              durationSeconds: includeSceneMiniGanttTiming ? source.durationSeconds : undefined,
+              playbackRate: includeSceneMiniGanttTiming ? source.playbackRate : undefined,
+            })),
           outputs: Object.values(params.currentState.outputs).map((output) => ({ id: output.id, label: output.label })),
           displays: Object.values(params.currentState.displays).map((display) => ({ id: display.id, label: display.label, layout: display.layout })),
         }
       : undefined,
     selectedScene: scene?.id,
+  };
+}
+
+function createSceneMiniGanttRenderModel(scene: PersistedSceneConfig, currentState: DirectorState | undefined): unknown {
+  return {
+    subCueOrder: scene.subCueOrder,
+    subCues: scene.subCueOrder.map((subCueId) => {
+      const subCue = scene.subCues[subCueId];
+      if (!subCue) {
+        return { id: subCueId, missing: true };
+      }
+      if (subCue.kind === 'audio') {
+        const source = currentState?.audioSources[subCue.audioSourceId];
+        return {
+          id: subCueId,
+          kind: subCue.kind,
+          audioSourceId: subCue.audioSourceId,
+          startOffsetMs: subCue.startOffsetMs,
+          sourceStartMs: subCue.sourceStartMs,
+          sourceEndMs: subCue.sourceEndMs,
+          durationOverrideMs: subCue.durationOverrideMs,
+          pass: subCue.pass,
+          innerLoop: subCue.innerLoop,
+          loop: subCue.loop,
+          playbackRate: subCue.playbackRate,
+          sourceDurationSeconds: source?.durationSeconds,
+          sourcePlaybackRate: source?.playbackRate,
+        };
+      }
+      if (subCue.kind === 'visual') {
+        const visual = currentState?.visuals[subCue.visualId];
+        return {
+          id: subCueId,
+          kind: subCue.kind,
+          visualId: subCue.visualId,
+          startOffsetMs: subCue.startOffsetMs,
+          sourceStartMs: subCue.sourceStartMs,
+          sourceEndMs: subCue.sourceEndMs,
+          durationOverrideMs: subCue.durationOverrideMs,
+          pass: subCue.pass,
+          innerLoop: subCue.innerLoop,
+          loop: subCue.loop,
+          playbackRate: subCue.playbackRate,
+          visualDurationSeconds: visual?.durationSeconds,
+          visualPlaybackRate: visual?.playbackRate,
+          visualKind: visual?.kind,
+          visualType: visual?.type,
+        };
+      }
+      return {
+        id: subCueId,
+        kind: subCue.kind,
+        startOffsetMs: subCue.startOffsetMs,
+        durationOverrideMs: subCue.durationOverrideMs,
+        action: subCue.action,
+      };
+    }),
   };
 }
 

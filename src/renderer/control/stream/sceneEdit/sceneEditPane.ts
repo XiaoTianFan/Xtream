@@ -23,6 +23,7 @@ import { createAudioSubCueForm } from './audioSubCueForm';
 import { createControlSubCueForm } from './controlSubCueForm';
 import { createStreamSceneForm } from './sceneForm';
 import { createSubCueRail, type SubCueRailDeps } from './subCueRail';
+import { createRemoveSubCuePatch } from './subCueRemoval';
 import { createVisualSubCueForm } from './visualSubCueForm';
 
 export type SceneEditPaneDeps = SubCueRailDeps & {
@@ -79,13 +80,25 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     requestRender,
     authoringSceneHasError,
     authoringSubCueIdsWithError,
+    removeSubCue,
   });
 
   const detail = document.createElement('div');
   detail.className = 'stream-scene-edit-detail';
 
   if (sceneEditSelection.kind === 'scene') {
-    detail.append(createStreamSceneForm({ stream, scene, duplicateScene, removeScene }));
+    detail.append(
+      createStreamSceneForm({
+        stream,
+        scene,
+        currentState,
+        duplicateScene,
+        removeScene,
+        removeSubCue,
+        requestRender,
+        editsDisabled: isSceneRunning,
+      }),
+    );
   } else {
     const sid = sceneEditSelection.subCueId;
     const sub = scene.subCues[sid];
@@ -213,12 +226,23 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     draftSubCues = nextSubCues;
     void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { subCues: nextSubCues } });
   }
+
+  function removeSubCue(subCueId: SubCueId): void {
+    const update = createRemoveSubCuePatch(scene, subCueId);
+    if (sceneEditSelection.kind === 'subcue' && sceneEditSelection.subCueId === subCueId) {
+      setSceneEditSelection({ kind: 'scene' });
+    }
+    void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update }).then(() => requestRender());
+  }
 }
 
 function disableEditControls(root: HTMLElement): void {
   for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(
     'input, select, textarea, button',
   )) {
+    if (control.closest('.stream-scene-mini-gantt-toolbar')) {
+      continue;
+    }
     control.disabled = true;
   }
 }
