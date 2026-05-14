@@ -1,5 +1,13 @@
 # Xtream Runtime Changelog
 
+## v0.2.5
+
+- **See sub-cue timing while editing a scene:** The scene edit pane now includes a mini Gantt chart, giving operators a compact timeline view of audio and visual sub-cues without leaving the editor.
+- **Adjust sub-cue loop ranges more directly:** Scene editing adds clearer loop range controls, including compact infinite-loop handling, so repeated media can be tuned from the same timing surface used for reviewing the cue.
+- **Remove sub-cues from the scene editor:** Sub-cues can now be removed from the editing flow more directly, making cleanup faster when rebuilding a scene's audio or visual layers.
+- **Clearer preload and loop presentation:** Loop and preload controls in the scene editor and display detail surfaces have been tightened up visually, with steadier layout and more consistent behavior while editing.
+- **More reliable mini timeline behavior:** The mini Gantt projection and DOM behavior now have broader test coverage, improving confidence that sub-cue layout, loop ranges, and display detail timing stay aligned as scenes change.
+
 ## v0.2.4
 
 - **Link audio and visual timing while editing:** Audio and visual sub-cues can now keep their timing connected from the cue editors, making it easier to keep paired sound and picture changes synchronized without re-entering the same values twice.
@@ -167,4 +175,3 @@
 - Added global audio mute and display blackout controls for live operation. These are session controls and are intentionally not saved into show files.
 - Added runtime-version reporting to diagnostics alongside the packaged app version.
 - Added automatic embedded-audio source creation when imported videos report an embedded audio track.
-

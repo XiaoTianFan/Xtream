@@ -18,6 +18,14 @@ This nightly documentation version completes the first user-facing guide set:
 
 ## Runtime Highlights
 
+### v0.2.5
+
+- See audio and visual sub-cue timing in a mini Gantt chart while editing a scene.
+- Adjust loop ranges, including infinite-loop behavior, from the scene editing surface.
+- Remove sub-cues more directly while rebuilding a scene.
+- Review loop and preload controls with clearer, steadier layout.
+- Keep mini timeline and display-detail timing behavior better covered by tests.
+
 ### v0.2.4
 
 - Link audio and visual sub-cue timing while editing.
