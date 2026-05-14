@@ -1038,8 +1038,9 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 }
 
 .stream-scene-mini-gantt-root {
+  position: relative;
   display: grid;
-  grid-template-rows: auto minmax(7.5rem, auto) auto;
+  grid-template-rows: minmax(7.5rem, auto) auto;
   min-width: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 84%, transparent);
@@ -1047,32 +1048,16 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
   background: var(--surface-low);
 }
 
-.stream-scene-mini-gantt-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--compact);
-  min-width: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 0.32rem 0.42rem;
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-}
-
-.stream-scene-mini-gantt-toolbar h3 {
-  min-width: 0;
-  overflow: hidden;
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 0.72rem;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stream-scene-mini-gantt-toolbar .icon-button {
+.stream-scene-mini-gantt-fit-button.icon-button {
+  position: absolute;
+  top: 0.42rem;
+  right: 0.42rem;
+  z-index: 5;
   width: 1.45rem;
   min-width: 1.45rem;
   height: 1.45rem;
+  border-color: color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
   padding: 0;
 }
 
@@ -1237,6 +1222,20 @@ html[data-theme="light"] .stream-visual-preview-lane-status {
 .stream-scene-mini-gantt-controls .stream-subcue-field-grid {
   grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
   gap: 0.45rem;
+}
+
+.stream-scene-mini-gantt-preload-field {
+  display: flex;
+  align-items: end;
+  min-width: 0;
+}
+
+.stream-scene-mini-gantt-preload-field .stream-subcue-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2rem;
+  justify-content: center;
 }
 
 .stream-subcue-fade-group {

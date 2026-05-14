@@ -74,11 +74,40 @@ describe('createSceneMiniGantt', () => {
     expect(root.querySelector<HTMLElement>('.stream-scene-mini-gantt-bar')?.style.left).toBe('0.000%');
     expect(root.querySelector<HTMLElement>('.stream-scene-mini-gantt-bar')?.style.width).toBe('50.000%');
 
-    expect(root.querySelector<HTMLButtonElement>('.stream-subcue-toggle')?.textContent).toBe('Scene loop');
-    expect(fieldControl(root, 'Loop iterations').disabled).toBe(true);
-    expect(fieldControl(root, 'Loop count').disabled).toBe(true);
+    expect(root.textContent).not.toContain('Scene Timeline');
+    expect(root.querySelector<HTMLButtonElement>('.stream-subcue-toggle')?.textContent).toBe('Preload');
+    expect(fieldControl(root, 'Loop iterations').disabled).toBe(false);
+    expect((fieldControl(root, 'Loop iterations') as HTMLInputElement).value).toBe('0');
     expect(fieldControl(root, 'Loop range start').disabled).toBe(true);
     expect(fieldControl(root, 'Preload lead time').disabled).toBe(true);
+  });
+
+  it('uses the compact infinity-number control for scene loop iterations', () => {
+    const root = createSceneMiniGantt({
+      scene: scene(),
+      currentState: director(),
+      removeSubCue: vi.fn(),
+      requestRender: vi.fn(),
+    });
+
+    const loopInput = fieldControl(root, 'Loop iterations') as HTMLInputElement;
+    loopInput.value = '3';
+    loopInput.dispatchEvent(new Event('change'));
+
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { loop: { enabled: true, iterations: { type: 'count', count: 3 } } },
+    });
+
+    vi.mocked(window.xtream.stream.edit).mockClear();
+    root.querySelector<HTMLButtonElement>('[aria-label="Loop iterations infinity"]')?.click();
+
+    expect(window.xtream.stream.edit).toHaveBeenCalledWith({
+      type: 'update-scene',
+      sceneId: 'scene-a',
+      update: { loop: { enabled: true, iterations: { type: 'infinite' } } },
+    });
   });
 
   it('zooms and fits the scene mini-Gantt track', () => {

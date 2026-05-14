@@ -116,8 +116,6 @@ export function createSceneEditPane(deps: SceneEditPaneDeps): HTMLElement {
     } else if (sub.kind === 'visual') {
       detail.append(
         createVisualSubCueForm({
-          sceneId: scene.id,
-          subCueId: sid,
           sub,
           currentState,
           patchSubCue: (update) => patchSubCueWithTimingLink(sid, update),
@@ -240,7 +238,7 @@ function disableEditControls(root: HTMLElement): void {
   for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(
     'input, select, textarea, button',
   )) {
-    if (control.closest('.stream-scene-mini-gantt-toolbar')) {
+    if (control.classList.contains('stream-scene-mini-gantt-fit-button')) {
       continue;
     }
     control.disabled = true;

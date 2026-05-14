@@ -1,12 +1,12 @@
 import type { DirectorState, PersistedSceneConfig, SceneLoopPolicy, SubCueId } from '../../../../shared/types';
-import { createButton, createSelect } from '../../shared/dom';
+import { createButton } from '../../shared/dom';
 import { decorateIconButton } from '../../shared/icons';
 import { createStreamDetailField } from '../streamDom';
 import {
   createSubCueFieldGrid,
   createSubCueToggleButton,
-  createSubCueToggleRow,
 } from './subCueFormControls';
+import { createInfinityNumberToggle, type InfinityNumberValue } from './infinityNumberControl';
 import { deriveSceneMiniGanttProjection, type SceneMiniGanttProjection, type SceneMiniGanttRowProjection } from './sceneMiniGanttProjection';
 
 export type SceneMiniGanttDeps = {
@@ -49,16 +49,6 @@ function clampZoom(value: number, minZoom = MIN_SCENE_MINI_GANTT_ZOOM): number {
 
 function px(value: number): string {
   return `${Math.round(value)}px`;
-}
-
-function selectControl(wrapper: HTMLElement): HTMLSelectElement | undefined {
-  return wrapper.querySelector('select') ?? undefined;
-}
-
-function setDisabled(control: HTMLElement, disabled: boolean): void {
-  for (const el of control.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input, select, button')) {
-    el.disabled = disabled;
-  }
 }
 
 function createEmptyState(): HTMLElement {
@@ -262,15 +252,10 @@ function handleWheel(root: HTMLElement, event: WheelEvent): void {
   body.scrollLeft = Math.max(0, logicalX * nextZoom - pointerX);
 }
 
-function createToolbar(root: HTMLElement): HTMLElement {
-  const toolbar = document.createElement('div');
-  toolbar.className = 'stream-scene-mini-gantt-toolbar';
-  const title = document.createElement('h3');
-  title.textContent = 'Scene Timeline';
+function createFitButton(root: HTMLElement): HTMLButtonElement {
   const fit = createButton('', 'icon-button stream-scene-mini-gantt-fit-button', () => fitToContent(root));
   decorateIconButton(fit, 'Maximize2', 'Fit to content');
-  toolbar.append(title, fit);
-  return toolbar;
+  return fit;
 }
 
 function setFitButtonEnabled(root: HTMLElement): void {
@@ -305,26 +290,34 @@ function updateSceneLoop(scene: PersistedSceneConfig, loop: SceneLoopPolicy): vo
   void window.xtream.stream.edit({ type: 'update-scene', sceneId: scene.id, update: { loop } });
 }
 
-function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
-  const { scene, editsDisabled = false } = deps;
-  const controls = document.createElement('div');
-  controls.className = 'stream-scene-mini-gantt-controls';
+function sceneLoopIterationsValue(loop: SceneLoopPolicy): InfinityNumberValue {
+  if (!loop.enabled) {
+    return { type: 'count', count: 0 };
+  }
+  if (loop.iterations.type === 'infinite') {
+    return { type: 'infinite' };
+  }
+  return { type: 'count', count: Math.max(1, Math.round(loop.iterations.count)) };
+}
 
-  const loopEnabled = scene.loop.enabled;
-  const preloadEnabled = scene.preload.enabled;
-  const iterationType = loopEnabled ? scene.loop.iterations.type : 'count';
-  const loopCount = loopEnabled && scene.loop.iterations.type === 'count' ? scene.loop.iterations.count : 1;
+function sceneLoopPatchForIterations(scene: PersistedSceneConfig, value: InfinityNumberValue): SceneLoopPolicy {
+  if (value.type === 'infinite') {
+    return scene.loop.enabled
+      ? { ...scene.loop, iterations: { type: 'infinite' } }
+      : { enabled: true, iterations: { type: 'infinite' } };
+  }
+  const count = Math.max(0, Math.round(value.count));
+  if (count <= 0) {
+    return { enabled: false };
+  }
+  return scene.loop.enabled
+    ? { ...scene.loop, iterations: { type: 'count', count } }
+    : { enabled: true, iterations: { type: 'count', count } };
+}
 
-  const loopToggle = createSubCueToggleButton('Scene loop', loopEnabled, (enabled) => {
-    const next: SceneLoopPolicy = enabled
-      ? scene.loop.enabled
-        ? scene.loop
-        : { enabled: true, iterations: { type: 'count', count: 1 } }
-      : { enabled: false };
-    updateSceneLoop(scene, next);
-  });
-  loopToggle.disabled = editsDisabled;
-
+function createPreloadToggleField(scene: PersistedSceneConfig, preloadEnabled: boolean, editsDisabled: boolean): HTMLElement {
+  const field = document.createElement('div');
+  field.className = 'stream-scene-mini-gantt-preload-field';
   const preloadToggle = createSubCueToggleButton('Preload', preloadEnabled, (enabled) => {
     void window.xtream.stream.edit({
       type: 'update-scene',
@@ -333,42 +326,23 @@ function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
     });
   });
   preloadToggle.disabled = editsDisabled;
+  field.append(preloadToggle);
+  return field;
+}
 
-  const iterTypeSelect = createSelect(
+function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
+  const { scene, editsDisabled = false } = deps;
+  const controls = document.createElement('div');
+  controls.className = 'stream-scene-mini-gantt-controls';
+
+  const loopEnabled = scene.loop.enabled;
+  const preloadEnabled = scene.preload.enabled;
+  const iterations = createInfinityNumberToggle(
     'Loop iterations',
-    [
-      ['count', 'Count'],
-      ['infinite', 'Infinite'],
-    ],
-    iterationType,
-    (value) => {
-      if (!scene.loop.enabled) {
-        return;
-      }
-      const iterations =
-        value === 'infinite'
-          ? ({ type: 'infinite' } as const)
-          : { type: 'count' as const, count: scene.loop.iterations.type === 'count' ? scene.loop.iterations.count : 1 };
-      updateSceneLoop(scene, { ...scene.loop, iterations });
-    },
+    sceneLoopIterationsValue(scene.loop),
+    (value) => updateSceneLoop(scene, sceneLoopPatchForIterations(scene, value)),
+    { min: 0, step: 1, disabled: editsDisabled },
   );
-  selectControl(iterTypeSelect)!.disabled = editsDisabled || !loopEnabled;
-
-  const countInput = document.createElement('input');
-  countInput.type = 'number';
-  countInput.min = '1';
-  countInput.step = '1';
-  countInput.className = 'label-input';
-  countInput.value = String(loopCount);
-  countInput.disabled = editsDisabled || !loopEnabled || iterationType !== 'count';
-  countInput.addEventListener('change', () => {
-    if (!scene.loop.enabled || scene.loop.iterations.type !== 'count') {
-      return;
-    }
-    const count = Math.max(1, Math.floor(Number(countInput.value) || 1));
-    updateSceneLoop(scene, { ...scene.loop, iterations: { type: 'count', count } });
-  });
-  const countField = createStreamDetailField('Loop count', countInput);
 
   const rangeStart = document.createElement('input');
   rangeStart.type = 'number';
@@ -405,6 +379,8 @@ function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
   });
   const rangeEndField = createStreamDetailField('Loop range end (ms)', rangeEnd);
 
+  const preloadField = createPreloadToggleField(scene, preloadEnabled, editsDisabled);
+
   const leadInput = document.createElement('input');
   leadInput.type = 'number';
   leadInput.min = '0';
@@ -422,12 +398,8 @@ function createLoopAndPreloadControls(deps: SceneMiniGanttDeps): HTMLElement {
   });
   const leadField = createStreamDetailField('Preload lead time (ms)', leadInput);
 
-  const toggleRow = createSubCueToggleRow(loopToggle, preloadToggle);
-  const fields = createSubCueFieldGrid(iterTypeSelect, countField, rangeStartField, rangeEndField, leadField);
-  if (editsDisabled) {
-    setDisabled(fields, true);
-  }
-  controls.append(toggleRow, fields);
+  const fields = createSubCueFieldGrid(iterations, rangeStartField, rangeEndField, preloadField, leadField);
+  controls.append(fields);
   return controls;
 }
 
@@ -439,7 +411,7 @@ export function createSceneMiniGantt(deps: SceneMiniGanttDeps): HTMLElement {
   const body = document.createElement('div');
   body.className = 'stream-scene-mini-gantt-body';
   body.addEventListener('wheel', (event) => handleWheel(root, event), { passive: false });
-  root.append(createToolbar(root), body, createLoopAndPreloadControls(deps));
+  root.append(createFitButton(root), body, createLoopAndPreloadControls(deps));
   renderBody(root, deps);
 
   const destroyObserver = new MutationObserver(() => {

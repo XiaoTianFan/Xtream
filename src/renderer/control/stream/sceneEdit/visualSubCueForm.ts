@@ -2,13 +2,10 @@ import type {
   DirectorState,
   PersistedAudioSubCueConfig,
   PersistedVisualSubCueConfig,
-  SceneId,
-  SubCueId,
   VisualDisplayTarget,
   VisualId,
 } from '../../../../shared/types';
 import { createSelect } from '../../shared/dom';
-import { createStreamDetailLine } from '../streamDom';
 import {
   createSubCueEmptyNote,
   createSubCueSection,
@@ -16,8 +13,6 @@ import {
 import { createVisualSubCuePreviewLaneEditor } from './visualSubCuePreviewLaneEditor';
 
 export type VisualSubCueFormDeps = {
-  sceneId: SceneId;
-  subCueId: SubCueId;
   sub: PersistedVisualSubCueConfig;
   currentState: DirectorState;
   patchSubCue: (update: Partial<PersistedVisualSubCueConfig>) => void;
@@ -46,7 +41,7 @@ function targetKey(t: VisualDisplayTarget): string {
 }
 
 export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement {
-  const { sceneId, subCueId, sub, currentState, patchSubCue, timingLink } = deps;
+  const { sub, currentState, patchSubCue, timingLink } = deps;
   const form = document.createElement('div');
   form.className = 'detail-card stream-subcue-form stream-visual-subcue-form';
 
@@ -134,8 +129,6 @@ export function createVisualSubCueForm(deps: VisualSubCueFormDeps): HTMLElement 
       timingLink,
     }),
   );
-
-  form.append(createStreamDetailLine('Sub-cue', `${sceneId} · ${subCueId}`));
 
   return form;
 }
