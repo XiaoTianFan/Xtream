@@ -99,11 +99,13 @@ Relevant constraints:
 - Display slugs are label-derived for readability.
 - Display slugs dynamically update when display labels change.
 - Remote display is visual-only. This includes any visual display output, not only video files. Audio remains intentionally separate.
-- Token-in-URL links are acceptable for the first production release, using a 4-character token.
-- Remote display rendering uses dedicated hidden/offscreen remote render targets, not capture of visible local display windows.
+- Remote display URLs do not include tokens. The first production release uses a viewer PIN login page before WebRTC signaling is allowed.
+- Remote display rendering uses dedicated offscreen-enabled `BrowserWindow` remote render targets, not capture of visible local display windows.
 - Remote display availability must not depend on a local display window being open, visible, unminimized, or sized like the remote client.
 - Each remote display target has an explicit output canvas size/aspect ratio, independent from the local display window size.
-- The server should bind to the local machine IP selected for LAN use. Development builds may also allow localhost.
+- The first production release supports multiple simultaneously published remote displays.
+- Each published display has one canonical server-side output profile at a time. Per-client sizing is handled in the remote browser by fitting the received stream to the client viewport.
+- The server should default to an automatically selected robust LAN IP, preferring the active default-route private IPv4 address on Wi-Fi or Ethernet. Users can override which LAN interface/IP the server exposes to. Development builds may also allow localhost. `GET /health` is localhost-only.
 - The infrastructure must be platform agnostic and target both Windows and macOS.
 - The default remote viewer limit is 2 clients per display, exposed in Config.
 
@@ -159,8 +161,9 @@ Recommended new files:
   - Normalized persisted server settings.
   - Port, host/interface, enabled state, auth mode, display publication defaults, discovery settings.
 - `src/main/localNetwork/auth.ts`
-  - Access token generation/validation.
-  - Optional pairing/PIN flow later.
+  - PIN generation/validation.
+  - Viewer login session issuance/validation.
+  - Optional stronger pairing flow later.
   - Capability checks per request/session.
 - `src/main/localNetwork/routes.ts`
   - Small route matcher.
@@ -173,13 +176,13 @@ Recommended new files:
   - WebRTC signaling.
   - Display stream session lifecycle.
 - `src/main/localNetwork/protocols/remoteDisplayStreamHost.ts`
-  - Main-side management of hidden/offscreen remote render and WebRTC stream-host renderers.
+  - Main-side management of offscreen-enabled `BrowserWindow` remote render and WebRTC stream-host renderers.
   - Maps published display IDs to remote render targets and output profiles.
   - Creates/tears down per-display streaming sources without depending on visible display windows.
-- `src/preload/streamHostPreload.ts` or an extension to current preload
-  - Minimal bridge for the internal stream-host renderer if a separate trusted renderer is used.
+- `src/preload/streamHostPreload.ts`
+  - Dedicated minimal bridge for the internal stream-host renderer.
 - `src/renderer/remote-display-viewer/`
-  - Remote browser viewer page source if built by Vite, or a simple static file emitted with the renderer bundle.
+  - Vite-built remote browser viewer page source.
 - `src/shared/localNetworkTypes.ts`
   - Shared server status, protocol status, publication, client session, and remote display types.
 
@@ -199,7 +202,7 @@ The shared server core should provide these primitives:
   - LAN URL generation.
 - HTTP routing:
   - Static viewer pages.
-  - JSON endpoints for health/status where appropriate.
+  - `GET /health` for localhost-only liveness status.
   - 404/403 handling.
 - WebSocket routing:
   - Upgrade handling.
@@ -207,7 +210,8 @@ The shared server core should provide these primitives:
   - Session creation.
   - Heartbeat/ping timeout.
 - Auth:
-  - Token parsing.
+  - PIN verification for viewer login.
+  - Viewer session validation for signaling.
   - Capability checks.
   - Optional local-only bypass for development.
 - Session registry:
@@ -273,11 +277,13 @@ Recommended app-local config fields:
 ```ts
 export type LocalNetworkServerSettingsV1 = {
   enabled: boolean;
-  host: '127.0.0.1' | 'local-ip' | string;
+  hostMode: 'auto-lan' | 'interface' | 'address' | 'localhost';
+  interfaceId?: string;
+  host?: string;
   port: number;
-  authMode: 'token';
-  /** Hash of the 4-character LAN access token. */
-  accessTokenHash?: string;
+  authMode: 'pin';
+  /** Hash of the LAN viewer PIN. */
+  pinHash?: string;
   allowDiscovery: boolean;
   remoteDisplay: {
     enabled: boolean;
@@ -291,11 +297,10 @@ export type LocalNetworkServerSettingsV1 = {
 export type RemoteDisplayPublicationSettings = {
   published: boolean;
   slug?: string;
-  tokenScope?: 'server' | 'display';
   outputProfileId?: string;
   outputWidth?: number;
   outputHeight?: number;
-  fitMode?: 'contain' | 'cover';
+  defaultViewerFitMode?: 'contain' | 'cover';
 };
 ```
 
@@ -303,9 +308,11 @@ Settled decision:
 
 - Store remote display publication settings app-locally.
 - Do not persist remote display publication in the show file for the first production release.
-- If a display ID from app-local publication settings does not exist in the current show/session, mark it unavailable or prune it through an explicit cleanup path.
+- If a display ID from app-local publication settings does not exist in the current show/session, mark it unavailable. Never auto-prune stale publication records silently; cleanup must be an explicit user action.
+- When a display is explicitly removed, run the removal pipeline in this order: unpublish, remove the app-local publication record, then close affected clients and remote render targets.
 - Because slugs dynamically follow display labels, the app-local record should track whether the current slug is auto-generated. Manual slug editing can be deferred; if added later, manual slugs should stop automatic label syncing.
 - Output size/aspect-ratio settings are app-local remote-output settings. They do not modify the local display window geometry or the show file.
+- Viewer fit mode is a remote-client presentation preference. It controls how the browser fits the received video into its own viewport and does not create a server-side per-client render target.
 
 ## Security model
 
@@ -315,37 +322,40 @@ Minimum security for the first production release:
 
 - Server is disabled by default.
 - User must enable it from Config.
-- Bind to a selected local machine IP for LAN use.
+- Default to automatic LAN binding.
+- Prefer the active default-route private IPv4 address on a Wi-Fi or Ethernet interface.
+- Avoid loopback, link-local, VPN, Docker, virtual machine, and other virtual adapters by default.
+- Allow the user to choose the exact LAN interface/IP from Config, including advanced/manual entries when needed.
 - Allow localhost in development.
-- Generate a random 4-character server access token.
-- Remote display URLs include a token or lead to a token gate.
-- Tokens are capability-scoped.
+- Generate a random LAN viewer PIN.
+- Remote display URLs do not include credentials.
+- The remote viewer page includes a PIN login screen.
+- Successful PIN verification grants a short-lived viewer session scoped to the requested capability.
+- The viewer session credential is not placed in the URL. The viewer uses it for the WebSocket handshake, for example through `Sec-WebSocket-Protocol`, so invalid sessions can be rejected during upgrade.
 - No unauthenticated WebSocket upgrades.
 - Do not expose filesystem paths, show config JSON, raw media files, or control APIs.
 - Log active remote clients in the app.
 - Provide a "Disconnect all clients" action.
 - Stop the server on app quit.
 
-Potential URL forms:
+URL form:
 
 ```txt
-http://192.168.1.20:37680/display/main-stage?t=<token>
 http://192.168.1.20:37680/display/main-stage
 ```
 
-The first is easiest. The second is cleaner if the viewer page prompts for a token and stores it in memory/local storage.
-
 Recommended first production release:
 
-- Use token query params for copyable display URLs.
-- The token is exactly 4 characters. Treat this as a lightweight LAN access code, not a strong internet-facing credential.
+- Use credential-free copyable display URLs.
+- Require the viewer to enter the LAN PIN before signaling starts.
+- Treat the PIN as a lightweight LAN access code, not a strong internet-facing credential.
 - Avoid cookies for now.
-- Add a later pairing flow if remote control surfaces need a better UX.
+- Keep the verified viewer session in memory or browser session storage.
+- Add a stronger pairing flow later if remote control surfaces need a better UX.
 
 Future security additions:
 
-- Pairing PIN.
-- Per-display tokens.
+- Per-display PINs or capability grants.
 - Expiring invite links.
 - QR-code share UI.
 - HTTPS with self-signed/local cert if browser APIs require secure context for future features.
@@ -358,14 +368,33 @@ Discovery is useful later, but it should not block the first production release.
 Options:
 
 - Manual URL copy: first production release.
-- QR code in Config or display detail: easy and useful.
+- QR code in Config or display detail: deferred.
 - mDNS/Bonjour service advertisement: later.
-- SSDP/UPnP: probably unnecessary.
+- SSDP/UPnP: out of scope.
 
 Recommendation:
 
-- Phase 1 uses manual URLs and optional QR display.
+- First production release uses manual URL copy only.
 - Add mDNS only after the server protocol and security model stabilize.
+
+## Network binding policy
+
+Default behavior:
+
+- Use `auto-lan` as the default host mode.
+- Choose an active, non-internal, private IPv4 address that has a default route.
+- Prefer physical Wi-Fi or Ethernet interfaces over VPN, Docker, virtual machine, tunnel, link-local, and loopback interfaces.
+- Prefer stable RFC1918 LAN addresses (`192.168.x.x`, `10.x.x.x`, `172.16.x.x` through `172.31.x.x`) over public, link-local, or IPv6 addresses for the first production release.
+- If multiple good physical LAN candidates exist, prefer the interface currently used for the OS default route. If still tied, prefer Ethernet, then Wi-Fi, then the lowest interface metric when available.
+
+Config behavior:
+
+- Show the automatically selected LAN IP and interface label.
+- Allow the user to override the binding by choosing a specific interface/IP.
+- Keep manual override available for advanced setups such as production VLANs, dedicated show networks, or machines with multiple NICs.
+- Hide or de-emphasize VPN/virtual/link-local adapters by default, but allow showing them through an advanced list.
+- If the selected manual interface disappears, stop accepting new LAN connections, show `no_lan_interface` or `bind_failed`, and let the operator choose another interface. Do not silently expose the server on a different LAN after a manual override.
+- If `auto-lan` loses its selected address, re-evaluate candidates and restart on the best available LAN IP with a visible diagnostics event.
 
 ## Remote display as first use case
 
@@ -388,7 +417,7 @@ Remote display should:
 - Work from phones, tablets, laptops, and other browser-capable devices on the same LAN.
 - Continue rendering when no visible local display window is open.
 - Render at a configured remote output size/aspect ratio independent from local display window geometry.
-- Show a useful waiting/error state if the display is unpublished, missing from the current show/session, the remote render target is offline, or the token is invalid.
+- Show a useful waiting/error state if the display is unpublished, missing from the current show/session, the remote render target is offline, or PIN verification fails.
 - Reconnect if the app restarts the stream host.
 - Avoid exposing controls in the first version.
 
@@ -431,53 +460,65 @@ The corresponding local display window title should include the current remote d
 
 ### Remote display render strategy
 
-Use dedicated hidden/offscreen remote render targets as the production architecture from the beginning.
+Use dedicated offscreen-enabled remote render targets as the production architecture from the beginning.
 
-The remote display protocol should not capture a visible local display `BrowserWindow` or a physical monitor. Instead, each published display gets an internal renderer that subscribes to the same trusted display state as local display windows and renders the final visual composition at a configured remote output size. The stream-host then converts that remote render target into a WebRTC video track for remote viewers.
+The remote display protocol should not capture a visible local display `BrowserWindow` or a physical monitor. Instead, each published display gets an offscreen-enabled Electron `BrowserWindow` renderer that subscribes to the same trusted display state as local display windows and renders the final visual composition at a configured remote output size. The stream-host mirrors those rendered frames into an internal canvas, uses `canvas.captureStream()` to produce a `MediaStream`, and sends that track to remote viewers over WebRTC.
 
 Required behavior:
 
 - Remote display can run even when the matching local display window is closed.
 - Remote output size/aspect ratio is independent from the local display window.
+- Multiple published displays can stream at the same time, each with its own offscreen-enabled render target and source stream.
+- Per-client sizing is delegated to the remote browser viewer. The server sends the canonical display stream; the viewer uses `object-fit: contain` by default, optional `cover`, fullscreen, and CSS sizing to adapt to each device viewport.
+- Live visual sources must either render correctly in the remote render target or report a stable source-specific error. Silent partial rendering is not acceptable.
 - The remote renderer remains the source for WebRTC streaming; the remote browser does not receive show state or raw media paths.
 - The local display window, when open, remains a separate local presentation target.
 - Physical screen capture and visible-window capture are not fallback paths for production.
 
 Recommended implementation:
 
-- Create a hidden Electron `BrowserWindow` or offscreen renderer for remote display rendering.
+- Create one offscreen-enabled Electron `BrowserWindow` for each published display when it is published.
+- Size the remote render `BrowserWindow` to the display's current remote output profile.
 - Reuse the existing display renderer code path as much as possible so DOM/video/image/live-capture behavior stays consistent with local display output.
-- Add a stream-host layer that owns `RTCPeerConnection` instances and uses a rendered source stream from the remote render target.
-- Prefer `canvas.captureStream()` or a hidden renderer capture path that does not depend on OS-level desktop capture permissions.
-- Use offscreen `paint` frames only if the chosen renderer-capture path needs explicit frame transport into a canvas or media encoder.
+- Subscribe to render frames with Electron frame subscription/offscreen rendering APIs.
+- Draw subscribed frames into a stream-host canvas at the output profile size.
+- Produce the WebRTC source with `canvas.captureStream(30)` and feed that `MediaStream` into `RTCPeerConnection`.
+- Do not send raw frames over WebSocket.
+- Keep a purpose-built canvas compositor as future optimization/reliability work only if the offscreen `BrowserWindow` path cannot satisfy production QA.
 
 Rejected strategies:
 
 - Visible display window capture: rejected because it depends on local window existence, size, minimization, occlusion, fullscreen behavior, and platform capture quirks.
 - Physical monitor capture: rejected because it can expose unrelated desktop content and cannot guarantee an Xtream-only remote output.
 - Remote browser reimplementation of `display.html`: rejected because it would expose too much app state/media surface and duplicate trusted Electron rendering behavior.
+- Server-side per-client render sizing: rejected for the first production release because it multiplies renderer/encoder load and makes stream synchronization harder. Client-specific viewport fitting belongs in the remote viewer.
 
 Risks:
 
 - More engineering work than visible-window capture.
 - The remote renderer must receive trusted state without exposing broad IPC to remote clients.
-- Live capture visuals may need careful routing so the hidden renderer can consume the same intended visual source safely.
-- Multiple output sizes may require multiple render targets, increasing CPU/GPU cost.
+- Live capture visuals may need careful routing so the remote renderer can consume the same intended visual source safely.
+- Multiple published displays require multiple render targets, increasing CPU/GPU cost.
+- Frame subscription plus canvas blitting adds work on the operator machine and needs careful frame pacing.
+- True per-client aspect-ratio rendering would require multiple render targets or encodes per display, increasing synchronization and performance risk.
 
 Mitigation:
 
-- Start with one remote render target per published display using a configured output profile.
-- Group clients by output profile so viewers with the same profile share one encoded source where practical.
-- Keep per-client adaptive aspect ratios as a later enhancement unless a client explicitly selects a supported output profile.
+- Use one canonical remote render target and source stream per published display.
+- Support multiple published displays immediately, but avoid multiple server-side output profiles per display in the first production release.
+- Delegate per-client sizing to the viewer by scaling, letterboxing, cropping, and fullscreening the received video locally.
 - Keep the remote renderer visually equivalent to local displays through shared display-rendering modules and focused parity tests.
 
 ### Recommended remote display production architecture
 
 ```txt
 Remote browser
-  GET /display/<slug>?t=<token>
+  GET /display/<slug>
     receives viewer HTML/JS
-  WebSocket /ws/remote-display/<slug>?t=<token>
+  PIN login
+    verifies the viewer PIN and creates a capability-scoped viewer session credential
+  WebSocket /ws/remote-display/<slug>
+    authenticates the viewer session during upgrade without URL credentials
     sends WebRTC offer/candidates
     receives answer/candidates/status
   RTCPeerConnection
@@ -494,19 +535,19 @@ Electron main
       remote render target management
       stream host management
 
-Electron remote render/stream-host renderer
+Electron offscreen remote render/stream-host renderer
   renders display output at configured remote size/aspect ratio
-  exposes a source MediaStream from the remote render target
+  mirrors render frames into a canvas-backed MediaStream
   owns peer connections or receives peer instructions
 ```
 
 Key decision:
 
-- WebRTC must run in a renderer process, not pure Node, unless we add a native/WebRTC Node dependency.
+- WebRTC runs in the stream-host renderer process, not pure Node.
 
 Recommendation:
 
-- Use a hidden trusted Electron renderer as the remote render and WebRTC stream host.
+- Use an offscreen-enabled trusted Electron `BrowserWindow` renderer as the remote render target and WebRTC stream host.
 - Keep the HTTP/WebSocket server in main.
 - Main forwards signaling messages between remote WebSocket clients and the stream-host renderer through IPC.
 
@@ -518,15 +559,15 @@ This fits the current Electron architecture:
 
 ### Stream-host renderer
 
-The remote render/stream-host renderer should be internal and minimal.
+The offscreen remote render/stream-host renderer should be internal and minimal.
 
 Responsibilities:
 
-- Receive `ensure-source` from main with display ID, output profile, resolution/fps/bitrate hints, and fit mode.
-- Create or reuse the hidden/offscreen render target for that display/output profile.
+- Receive `ensure-source` from main with display ID, output profile, and resolution/fps/bitrate hints.
+- Create or reuse the offscreen-enabled `BrowserWindow` render target for that display/output profile.
 - Subscribe to the same trusted display state and stream state needed to render the final visual output.
-- Produce a source `MediaStream` from the remote render target.
-- Maintain one source stream per published display/output profile where possible.
+- Mirror subscribed render frames into an internal canvas and produce a source `MediaStream` with `canvas.captureStream(30)`.
+- Maintain one source stream per published display.
 - Create one `RTCPeerConnection` per remote client.
 - Add the display video track to each peer connection.
 - Apply encoding preferences if available.
@@ -542,7 +583,7 @@ It should not:
 - Accept arbitrary remote messages.
 - Depend on a visible local display window.
 
-Potential files:
+Files:
 
 - `src/renderer/streamHost.html`
 - `src/renderer/streamHost.ts`
@@ -554,6 +595,8 @@ Vite config would need a new input for `streamHost.html`.
 ### WebRTC signaling
 
 Use WebSocket for signaling.
+
+Before opening the signaling WebSocket, the viewer submits the PIN to a small verification route. A successful response returns a short-lived viewer session credential scoped to `display:view` for the requested display slug. The viewer must present that session credential during the WebSocket upgrade without putting it in the URL, such as by using the `Sec-WebSocket-Protocol` header value supported by browser WebSocket clients.
 
 Viewer-to-server messages:
 
@@ -570,11 +613,11 @@ Server-to-viewer messages:
 
 ```ts
 type RemoteDisplayServerMessage =
-  | { type: 'hello'; protocolVersion: 1; displayId: string; displayLabel?: string }
+  | { type: 'hello'; protocolVersion: 1; displayId: string; displayLabel?: string; outputProfile: RemoteDisplayOutputProfile; defaultViewerFitMode: RemoteDisplayViewerFitMode }
   | { type: 'status'; status: 'waiting' | 'starting' | 'live' | 'ended' | 'error'; message?: string }
   | { type: 'answer'; sdp: RTCSessionDescriptionInit }
   | { type: 'ice-candidate'; candidate: RTCIceCandidateInit }
-  | { type: 'display-update'; displayId: string; displayLabel?: string; slug: string }
+  | { type: 'display-update'; displayId: string; displayLabel?: string; slug: string; outputProfile: RemoteDisplayOutputProfile; defaultViewerFitMode: RemoteDisplayViewerFitMode }
   | { type: 'error'; code: string; message: string };
 ```
 
@@ -608,8 +651,9 @@ type RemoteDisplayOutputProfile = {
   label: string;
   width: number;
   height: number;
-  fitMode: 'contain' | 'cover';
 };
+
+type RemoteDisplayViewerFitMode = 'contain' | 'cover';
 ```
 
 ### Viewer page
@@ -618,11 +662,14 @@ The remote viewer page should be deliberately small.
 
 Responsibilities:
 
-- Parse display slug and token.
+- Parse display slug.
+- Show a PIN login state until the viewer session is verified.
 - Open WebSocket signaling connection.
 - Create an `RTCPeerConnection`.
 - Send offer and ICE candidates.
 - Attach remote stream to a video element.
+- Fit the received video to the client viewport with `object-fit: contain` by default.
+- Allow local viewer-side `cover`/fullscreen behavior without requesting a different server-side render size.
 - Show states:
   - Connecting
   - Waiting for display
@@ -641,7 +688,7 @@ The viewer should not load the existing app CSS or control shell. It should be s
 
 Start with presets instead of exposing every WebRTC knob.
 
-Suggested presets:
+Quality presets:
 
 ```ts
 type RemoteDisplayQualityPreset = 'low-latency' | 'balanced' | 'quality';
@@ -658,8 +705,8 @@ Initial mapping:
   - 30 fps
   - medium bitrate
 - `quality`
-  - source resolution or 1080p/1440p cap
-  - 30 or 60 fps if stable
+  - 1080p cap
+  - 30 fps
   - higher bitrate
 
 Start conservative:
@@ -667,23 +714,33 @@ Start conservative:
 - Default to `balanced`.
 - Default max clients per display: `2`.
 - Expose max clients per display in Config.
+- Defer 60 fps and 1440p+ profiles until baseline 1080p/30 streaming is stable on both Windows and macOS.
 
-### Remote display output profiles
+### Remote display output profiles and client-side sizing
 
 Remote rendering needs explicit output profiles so the stream is not tied to a visible local display window.
 
-Suggested built-in profiles:
+Built-in profiles:
 
 ```ts
 type RemoteDisplayOutputProfilePreset = '720p-landscape' | '1080p-landscape' | '1080p-portrait' | 'custom';
 ```
 
-Initial behavior:
+First production release behavior:
 
-- Default to `1080p-landscape` unless the current display configuration clearly indicates another shape.
+- Default to `1080p-landscape`.
 - Allow width/height configuration in Config or display detail.
-- Keep all clients on the same display/output profile sharing one source stream where possible.
-- Let the remote viewer fit the received stream with `contain` by default and optional `cover` if exposed later.
+- Support multiple published remote displays at the same time.
+- Use one active server-side output profile and one source stream per published display.
+- Apply output profile changes through in-place source reconfiguration wherever possible:
+  - Do not resize, close, or reopen local display windows.
+  - Do not require the remote browser window to reload.
+  - Keep existing viewer peer connections and video elements attached.
+  - Switch the stream-host canvas/render source to the new output profile and let the remote client continue receiving the updated video track.
+  - If the browser/WebRTC stack requires renegotiation for the changed stream dimensions, perform it automatically without user action and keep the viewer in a live/reconfiguring state rather than an ended state.
+- Let every remote viewer fit the received stream locally with `contain` by default.
+- Allow viewer-side `cover`/fullscreen behavior without creating a new server render target.
+- Do not support arbitrary server-side per-client aspect-ratio rendering in the first production release.
 - Do not resize local display windows when remote output profile changes.
 
 ### Audio
@@ -752,7 +809,7 @@ The shared server should not assume which one we choose. It should provide:
 A later remote control surface can reuse:
 
 - HTTP static serving.
-- Token/pairing.
+- PIN login or stronger pairing.
 - WebSocket sessions.
 - Capability-scoped routing.
 - App state subscriptions.
@@ -782,7 +839,7 @@ Show:
 - Server enabled toggle.
 - Bound address and port.
 - LAN URLs.
-- Token regeneration.
+- PIN regeneration.
 - Active clients.
 - Last error.
 - Restart server button.
@@ -802,12 +859,11 @@ For each display:
 - Slug field.
 - Copy URL button.
 - Current remote URL rendered in the local display window title while published.
-- QR code button later.
 - Client count.
 - Stream status.
 - Remote output profile selector.
 - Remote output width/height fields for custom profiles.
-- Fit mode: contain by default; cover can be exposed when useful.
+- Default viewer fit mode selector: contain or cover, applied client-side.
 - Quality preset.
 
 ### Readiness/diagnostics
@@ -839,10 +895,10 @@ Add diagnostics for:
 1. Display windows are closed/reopened by existing show restore flow.
 2. Remote display module reconciles publications:
    - Existing display IDs still present: keep slug/settings.
-   - Missing display IDs: mark unavailable or prune stale app-local publication records through a clear cleanup path.
+   - Missing display IDs: mark unavailable and preserve the app-local publication record.
    - New display IDs: publish only if default says so.
 3. Active clients for removed displays receive `ended`.
-4. Published displays with active clients create remote render targets even if no visible display window is open.
+4. Published displays create remote render targets even if no visible display window is open and even before remote WebRTC clients connect.
 
 ### Display create/update/remove
 
@@ -867,14 +923,16 @@ Reopen:
 
 Remove:
 
-- Unpublish or mark stale.
-- Close client sessions.
+- Unpublish the display.
+- Remove its app-local publication record.
+- Close affected client sessions and the remote render target.
 
 ### Server setting change
 
 - Validate new config.
 - Restart server when host/port/auth mode changes.
-- Keep protocol module state where safe, but use clean teardown when output profile, auth, or bind settings require it.
+- Keep protocol module state where safe, but use clean teardown when auth or bind settings require it.
+- Apply remote display output profile changes through in-place stream source reconfiguration where possible, preserving local display windows, remote browser windows, peer connections, and video element attachment.
 
 ### App shutdown
 
@@ -917,17 +975,18 @@ Add tests for:
 
 - Server config normalization.
 - Host/port validation.
-- Token generation and validation.
+- PIN generation, verification, and viewer session validation.
 - Capability checks.
 - Route matching.
 - Display slug generation and deduplication.
 - Publication reconciliation when displays are created, closed, reopened, removed, and relabeled.
 - Remote output profile normalization and validation.
+- Viewer-side fit mode behavior.
 - Message schema parsing.
 
 ### Main-process integration tests
 
-Add tests where practical for:
+Add tests for:
 
 - Starting and stopping server core.
 - Port conflict handling.
@@ -935,6 +994,7 @@ Add tests where practical for:
 - Unauthorized requests get 401/403.
 - Unknown slugs get 404.
 - WebSocket upgrade dispatch rejects invalid protocol routes.
+- `GET /health` only responds to localhost requests.
 
 ### Renderer tests
 
@@ -943,7 +1003,7 @@ Add tests for:
 - Viewer connection states.
 - WebRTC signaling state reducer if factored into pure helpers.
 - Viewer error states.
-- Token/slug parsing.
+- PIN login and slug parsing.
 
 ### Manual QA
 
@@ -957,7 +1017,8 @@ Minimum manual QA:
 - Close/reopen local display window while viewer is open and confirm remote output continues.
 - Change display label and confirm the URL/title update.
 - Change remote output profile and confirm stream dimensions/aspect ratio update without resizing the local display window.
-- Regenerate token and confirm old URL fails.
+- Open the same display from different viewport sizes and confirm client-side `contain`/`cover` behavior without server-side render target changes.
+- Regenerate the PIN and confirm existing viewer sessions are closed or reverified.
 - Verify app shutdown closes viewer cleanly.
 - Verify no raw file paths appear in viewer HTML/messages.
 
@@ -970,14 +1031,14 @@ Performance QA:
 - Stream image.
 - Stream layered/crossfade display.
 - Stream live capture visual if available.
-- Stream the same display to clients with the same output profile.
-- Exercise two different output profiles if multi-profile support ships.
+- Stream multiple published displays at the same time.
+- Stream the same display to clients with different viewport sizes while sharing one source stream.
 - Observe CPU/GPU/network usage.
 
 Platform QA:
 
 - Windows and macOS are both first-target platforms.
-- Verify hidden/offscreen remote render target behavior on both.
+- Verify offscreen-enabled `BrowserWindow` remote render target behavior on both.
 - Verify packaged renderer asset loading and WebRTC stream creation on both.
 - Linux only if packaging/support targets it.
 
@@ -990,13 +1051,13 @@ Scope:
 - Add app-local local-network settings and persistence.
 - Add `LocalNetworkServiceManager`.
 - Add `ServerCore` with HTTP route registration, lifecycle, status, and shutdown handling.
-- Add auth token generation/validation and capability checks.
-- Add basic Config UI for enable/disable, host, port, status, and token regeneration.
+- Add PIN generation/verification, viewer session validation, and capability checks.
+- Add basic Config UI for enable/disable, host, port, status, and PIN regeneration.
 
 Deliverables:
 
 - Server can start, stop, restart, and auto-start after `app.whenReady` when enabled.
-- `GET /health` or equivalent internal route returns minimal authenticated or local-only status.
+- `GET /health` returns minimal localhost-only status.
 - No remote display route or renderer yet.
 
 Acceptance:
@@ -1012,20 +1073,20 @@ Scope:
 
 - Add the remote display protocol module shell.
 - Add display publication settings, label-derived slug generation, and slug reconciliation.
-- Add remote output profile settings, including width, height, quality preset, fit mode, and max clients.
+- Add remote output profile settings, including width, height, quality preset, default viewer fit mode, and max clients.
 - Factor the current display renderer enough that local display windows and remote render targets can share the same visual rendering path.
-- Define the trusted IPC contract needed by hidden/offscreen remote renderers.
+- Define the trusted IPC contract needed by offscreen-enabled `BrowserWindow` remote renderers.
 
 Deliverables:
 
 - Publications can be created, updated, removed, and reconciled against the current display IDs.
-- Output profiles validate and normalize independently from local display window geometry.
+- Output profiles validate and normalize independently from local display window geometry, and viewer fit mode remains client-side.
 - Shared display-rendering code can be loaded by both `display.html` and the future remote render/stream-host entry.
 
 Acceptance:
 
 - Slugs deduplicate and auto-update when display labels change.
-- Removing a display closes or invalidates its app-local publication.
+- Removing a display unpublishes it, removes its app-local publication record, then closes affected clients and the remote render target.
 - Output profile changes do not resize or reopen local display windows.
 - Renderer factoring preserves existing local display behavior in tests/manual smoke checks.
 
@@ -1033,38 +1094,39 @@ Acceptance:
 
 Scope:
 
-- Add token-secured `GET /display/<slug>` viewer route.
-- Add WebSocket support in server core and `/ws/remote-display/<slug>` signaling route.
+- Add credential-free `GET /display/<slug>` viewer route that serves a PIN login state before playback.
+- Add WebSocket support in server core using `ws` and `/ws/remote-display/<slug>` signaling route.
 - Add client/session registry with heartbeat, timeout, and cleanup callbacks.
 - Add Config/Display UI controls for publish, slug, output profile, copy URL, status, and client count.
-- Add viewer shell with connection, unauthorized, unavailable, waiting, and ended states.
+- Add the Vite-built viewer shell with PIN login, connection, unauthorized, unavailable, waiting, and ended states.
 
 Deliverables:
 
 - A published display has a copyable URL and optional local display-window title annotation when the local window is open.
-- Viewer connects to the authenticated signaling route and receives display metadata/status.
+- Viewer verifies the PIN, connects to the authenticated signaling route, and receives display metadata/status.
 - Unknown, unpublished, unauthorized, and removed displays produce stable viewer states.
+- Viewer URLs do not contain credentials.
 
 Acceptance:
 
-- Unauthorized HTTP and WebSocket requests are rejected.
+- Unauthorized protected HTTP/API requests and WebSocket upgrades are rejected.
 - Stale clients time out and disappear from diagnostics.
 - Display removal sends an ended/error state.
 - No show config, raw media paths, or control APIs are exposed.
 
-### Phase 4: Hidden/offscreen remote render targets
+### Phase 4: Offscreen BrowserWindow remote render targets
 
 Scope:
 
-- Add the hidden/offscreen remote render/stream-host renderer entry and preload.
+- Add the offscreen-enabled `BrowserWindow` remote render/stream-host renderer entry and dedicated preload.
 - Add main-to-host IPC for `ensure-source`, output profile changes, source status, and release.
 - Render a published display ID at the selected remote output profile without opening a visible local display window.
-- Produce a local `MediaStream` or equivalent video source from the remote render target.
+- Subscribe to render target frames, mirror them into a stream-host canvas, and produce a local `MediaStream` with `canvas.captureStream(30)`.
 - Add render-target status reporting and parity checks against local display rendering.
 
 Deliverables:
 
-- Remote render target can render the visual output for a published display with no remote WebRTC client attached.
+- Remote render targets can render the visual output for multiple published displays with no remote WebRTC clients attached.
 - Remote rendering continues when the visible local display window is closed.
 - Render target dimensions match the selected output profile.
 
@@ -1072,7 +1134,7 @@ Acceptance:
 
 - Works in development on Windows and macOS.
 - Closing/reopening a local display window does not stop the remote render target.
-- The remote render target never uses visible-window capture or physical-screen capture.
+- Remote render targets never use visible-window capture or physical-screen capture.
 - Live visual sources either render correctly or report a stable `remote_render_target_unavailable`/source-specific error.
 
 ### Phase 5: WebRTC streaming from remote render targets
@@ -1083,19 +1145,22 @@ Scope:
 - Relay SDP/ICE over the WebSocket signaling path.
 - Attach the remote render target video track to each peer connection.
 - Apply quality presets and enforce max clients per display.
-- Share one source stream for clients on the same display/output profile where practical.
+- Share one source stream per published display across that display's remote clients.
+- Keep per-client sizing in the remote viewer through `contain`, `cover`, fullscreen, and CSS viewport fitting.
 
 Deliverables:
 
 - Remote browser sees the visual-only stream for a published display.
+- Multiple published displays can stream at the same time.
 - Multiple clients can view the same published display within the configured limit.
-- Manual URL/token sharing works over LAN.
+- Manual URL sharing and PIN login work over LAN.
 
 Acceptance:
 
 - Viewer handles live, reconnecting, ended, unauthorized, unpublished, and unavailable states.
 - Client disconnect cleans up peer connections, tracks, and session state.
-- Remote output profile controls stream dimensions/aspect ratio.
+- Remote output profile controls the canonical stream dimensions/aspect ratio.
+- Different client viewport sizes do not create server-side render targets.
 - No raw media files are served.
 
 ### Phase 6: Production lifecycle, diagnostics, and output behavior
@@ -1103,23 +1168,23 @@ Acceptance:
 Scope:
 
 - Add render target recovery when the renderer, media stream, or WebRTC source fails.
-- Add output profile change handling, including source restart or renegotiation.
+- Add output profile change handling through in-place source reconfiguration, with automatic renegotiation only when required by the browser/WebRTC stack.
 - Add detailed Config diagnostics for server, publications, render targets, clients, and last errors.
-- Add disconnect-all, token regeneration cleanup, and app shutdown cleanup.
-- Add focused parity/performance tests for hidden/offscreen rendering.
+- Add disconnect-all, PIN regeneration cleanup, and app shutdown cleanup.
+- Add focused parity/performance tests for offscreen `BrowserWindow` rendering.
 
 Deliverables:
 
 - Remote display survives common lifecycle changes.
 - Operator can inspect remote render target status, stream status, and client status.
-- Token regeneration and settings changes intentionally close or restart affected sessions.
+- PIN regeneration and settings changes intentionally close or restart affected sessions.
 
 Acceptance:
 
 - Closing/reopening local display windows does not interrupt remote output.
 - Unpublishing/removing displays ends affected clients cleanly.
 - Render target recovery is visible in status and does not leak old peer connections or tracks.
-- Output profile changes are reflected in new or renegotiated streams.
+- Output profile changes update the active remote stream without resizing local display windows, reloading remote browser windows, or requiring user action from connected viewers.
 
 ### Phase 7: Packaging and platform polish
 
@@ -1175,17 +1240,17 @@ Acceptance:
 
    Yes. Remote display is for visuals only, which may include videos, images, live captures, and composed visual output. Audio remains separate by architecture.
 
-4. Is a token in the URL acceptable for the first production release?
+4. Should viewer authentication use a token in the URL or a PIN login page?
 
-   Yes. Use a 4-character token.
+   Use a PIN login page immediately. Remote display URLs must not include credentials.
 
 5. Should the remote output capture a visible display window, a physical screen, or render independently?
 
-   Render independently through a hidden/offscreen remote render target. Do not use visible display-window capture or physical screen capture.
+   Render independently through an offscreen-enabled `BrowserWindow` remote render target. Do not use visible display-window capture or physical screen capture.
 
 6. What default bind address should the UI choose?
 
-   Use the local machine IP only. For development, allow localhost.
+   Default to `auto-lan`: choose the active default-route private IPv4 address on a physical Wi-Fi or Ethernet interface. Avoid loopback, link-local, VPN, Docker, virtual machine, and tunnel adapters by default. Let the user override the exact LAN interface/IP in Config.
 
 7. What is the expected first target platform?
 
@@ -1195,19 +1260,35 @@ Acceptance:
 
    2 per display by default. Expose this setting in the Config surface.
 
+9. Should per-client remote viewport sizing create server-side render targets?
+
+   No. The first production release supports multiple published remote displays, but each display has one canonical server-side output profile. Individual clients fit that stream locally with contain/cover/fullscreen behavior.
+
+10. What should happen when a published display's remote output profile changes?
+
+   The local display window and remote browser window should not be interrupted. Reconfigure the remote render target/source in place, keep existing peer connections and video elements attached where possible, and let the remote client continue receiving the updated stream. If the browser/WebRTC stack requires renegotiation for dimension changes, handle it automatically without user action.
+
+## Remaining implementation decisions
+
+These are not product blockers for the server foundation, but they should be resolved before or during the streaming phases.
+
+1. Exact quality preset numbers.
+
+   The quality presets are named and bounded, but the initial bitrate targets, encoder preference hints, and fallback behavior should be finalized during performance QA on Windows and macOS.
+
 ## Risks and mitigations
 
 ### Remote render reliability
 
 Risk:
 
-- Hidden/offscreen remote rendering may diverge from the local display renderer or fail to acquire equivalent visual inputs.
+- Offscreen `BrowserWindow` remote rendering may diverge from the local display renderer or fail to acquire equivalent visual inputs.
 
 Mitigation:
 
 - Share display-rendering modules between local and remote renderers where practical.
 - Show clear remote render target and stream-host status in Config.
-- Test both Windows and macOS early because hidden/offscreen renderer behavior is part of the core requirement.
+- Test both Windows and macOS early because offscreen `BrowserWindow` renderer behavior is part of the core requirement.
 - Include parity tests for local display output versus remote render target output.
 
 ### Performance
@@ -1232,7 +1313,7 @@ Risk:
 Mitigation:
 
 - Disabled by default.
-- Token required.
+- PIN verification required before signaling.
 - Capability-scoped auth.
 - No raw project media.
 - Visible client list.
@@ -1268,13 +1349,15 @@ The first shippable version should include:
 
 - App-local local-network server settings.
 - Server disabled by default.
-- Token-secured HTTP viewer route.
-- Token-secured WebSocket signaling route.
+- Credential-free HTTP viewer route with PIN login.
+- PIN/session-secured WebSocket signaling route.
 - Display publication with label-derived dynamic slug.
 - Copyable remote display URL.
 - Current remote display URL in the local display window title while published.
-- Hidden/offscreen remote render/stream-host renderer.
+- Offscreen-enabled `BrowserWindow` remote render/stream-host renderer with a dedicated preload.
 - Remote output profiles with configured size/aspect ratio.
+- Multiple simultaneously published remote displays.
+- Viewer-side per-client sizing through contain/cover/fullscreen fitting.
 - WebRTC visual-only stream from the remote render target.
 - Remote rendering that does not require a visible local display window.
 - Basic status/errors in Config.
@@ -1286,18 +1369,19 @@ It should defer:
 - Audio.
 - Remote control.
 - mDNS discovery.
-- Pairing/PIN.
+- QR-code share UI.
+- Stronger pairing flow beyond the first PIN login.
 - Raw media serving.
 - MIDI/OSC implementations.
-- Per-client arbitrary aspect-ratio rendering beyond supported output profiles.
+- Server-side per-client render targets or arbitrary per-client source aspect ratios.
 - Physical screen capture fallback.
 - Visible display-window capture fallback.
 
 ## Notes for future implementation
 
 - Prefer Node built-ins for HTTP at first. Avoid adding Express unless routing complexity justifies it.
-- A WebSocket dependency will probably be needed unless we implement the protocol manually. Choose a small, maintained package when implementation begins.
-- WebRTC should stay in a Chromium renderer unless a strong reason appears to add a native Node WebRTC dependency.
+- Use the `ws` package for the main-process WebSocket server instead of implementing the WebSocket protocol manually.
+- Keep WebRTC in the Chromium stream-host renderer; do not add a native Node WebRTC dependency for the first production release.
 - Keep all remote network message schemas in shared types with runtime validation helpers.
 - Avoid passing full `DirectorState` or show config to remote clients for display viewing. The viewer needs stream status and WebRTC negotiation only.
 - When adding future OSC/MIDI, keep command/action mapping explicit and auditable.
